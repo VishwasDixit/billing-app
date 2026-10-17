@@ -44,6 +44,10 @@
 
         <div class="totals" id="totals"></div>
 
+        <div id="printerBar" class="printer-bar">
+          <span id="printerStatus">Printer: not connected</span>
+          <button id="connectBtn" class="btn btn-sm">Connect</button>
+        </div>
         <button id="printBtn" class="btn btn-primary btn-lg">Print Bill</button>
       </aside>
     </main>
@@ -80,6 +84,22 @@
       </div>
       <label>Bill footer <input name="footer" maxlength="60"></label>
       <label>Next bill no. <input name="billNo" type="number" min="1" step="1"></label>
+
+      <h4>Printer</h4>
+      <label>Print method
+        <select name="printMethod">
+          <option value="bluetooth">Bluetooth printer (Chrome, Android/Mac)</option>
+          <option value="rawbt">RawBT app (Android)</option>
+          <option value="serial">Bluetooth serial (Chrome, Mac/PC)</option>
+          <option value="browser">Browser print dialog (installed printer)</option>
+        </select>
+      </label>
+      <div class="row2">
+        <label>Characters per line <input name="charsPerLine" type="number" min="16" max="64" step="1"></label>
+        <label class="check"><input name="cutPaper" type="checkbox"> Cut paper</label>
+      </div>
+      <button type="button" id="testPrintBtn" class="btn">Test print</button>
+
       <div class="dialog-actions">
         <span class="spacer"></span>
         <button value="cancel" formnovalidate class="btn btn-ghost">Cancel</button>
@@ -91,6 +111,7 @@
   <!-- Printed only -->
   <div id="receipt"></div>
 
+  <script src="escpos.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

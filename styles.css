@@ -123,6 +123,13 @@ body.editing .menu-item::after { content: "✎"; position: absolute; bottom: 8px
   border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px;
 }
 
+.printer-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 13px; color: var(--muted);
+}
+.printer-bar[hidden] { display: none; }
+#printerStatus.ok { color: var(--accent); font-weight: 600; }
+
 /* ---------- Dialogs ---------- */
 dialog {
   border: none; border-radius: 12px; padding: 20px; width: min(420px, calc(100vw - 32px));
@@ -135,6 +142,10 @@ dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
 dialog input, dialog textarea {
   font: inherit; color: var(--text); padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
 }
+dialog h4 { margin: 8px 0 0; font-size: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+dialog select { font: inherit; color: var(--text); padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+dialog label.check { flex-direction: row; align-items: center; gap: 8px; align-self: end; padding-bottom: 10px; }
+dialog form { max-height: calc(100vh - 80px); overflow: auto; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .dialog-actions { display: flex; gap: 8px; margin-top: 6px; }
 .spacer { flex: 1; }

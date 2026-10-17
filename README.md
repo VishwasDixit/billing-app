@@ -15,18 +15,37 @@ Double-click `index.html` (Chrome recommended), or open it from the browser with
 
 Menu, settings and bill number are stored per browser. Clearing the browser's site data erases them.
 
-## 58 mm printer setup (macOS)
-1. Install the printer's driver and add it in **System Settings → Printers & Scanners**.
-2. In Chrome's print dialog (opened by **Print Bill**), go to **More settings** and set:
-   - **Paper size:** 58 mm, or the printer's roll size (e.g. "58 x 210 mm")
-   - **Margins:** None
-   - **Scale:** Default (100%)
-   - **Headers and footers:** off
-   Chrome remembers these choices for next time.
-3. If your driver has no 58 mm size, create one: in Chrome's print dialog choose **Print using system dialog → Paper Size → Manage Custom Sizes**, then set width 58 mm, height 200 mm and margins 0.
+## Live app
+https://vishwasdixit.github.io/billing-app/
 
-**Tip:** to skip the print dialog entirely, launch Chrome with `--kiosk-printing`. It then prints straight to the default printer.
+## Printing to a 58 mm Bluetooth printer (e.g. Seznik)
+Cheap Bluetooth thermal printers have no computer/phone driver, so the normal print dialog can't see them.
+The app instead sends ESC/POS commands straight to the printer over Bluetooth, the same way apps like
+Bill Sarthy do. Choose how in **Settings → Printer → Print method**.
 
-```bash
-open -a "Google Chrome" --args --kiosk-printing
-```
+The printer accepts only **one connection at a time**: close Bill Sarthy (or disconnect it) before printing from here.
+
+### Android (Chrome) — "Bluetooth printer"
+1. Turn on Bluetooth **and Location** (Android needs Location for Bluetooth scanning).
+2. Open the live app link in **Chrome**.
+3. Tap **Connect** above *Print Bill* and pick your printer from the list.
+4. Settings → **Test print** to check. Then print bills normally.
+
+If your printer does **not appear** in the list, it only supports classic Bluetooth. Use RawBT instead:
+1. Install **RawBT** from the Play Store, open it, and select your paired printer there.
+2. In the app, Settings → Print method → **RawBT app (Android)**.
+3. Print Bill now hands the receipt to RawBT, which prints it.
+
+### Mac (Chrome)
+1. System Settings → Privacy & Security → **Bluetooth**: allow Google Chrome.
+2. Open the live app link in Chrome, click **Connect**, pick the printer.
+3. If it is not listed: pair the printer in System Settings → Bluetooth (PIN is usually `0000` or `1234`),
+   then Settings → Print method → **Bluetooth serial**, and click **Connect** again.
+
+### Tuning
+- **Characters per line:** 32 for most 58 mm printers. Run *Test print*: if the number ruler wraps, lower it (e.g. 30).
+- **Cut paper:** only if your printer has an auto-cutter.
+- The `₹` sign is printed as `Rs.` because these printers can't print it.
+
+### Printer installed in the OS
+If you have a printer with a real driver, choose **Browser print dialog** (paper 58 mm, margins None, no headers/footers).

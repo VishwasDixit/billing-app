@@ -29,6 +29,9 @@ const DEFAULT_SETTINGS = {
   gstPercent: 0,
   footer: "Thank you! Visit again.",
   discountType: "percent",
+  printMethod: "bluetooth", // bluetooth | serial | rawbt | browser
+  charsPerLine: 32,
+  cutPaper: false,
 };
 
 const SAMPLE_MENU = [
@@ -285,9 +288,10 @@ $("#deleteItemBtn").addEventListener("click", () => {
 /* ================= Settings dialog ================= */
 $("#settingsBtn").addEventListener("click", () => {
   const form = $("#settingsForm");
-  for (const key of ["shopName", "address", "phone", "gstin", "currency", "gstPercent", "footer"]) {
+  for (const key of ["shopName", "address", "phone", "gstin", "currency", "gstPercent", "footer", "printMethod", "charsPerLine"]) {
     form[key].value = settings[key];
   }
+  form.cutPaper.checked = !!settings.cutPaper;
   form.billNo.value = billNo;
   $("#settingsDialog").showModal();
 });
@@ -304,11 +308,15 @@ $("#settingsDialog").addEventListener("close", () => {
     currency: form.currency.value.trim(),
     gstPercent: Math.max(0, parseFloat(form.gstPercent.value) || 0),
     footer: form.footer.value.trim(),
+    printMethod: form.printMethod.value,
+    charsPerLine: Math.min(64, Math.max(16, parseInt(form.charsPerLine.value, 10) || 32)),
+    cutPaper: form.cutPaper.checked,
   };
   billNo = Math.max(1, parseInt(form.billNo.value, 10) || 1);
   save(KEYS.settings, settings);
   save(KEYS.billNo, billNo);
   renderAll();
+  updatePrinterUI();
 });
 
 /* ================= Receipt + print ================= */
@@ -358,23 +366,182 @@ function buildReceipt() {
   $("#receipt").innerHTML = html;
 }
 
-$("#printBtn").addEventListener("click", () => {
-  if (!cart.size) return;
-  buildReceipt();
-  window.print();
-  // window.print() blocks until the dialog closes in most browsers.
-  setTimeout(() => {
-    if (confirm("Bill printed? Clear cart and start the next bill?")) {
-      billNo += 1;
-      save(KEYS.billNo, billNo);
-      cart.clear();
-      $("#discountValue").value = 0;
-      renderMenu();
-      renderCart();
+/* ================= Direct printer connection ================= */
+// GATT services used by common BLE thermal printers.
+const BLE_SERVICES = [
+  0x18f0, 0xff00, 0xffe0, 0xae30, 0xfee7, 0xae3a, 0xff80,
+  "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
+  "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+];
+const SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const printer = { device: null, char: null, port: null };
+
+async function findWritableChar(server) {
+  for (const svc of await server.getPrimaryServices()) {
+    for (const c of await svc.getCharacteristics()) {
+      if (c.properties.writeWithoutResponse || c.properties.write) return c;
     }
-  }, 300);
+  }
+  throw new Error("Connected, but this printer has no writable channel the app recognises. Try the RawBT (Android) or Bluetooth serial (Mac) print method in Settings.");
+}
+
+async function bleConnect(pickNew) {
+  if (!navigator.bluetooth) {
+    throw new Error("This browser can't use Bluetooth. Open the app in Google Chrome (Android or Mac), or pick another print method in Settings.");
+  }
+  if (pickNew || !printer.device) {
+    printer.device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BLE_SERVICES });
+    printer.char = null;
+    printer.device.addEventListener("gattserverdisconnected", () => {
+      printer.char = null;
+      updatePrinterUI();
+    });
+  }
+  if (!printer.char || !printer.device.gatt.connected) {
+    const server = await printer.device.gatt.connect();
+    printer.char = await findWritableChar(server);
+  }
+  updatePrinterUI();
+}
+
+async function bleSend(bytes) {
+  await bleConnect(false);
+  const c = printer.char;
+  const noResp = c.properties.writeWithoutResponse;
+  for (let i = 0; i < bytes.length; i += 20) {
+    const chunk = bytes.slice(i, i + 20);
+    if (noResp) {
+      await c.writeValueWithoutResponse(chunk);
+      await sleep(15); // slow printers drop data if flooded
+    } else {
+      await c.writeValueWithResponse(chunk);
+    }
+  }
+}
+
+async function serialConnect(pickNew) {
+  if (!navigator.serial) {
+    throw new Error("This browser can't use Bluetooth serial. Use Google Chrome on a Mac or PC.");
+  }
+  if (pickNew || !printer.port) {
+    printer.port = await navigator.serial.requestPort({ allowedBluetoothServiceClassIds: [SPP_UUID] });
+  }
+  if (!printer.port.writable) await printer.port.open({ baudRate: 9600 });
+  updatePrinterUI();
+}
+
+async function serialSend(bytes) {
+  await serialConnect(false);
+  const writer = printer.port.writable.getWriter();
+  try {
+    await writer.write(bytes);
+  } finally {
+    writer.releaseLock();
+  }
+}
+
+function rawbtSend(bytes) {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  window.location.href = "rawbt:base64," + btoa(bin);
+}
+
+function printerName() {
+  if (settings.printMethod === "bluetooth" && printer.device && printer.char) return printer.device.name || "Bluetooth printer";
+  if (settings.printMethod === "serial" && printer.port?.writable) return "Bluetooth serial printer";
+  return null;
+}
+
+function updatePrinterUI() {
+  const direct = settings.printMethod === "bluetooth" || settings.printMethod === "serial";
+  $("#printerBar").hidden = !direct;
+  const name = printerName();
+  $("#printerStatus").textContent = name ? `Printer: ${name}` : "Printer: not connected";
+  $("#printerStatus").classList.toggle("ok", !!name);
+  $("#connectBtn").textContent = name ? "Change" : "Connect";
+}
+
+async function sendToPrinter(bytes) {
+  switch (settings.printMethod) {
+    case "bluetooth": return bleSend(bytes);
+    case "serial": return serialSend(bytes);
+    case "rawbt": return rawbtSend(bytes);
+  }
+}
+
+function explain(err) {
+  if (err?.name === "NotFoundError" && /cancel/i.test(err.message)) return null; // user closed the chooser
+  if (err?.name === "NotFoundError") return "No printer selected. Make sure the printer is on, Bluetooth is on, and Bill Sarthy (or any other app) is not connected to it.";
+  if (err?.name === "NetworkError") return "Couldn't reach the printer. Turn it off and on, close other apps connected to it, then try again.";
+  if (err?.name === "SecurityError" || err?.name === "NotAllowedError") return "Bluetooth permission was blocked. Allow Bluetooth for Chrome and try again.";
+  return err?.message || String(err);
+}
+
+async function withPrinter(task) {
+  try {
+    await task();
+    return true;
+  } catch (err) {
+    console.error(err);
+    const msg = explain(err);
+    if (msg) alert("Printing failed:\n\n" + msg);
+    updatePrinterUI();
+    return false;
+  }
+}
+
+$("#connectBtn").addEventListener("click", () =>
+  withPrinter(() => (settings.printMethod === "serial" ? serialConnect(true) : bleConnect(true)))
+);
+
+$("#testPrintBtn").addEventListener("click", () => {
+  // Use the values currently in the form, even before saving.
+  const form = $("#settingsForm");
+  const s = { ...settings, printMethod: form.printMethod.value, charsPerLine: parseInt(form.charsPerLine.value, 10) || 32, cutPaper: form.cutPaper.checked };
+  if (s.printMethod === "browser") return alert("Test print is for the direct printer methods. Choose Bluetooth, Bluetooth serial or RawBT.");
+  const prev = settings.printMethod;
+  settings.printMethod = s.printMethod;
+  withPrinter(() => sendToPrinter(EscPos.testPage(s))).finally(() => {
+    settings.printMethod = prev;
+    updatePrinterUI();
+  });
+});
+
+function startNextBill() {
+  if (!confirm("Bill printed? Clear cart and start the next bill?")) return;
+  billNo += 1;
+  save(KEYS.billNo, billNo);
+  cart.clear();
+  $("#discountValue").value = 0;
+  renderMenu();
+  renderCart();
+}
+
+$("#printBtn").addEventListener("click", async () => {
+  if (!cart.size) return;
+
+  if (settings.printMethod === "browser") {
+    buildReceipt();
+    window.print();
+    // window.print() blocks until the dialog closes in most browsers.
+    setTimeout(startNextBill, 300);
+    return;
+  }
+
+  // Build the bytes before any await so the Bluetooth chooser still counts as a user gesture.
+  const bytes = EscPos.receipt(settings, computeTotals(), billNo, new Date());
+  const btn = $("#printBtn");
+  btn.disabled = true;
+  btn.textContent = "Printing…";
+  const ok = await withPrinter(() => sendToPrinter(bytes));
+  btn.textContent = "Print Bill";
+  renderCart();
+  if (ok) setTimeout(startNextBill, settings.printMethod === "rawbt" ? 1500 : 300);
 });
 
 /* ================= Init ================= */
 $("#discountType").value = settings.discountType;
 renderAll();
+updatePrinterUI();
