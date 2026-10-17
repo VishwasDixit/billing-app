@@ -98,12 +98,36 @@
         <label>Characters per line <input name="charsPerLine" type="number" min="16" max="64" step="1"></label>
         <label class="check"><input name="cutPaper" type="checkbox"> Cut paper</label>
       </div>
-      <button type="button" id="testPrintBtn" class="btn">Test print</button>
+      <div class="row2">
+        <label class="check"><input name="largeText" type="checkbox"> Large shop name &amp; total</label>
+        <label class="check"><input name="slowMode" type="checkbox"> Slow mode</label>
+      </div>
+      <div class="row2">
+        <button type="button" id="testPrintBtn" class="btn">Test print</button>
+        <button type="button" id="diagBtn" class="btn">Diagnose printer</button>
+      </div>
 
       <div class="dialog-actions">
         <span class="spacer"></span>
         <button value="cancel" formnovalidate class="btn btn-ghost">Cancel</button>
         <button value="save" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Printer diagnostics -->
+  <dialog id="diagDialog">
+    <form method="dialog">
+      <h3>Printer diagnostics</h3>
+      <p class="diag-help">Close Bill Sarthy first. Connect, then press <b>Send Hello</b> on each writable channel.
+        Pick <b>Use this</b> on the one that prints “Hello”.</p>
+      <div id="diagStatus" class="diag-status">No printer connected.</div>
+      <button type="button" id="diagConnect" class="btn btn-primary">Connect printer</button>
+      <div id="diagChannels" class="diag-channels"></div>
+      <pre id="diagLog" class="diag-log"></pre>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button value="close" class="btn btn-ghost">Close</button>
       </div>
     </form>
   </dialog>

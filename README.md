@@ -45,7 +45,17 @@ If your printer does **not appear** in the list, it only supports classic Blueto
 ### Tuning
 - **Characters per line:** 32 for most 58 mm printers. Run *Test print*: if the number ruler wraps, lower it (e.g. 30).
 - **Cut paper:** only if your printer has an auto-cutter.
+- **Large shop name & total:** prints the shop name and total in big, bold text (uses more battery).
 - The `₹` sign is printed as `Rs.` because these printers can't print it.
+
+### Troubleshooting: printer switches off or disconnects when printing
+1. **Charge the printer fully.** Printing draws a burst of power, and a weak battery shuts cheap printers off.
+   Print once from Bill Sarthy: if it switches off there too, it's the battery or the printer, not this app.
+2. Keep **Large shop name & total** off (the default). Bold, double-size text uses the most power.
+3. Open **Settings → Diagnose printer → Connect printer**. Press **Send Hello** on each writable channel.
+   When one prints "Hello", press **Use this** on it. The app remembers that channel for this printer.
+4. Still dropping? Turn on **Slow mode** in Settings.
+5. If nothing works from Chrome, use the **RawBT** method on Android.
 
 ### Printer installed in the OS
 If you have a printer with a real driver, choose **Browser print dialog** (paper 58 mm, margins None, no headers/footers).

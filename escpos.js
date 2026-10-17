@@ -68,7 +68,7 @@
   const pad2 = (n) => String(n).padStart(2, "0");
 
   /**
-   * @param {object} s       settings (shopName, address, phone, gstin, currency, footer, charsPerLine, cutPaper)
+   * @param {object} s       settings (shopName, address, phone, gstin, currency, footer, charsPerLine, cutPaper, largeText)
    * @param {object} t       result of computeTotals()
    * @param {number} billNo
    * @param {Date}   date
@@ -79,7 +79,10 @@
     const cur = ascii(s.currency);
 
     b.align("center");
-    if (s.shopName) b.bold(true).size(2, 2).centered(s.shopName, Math.floor(cols / 2)).size(1, 1).bold(false);
+    if (s.shopName) {
+      if (s.largeText) b.bold(true).size(2, 2).centered(s.shopName, Math.floor(cols / 2)).size(1, 1).bold(false);
+      else b.centered(s.shopName);
+    }
     if (s.address) b.centered(s.address);
     if (s.phone) b.centered("Ph: " + s.phone);
     if (s.gstin) b.centered("GSTIN: " + s.gstin);
@@ -105,7 +108,8 @@
       b.pair(`SGST ${pct}%`, n2(t.gst - half));
     }
     b.sep();
-    b.bold(true).size(1, 2).pair("TOTAL", cur + n2(t.total)).size(1, 1).bold(false);
+    if (s.largeText) b.bold(true).size(1, 2).pair("TOTAL", cur + n2(t.total)).size(1, 1).bold(false);
+    else b.pair("TOTAL", cur + n2(t.total));
     b.sep();
 
     if (s.footer) b.align("center").centered(s.footer).align("left");
@@ -117,8 +121,8 @@
   function testPage(s) {
     const cols = Number(s.charsPerLine) || 32;
     const b = new Builder(cols);
-    b.align("center").bold(true).size(2, 2).line("TEST").size(1, 1).bold(false);
-    b.line((s.shopName ? ascii(s.shopName) + " - " : "") + "printer OK").align("left").sep();
+    // Plain text only: no bold or double size, to keep power draw low.
+    b.align("center").line("TEST PRINT").line("printer OK").align("left").sep();
     let ruler = "";
     for (let i = 1; i <= cols; i++) ruler += i % 10;
     b.line(ruler);

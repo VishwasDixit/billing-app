@@ -32,6 +32,9 @@ const DEFAULT_SETTINGS = {
   printMethod: "bluetooth", // bluetooth | serial | rawbt | browser
   charsPerLine: 32,
   cutPaper: false,
+  largeText: false, // double-size shop name & total (more power per line)
+  slowMode: false,
+  printerChannels: {}, // printer name -> characteristic UUID chosen in diagnostics
 };
 
 const SAMPLE_MENU = [
@@ -292,6 +295,8 @@ $("#settingsBtn").addEventListener("click", () => {
     form[key].value = settings[key];
   }
   form.cutPaper.checked = !!settings.cutPaper;
+  form.largeText.checked = !!settings.largeText;
+  form.slowMode.checked = !!settings.slowMode;
   form.billNo.value = billNo;
   $("#settingsDialog").showModal();
 });
@@ -311,6 +316,8 @@ $("#settingsDialog").addEventListener("close", () => {
     printMethod: form.printMethod.value,
     charsPerLine: Math.min(64, Math.max(16, parseInt(form.charsPerLine.value, 10) || 32)),
     cutPaper: form.cutPaper.checked,
+    largeText: form.largeText.checked,
+    slowMode: form.slowMode.checked,
   };
   billNo = Math.max(1, parseInt(form.billNo.value, 10) || 1);
   save(KEYS.settings, settings);
@@ -369,22 +376,55 @@ function buildReceipt() {
 /* ================= Direct printer connection ================= */
 // GATT services used by common BLE thermal printers.
 const BLE_SERVICES = [
-  0x18f0, 0xff00, 0xffe0, 0xae30, 0xfee7, 0xae3a, 0xff80,
+  0x18f0, 0xff00, 0xffe0, 0xae30, 0xae3a,
   "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
   "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+];
+const uuid16 = (n) => `0000${n.toString(16).padStart(4, "0")}-0000-1000-8000-00805f9b34fb`;
+// Known print-data characteristics, most common first. Other writable
+// characteristics are often control/firmware channels that reset the printer.
+const PRINT_CHARS = [
+  uuid16(0x2af1), uuid16(0xff02), uuid16(0xae01), uuid16(0xffe1),
+  "49535343-8841-43f4-a8d4-ecbe34729bb3",
+  "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
 ];
 const SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const printer = { device: null, char: null, port: null };
+const printer = { device: null, char: null, channels: [], port: null };
 
-async function findWritableChar(server) {
+function shortUuid(u) {
+  const m = /^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/i.exec(u);
+  return m ? "0x" + m[1].toUpperCase() : u;
+}
+
+async function listChannels(server) {
+  const out = [];
   for (const svc of await server.getPrimaryServices()) {
     for (const c of await svc.getCharacteristics()) {
-      if (c.properties.writeWithoutResponse || c.properties.write) return c;
+      const p = c.properties;
+      out.push({
+        service: svc.uuid,
+        uuid: c.uuid,
+        char: c,
+        writable: !!(p.write || p.writeWithoutResponse),
+        props: ["read", "write", "writeWithoutResponse", "notify", "indicate"].filter((k) => p[k]),
+      });
     }
   }
-  throw new Error("Connected, but this printer has no writable channel the app recognises. Try the RawBT (Android) or Bluetooth serial (Mac) print method in Settings.");
+  return out;
+}
+
+function pickChannel(channels, deviceName) {
+  const writable = channels.filter((ch) => ch.writable);
+  const saved = settings.printerChannels?.[deviceName];
+  return (
+    writable.find((ch) => ch.uuid === saved) ||
+    PRINT_CHARS.map((u) => writable.find((ch) => ch.uuid === u)).find(Boolean) ||
+    // Unknown printer: skip 0xFExx services (vendor/firmware-update channels).
+    writable.find((ch) => !/^0000fe/i.test(ch.service)) ||
+    null
+  );
 }
 
 async function bleConnect(pickNew) {
@@ -397,28 +437,49 @@ async function bleConnect(pickNew) {
     printer.device.addEventListener("gattserverdisconnected", () => {
       printer.char = null;
       updatePrinterUI();
+      renderDiag();
     });
   }
   if (!printer.char || !printer.device.gatt.connected) {
     const server = await printer.device.gatt.connect();
-    printer.char = await findWritableChar(server);
+    printer.channels = await listChannels(server);
+    const ch = pickChannel(printer.channels, printer.device.name);
+    if (!ch) throw new Error("Connected, but this printer has no print channel the app recognises. Open Settings → Diagnose printer, or try the RawBT (Android) print method.");
+    printer.char = ch.char;
   }
   updatePrinterUI();
 }
 
+async function bleWrite(c, bytes) {
+  const withResp = c.properties.write; // printer confirms each chunk: built-in flow control
+  const gap = settings.slowMode ? 100 : 40;
+  let sent = 0;
+  try {
+    for (; sent < bytes.length; sent += 20) {
+      const chunk = bytes.slice(sent, sent + 20);
+      if (withResp) {
+        await c.writeValueWithResponse(chunk);
+        if (settings.slowMode) await sleep(gap);
+      } else {
+        await c.writeValueWithoutResponse(chunk);
+        await sleep(gap);
+      }
+    }
+  } catch (err) {
+    if (printer.device && !printer.device.gatt.connected) {
+      throw new Error(
+        `Printer disconnected while printing (after ${sent} of ${bytes.length} bytes).\n\n` +
+          "If the printer switched off: charge it fully, keep \u201cLarge shop name & total\u201d off, and turn on Slow mode in Settings. " +
+          "Use Settings → Diagnose printer to try each channel with a tiny \u201cHello\u201d print."
+      );
+    }
+    throw err;
+  }
+}
+
 async function bleSend(bytes) {
   await bleConnect(false);
-  const c = printer.char;
-  const noResp = c.properties.writeWithoutResponse;
-  for (let i = 0; i < bytes.length; i += 20) {
-    const chunk = bytes.slice(i, i + 20);
-    if (noResp) {
-      await c.writeValueWithoutResponse(chunk);
-      await sleep(15); // slow printers drop data if flooded
-    } else {
-      await c.writeValueWithResponse(chunk);
-    }
-  }
+  await bleWrite(printer.char, bytes);
 }
 
 async function serialConnect(pickNew) {
@@ -499,14 +560,103 @@ $("#connectBtn").addEventListener("click", () =>
 $("#testPrintBtn").addEventListener("click", () => {
   // Use the values currently in the form, even before saving.
   const form = $("#settingsForm");
-  const s = { ...settings, printMethod: form.printMethod.value, charsPerLine: parseInt(form.charsPerLine.value, 10) || 32, cutPaper: form.cutPaper.checked };
+  const s = {
+    ...settings,
+    printMethod: form.printMethod.value,
+    charsPerLine: parseInt(form.charsPerLine.value, 10) || 32,
+    cutPaper: form.cutPaper.checked,
+    slowMode: form.slowMode.checked,
+  };
   if (s.printMethod === "browser") return alert("Test print is for the direct printer methods. Choose Bluetooth, Bluetooth serial or RawBT.");
-  const prev = settings.printMethod;
-  settings.printMethod = s.printMethod;
+  const prev = settings;
+  settings = s;
   withPrinter(() => sendToPrinter(EscPos.testPage(s))).finally(() => {
-    settings.printMethod = prev;
+    settings = { ...prev, printerChannels: s.printerChannels };
     updatePrinterUI();
   });
+});
+
+/* ================= Printer diagnostics ================= */
+const HELLO = new Uint8Array([0x1b, 0x40, ...[..."Hello\n"].map((c) => c.charCodeAt(0)), 0x0a, 0x0a]);
+let diagLog = [];
+
+function logDiag(msg) {
+  diagLog.push(`${new Date().toLocaleTimeString()}  ${msg}`);
+  renderDiag();
+}
+
+function renderDiag() {
+  if (!$("#diagDialog").open) return;
+  const d = printer.device;
+  const connected = !!(d && d.gatt.connected);
+  $("#diagStatus").textContent = d ? `${d.name || "Unnamed printer"} \u2014 ${connected ? "connected" : "disconnected"}` : "No printer connected.";
+  $("#diagConnect").textContent = d ? (connected ? "Choose another printer" : "Reconnect") : "Connect printer";
+
+  const saved = d && settings.printerChannels?.[d.name];
+  $("#diagChannels").innerHTML = connected && printer.channels.length
+    ? printer.channels
+        .map((ch, i) => {
+          const inUse = printer.char === ch.char;
+          return `<div class="diag-ch${inUse ? " in-use" : ""}">
+            <div>
+              <div class="diag-uuid">${esc(shortUuid(ch.uuid))}${inUse ? ' <span class="tag">in use</span>' : ""}${ch.uuid === saved ? ' <span class="tag">saved</span>' : ""}</div>
+              <div class="diag-meta">service ${esc(shortUuid(ch.service))} \u00b7 ${esc(ch.props.join(", ") || "none")}</div>
+            </div>
+            ${ch.writable ? `<div class="diag-actions">
+              <button type="button" class="btn btn-sm" data-hello="${i}">Send Hello</button>
+              <button type="button" class="btn btn-sm" data-use="${i}">Use this</button>
+            </div>` : ""}
+          </div>`;
+        })
+        .join("")
+    : `<div class="empty">${d ? "Reconnect to list the printer's channels." : "Connect to list the printer's channels."}</div>`;
+  $("#diagLog").textContent = diagLog.join("\n");
+  $("#diagLog").scrollTop = 1e6;
+}
+
+$("#diagBtn").addEventListener("click", () => {
+  if (settings.printMethod !== "bluetooth") logDiag("Note: diagnostics use the Bluetooth printer method.");
+  $("#diagDialog").showModal();
+  renderDiag();
+});
+
+$("#diagConnect").addEventListener("click", async () => {
+  const pickNew = !printer.device || printer.device.gatt.connected;
+  logDiag(pickNew ? "Choosing printer..." : "Reconnecting...");
+  try {
+    printer.char = null;
+    await bleConnect(pickNew);
+    const ch = printer.channels.find((c) => c.char === printer.char);
+    logDiag(`Connected to ${printer.device.name || "printer"}. ${printer.channels.length} channels found; auto-picked ${shortUuid(ch.uuid)}.`);
+  } catch (err) {
+    const msg = explain(err);
+    if (msg) logDiag("Error: " + msg);
+  }
+  renderDiag();
+});
+
+$("#diagChannels").addEventListener("click", async (e) => {
+  const helloIdx = e.target.dataset.hello;
+  const useIdx = e.target.dataset.use;
+  if (useIdx != null) {
+    const ch = printer.channels[useIdx];
+    printer.char = ch.char;
+    settings.printerChannels = { ...settings.printerChannels, [printer.device.name]: ch.uuid };
+    save(KEYS.settings, settings);
+    logDiag(`Will print to ${shortUuid(ch.uuid)} for ${printer.device.name}.`);
+    updatePrinterUI();
+  }
+  if (helloIdx != null) {
+    const ch = printer.channels[helloIdx];
+    logDiag(`Sending Hello to ${shortUuid(ch.uuid)}...`);
+    try {
+      await bleWrite(ch.char, HELLO);
+      await sleep(1500);
+      logDiag(printer.device.gatt.connected ? "Sent. Did the printer print \u201cHello\u201d?" : "Sent, but the printer disconnected afterwards (it may have reset). Avoid this channel.");
+    } catch (err) {
+      logDiag("Error: " + (explain(err) || err));
+    }
+  }
 });
 
 function startNextBill() {
