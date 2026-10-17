@@ -68,4 +68,4 @@ Cheap Bluetooth thermal printers (e.g. Seznik) have no driver. The app sends ESC
 
 If the printer switches off while printing, charge it and keep **Print logo** and **Large text** off. Close other printer apps (e.g. Bill Sarthy) first, because the printer accepts only one connection at a time. Bluetooth from a web page doesn't work on iPhone. Use Android or a computer.
 
-The v1 single-page app is kept in `legacy/` for reference.
+The v1 single-page app is kept in `docs/` (still served by GitHub Pages at https://vishwasdixit.github.io/billing-app/ until the switch to Vercel is done).
