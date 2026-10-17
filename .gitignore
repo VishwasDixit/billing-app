@@ -7,3 +7,5 @@ dist/
 Claude.pdf
 .DS_Store
 .claude/
+.env*
+!.env.example

@@ -25,7 +25,7 @@ npm run dev
 ```
 Then open http://localhost:5173.
 
-Without `MONGODB_URI` set, the local API starts a built-in MongoDB that keeps its data in `.data/`. To make your account the admin, copy `.env.example` to `.env.local` and set `ADMIN_EMAIL`.
+The local API always uses a built-in MongoDB that keeps its data in `.data/`, even if `.env.local` contains the live `MONGODB_URI` (which `vercel link` writes there). To deliberately run against the live database, start it with `DEV_USE_REMOTE_DB=1 npm run dev`. To make your account the admin, copy `.env.example` to `.env.local` and set `ADMIN_EMAIL`.
 
 To run the tests (they use a temporary in-memory MongoDB):
 ```bash

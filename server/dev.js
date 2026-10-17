@@ -12,7 +12,11 @@ for (const file of [".env.local", ".env"]) {
   if (!fs.existsSync(p)) continue;
   for (const line of fs.readFileSync(p, "utf8").split("\n")) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    if (!m || process.env[m[1]] !== undefined) continue;
+    // `vercel link` writes the live database URI into .env.local. Local testing must not
+    // touch real shop data, so it's only used when DEV_USE_REMOTE_DB=1 is set explicitly.
+    if (m[1] === "MONGODB_URI" && process.env.DEV_USE_REMOTE_DB !== "1") continue;
+    process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
   }
 }
 
