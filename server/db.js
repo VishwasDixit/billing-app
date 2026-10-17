@@ -1,4 +1,5 @@
 import { MongoClient } from "mongodb";
+import { HttpError } from "./http.js";
 
 // Reuse one client across serverless invocations (and hot reloads in dev).
 const g = globalThis;
@@ -6,7 +7,7 @@ const g = globalThis;
 export async function getDb() {
   if (!g.__billingDb) {
     const uri = process.env.MONGODB_URI;
-    if (!uri) throw new Error("MONGODB_URI is not set");
+    if (!uri) throw new HttpError(500, "Server setup problem: MONGODB_URI is not set in Vercel → Settings → Environment Variables.");
     g.__billingDb = (async () => {
       const client = new MongoClient(uri, { maxPoolSize: 5 });
       await client.connect();
@@ -16,7 +17,11 @@ export async function getDb() {
       return db;
     })().catch((err) => {
       g.__billingDb = null;
-      throw err;
+      if (err instanceof HttpError) throw err;
+      console.error("MongoDB connection failed:", err);
+      throw new HttpError(500, "Can't connect to the database. Check MONGODB_URI (password) and Atlas Network Access (0.0.0.0/0).", {
+        detail: describeDbError(err),
+      });
     });
   }
   return g.__billingDb;
@@ -43,4 +48,11 @@ async function ensureIndexes(db) {
       { unique: true, partialFilterExpression: { razorpayPaymentId: { $type: "string" } } }
     ),
   ]);
+}
+
+// Short, secret-free reason for a failed connection (shown on /api/health).
+export function describeDbError(err) {
+  return String(err?.message || err)
+    .replace(/mongodb(\+srv)?:\/\/\S+/gi, "[connection string]")
+    .slice(0, 200);
 }

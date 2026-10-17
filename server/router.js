@@ -1,6 +1,6 @@
-import { getDb } from "./db.js";
+import { getDb, describeDbError } from "./db.js";
 import { HttpError, readBody, send, sendError } from "./http.js";
-import { requireUser } from "./auth.js";
+import { requireUser, jwtSecretOk } from "./auth.js";
 import { subscriptionStatus } from "./subscription.js";
 import authRoutes from "./routes/auth.js";
 import shopRoutes from "./routes/shop.js";
@@ -33,6 +33,8 @@ export async function handle(req, res) {
     // On Vercel every /api/* request is rewritten to /api?path=...
     const path = "/" + (url.searchParams.get("path") ?? url.pathname.replace(/^\/api\/?/, "")).replace(/^\/+/, "");
     url.searchParams.delete("path");
+
+    if (path === "/health" && req.method === "GET") return send(res, 200, await health());
 
     let match = null;
     let methodMismatch = false;
@@ -67,4 +69,26 @@ export async function handle(req, res) {
   } catch (err) {
     return sendError(res, err);
   }
+}
+
+// Setup check for the deployed app: says which settings exist, never their values.
+async function health() {
+  const out = {
+    database: "not checked",
+    MONGODB_URI: !!process.env.MONGODB_URI,
+    JWT_SECRET: jwtSecretOk(),
+    ADMIN_EMAIL: !!process.env.ADMIN_EMAIL,
+    UPI_ID: !!process.env.UPI_ID,
+    RAZORPAY_KEYS: !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET),
+    RAZORPAY_WEBHOOK_SECRET: !!process.env.RAZORPAY_WEBHOOK_SECRET,
+  };
+  try {
+    const db = await getDb();
+    await db.command({ ping: 1 });
+    out.database = "connected";
+  } catch (err) {
+    out.database = "error: " + (err.extra?.detail || describeDbError(err));
+  }
+  out.ok = out.database === "connected" && out.JWT_SECRET && out.ADMIN_EMAIL;
+  return out;
 }

@@ -6,11 +6,20 @@ import { HttpError, parseCookies, cookie } from "./http.js";
 const COOKIE = "bt";
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
+export const jwtSecretOk = () => (process.env.JWT_SECRET || "").trim().length >= 16;
+
 function secret() {
-  const s = process.env.JWT_SECRET;
-  if (!s || s.length < 16) throw new Error("JWT_SECRET must be set (16+ characters)");
-  return s;
+  if (!jwtSecretOk()) {
+    throw new HttpError(
+      500,
+      "Server setup problem: JWT_SECRET is missing or shorter than 16 characters. Add it in Vercel → Settings → Environment Variables, then redeploy."
+    );
+  }
+  return process.env.JWT_SECRET.trim();
 }
+
+// Call before creating anything, so a setup problem never leaves a half-made account.
+export const assertAuthConfigured = () => void secret();
 
 export const hashPassword = (pw) => bcrypt.hash(pw, 10);
 export const checkPassword = (pw, hash) => bcrypt.compare(pw, hash);

@@ -87,6 +87,29 @@ describe("auth and shops", () => {
     expect((await c("POST", "/auth/login", { email: "DUP@shop.test", password: "secret12" })).status).toBe(200);
   });
 
+  it("reports setup status on /health without revealing values", async () => {
+    const r = await client()("GET", "/health");
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, database: "connected", JWT_SECRET: true, MONGODB_URI: true, ADMIN_EMAIL: true });
+    expect(JSON.stringify(r.body)).not.toContain("test-secret");
+  });
+
+  it("explains a missing JWT_SECRET and creates nothing", async () => {
+    const saved = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = "short";
+    try {
+      const c = client();
+      const r = await c("POST", "/auth/register", { shopName: "No Secret", name: "Owner", phone: "9876543210", email: "nosecret@shop.test", password: "secret12" });
+      expect(r.status).toBe(500);
+      expect(r.body.error).toMatch(/JWT_SECRET/);
+      expect((await client()("GET", "/health")).body.JWT_SECRET).toBe(false);
+    } finally {
+      process.env.JWT_SECRET = saved;
+    }
+    // The email is still free once the secret is fixed.
+    await registered("nosecret@shop.test");
+  });
+
   it("requires login", async () => {
     expect((await client()("GET", "/menu")).status).toBe(401);
   });

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { HttpError, respond } from "../http.js";
-import { hashPassword, checkPassword, sessionCookie, clearCookie, publicUser, isAdminEmail } from "../auth.js";
+import { hashPassword, checkPassword, sessionCookie, clearCookie, publicUser, isAdminEmail, assertAuthConfigured } from "../auth.js";
 import { TRIAL_DAYS } from "../subscription.js";
 import { defaultMenu, GRILLHIVE_SHOP } from "../seed/grillhive-menu.js";
 import { publicShop } from "./shop.js";
@@ -50,6 +50,7 @@ export default [
     "/auth/register",
     async ({ db, body }) => {
       const input = Register.parse(body);
+      assertAuthConfigured();
       if (await db.collection("users").findOne({ email: input.email })) {
         throw new HttpError(409, "An account with this email already exists. Please log in.");
       }
