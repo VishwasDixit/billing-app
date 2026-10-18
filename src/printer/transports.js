@@ -19,6 +19,13 @@ const SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export const printer = { device: null, char: null, channels: [], port: null };
+
+// iPhone / iPad: every browser there uses Apple's WebKit, which has no Bluetooth for web pages.
+export const isIOS = () =>
+  /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+export const BLUEFY_URL = "https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055";
+const IOS_HELP =
+  "iPhone browsers (Safari and Chrome) can't use Bluetooth printers. Install the free “Bluefy – Web BLE Browser” app from the App Store, open this app's link in Bluefy, and print from there. Or tap PDF to share the bill.";
 const listeners = new Set();
 export const onPrinterChange = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 const changed = () => listeners.forEach((fn) => fn());
@@ -76,7 +83,7 @@ export function pickChannel(channels, deviceName) {
 
 export async function bleConnect(pickNew) {
   if (!navigator.bluetooth) {
-    throw new Error("This browser can't use Bluetooth. Open the app in Google Chrome (Android or computer), or pick another print method in Settings.");
+    throw new Error(isIOS() ? IOS_HELP : "This browser can't use Bluetooth. Open the app in Google Chrome (Android or computer), or pick another print method in Settings.");
   }
   if (pickNew || !printer.device) {
     printer.device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BLE_SERVICES });
@@ -103,11 +110,15 @@ export async function bleWrite(c, bytes, slowMode) {
   try {
     for (; sent < bytes.length; sent += 20) {
       const chunk = bytes.slice(sent, sent + 20);
-      if (withResp) {
+      if (withResp && c.writeValueWithResponse) {
         await c.writeValueWithResponse(chunk);
         if (slowMode) await sleep(gap);
-      } else {
+      } else if (!withResp && c.writeValueWithoutResponse) {
         await c.writeValueWithoutResponse(chunk);
+        await sleep(gap);
+      } else {
+        // Older Web Bluetooth (e.g. some iPhone BLE browsers) only has writeValue().
+        await c.writeValue(chunk);
         await sleep(gap);
       }
     }

@@ -32,7 +32,14 @@ export function CustomerPicker({ value, onChange, currency }) {
   return (
     <div className="cust-picker">
       <div style={{ display: "flex", gap: 6 }}>
-        <input className="input" placeholder="Customer name or phone…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+        <input
+          className="input"
+          placeholder="Customer name or phone…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          autoFocus={window.matchMedia("(min-width: 861px)").matches}
+          enterKeyHint="search"
+        />
         <button type="button" className="btn" onClick={() => setAdding(true)}>+ New</button>
       </div>
       <div className="cust-list">

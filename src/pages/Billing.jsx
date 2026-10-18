@@ -29,6 +29,11 @@ export default function Billing() {
   const [customer, setCustomer] = useState(null); // udhar customer
   const [paidNow, setPaidNow] = useState(0);
   const [cartOpen, setCartOpen] = useState(false);
+  // Stop the menu behind the full-screen bill sheet from scrolling on phones.
+  useEffect(() => {
+    document.body.classList.toggle("sheet-open", cartOpen);
+    return () => document.body.classList.remove("sheet-open");
+  }, [cartOpen]);
   const [busy, setBusy] = useState("");
   const [printError, setPrintError] = useState(null);
   const [showPictures] = useShowPictures();
@@ -167,8 +172,8 @@ export default function Billing() {
                 Clear
               </button>
             )}
-            <button className="btn btn-ghost btn-sm cart-close" onClick={() => setCartOpen(false)} aria-label="Close">
-              ✕
+            <button className="btn btn-ghost btn-sm cart-close" onClick={() => setCartOpen(false)}>
+              + Add items
             </button>
           </div>
         </div>

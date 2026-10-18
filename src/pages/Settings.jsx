@@ -11,7 +11,7 @@ import { resizeLogo } from "../lib/image.js";
 import { useShowPictures } from "../lib/prefs.js";
 import { LANGUAGE_OPTIONS, DEFAULT_LANGUAGE, DEFAULT_TEMPLATE, reminderText } from "../../shared/messages.js";
 import {
-  printer, bleConnect, bleWrite, shortUuid, saveChannel, savedChannelFor, onPrinterChange, explainPrintError,
+  printer, bleConnect, bleWrite, shortUuid, saveChannel, savedChannelFor, onPrinterChange, explainPrintError, isIOS, BLUEFY_URL,
 } from "../printer/transports.js";
 
 const pick = (s) => ({
@@ -162,6 +162,7 @@ export default function Settings() {
         <div className="cards">
           <section className="card stack">
             <h2>Printer</h2>
+            {isIOS() && !navigator.bluetooth && <IPhonePrintHelp />}
             <div className="field">
               Paper size
               <Seg
@@ -214,6 +215,35 @@ export default function Settings() {
 
       {diag && <Diagnostics slowMode={f.printer.slowMode} onClose={() => setDiag(false)} />}
       {pw && <PasswordModal onClose={() => setPw(false)} />}
+    </div>
+  );
+}
+
+// iPhone browsers can't reach Bluetooth printers; Bluefy (a free BLE-enabled browser) can.
+function IPhonePrintHelp() {
+  const toast = useToast();
+  const link = window.location.origin;
+  return (
+    <div className="ios-help">
+      <b>Printing from iPhone</b>
+      <p className="small" style={{ margin: "4px 0 8px" }}>
+        Apple doesn't let Safari or Chrome on iPhone connect to Bluetooth printers. Use the free <b>Bluefy</b> browser instead:
+      </p>
+      <ol className="small" style={{ margin: "0 0 10px", paddingLeft: 18, lineHeight: 1.6 }}>
+        <li>Install <b>Bluefy – Web BLE Browser</b> from the App Store.</li>
+        <li>Copy this app's link and open it in Bluefy, then log in.</li>
+        <li>Tap <b>Connect</b> above Print bill and pick your printer.</li>
+      </ol>
+      <div className="btn-row">
+        <a className="btn btn-sm btn-primary" href={BLUEFY_URL} target="_blank" rel="noopener noreferrer">Get Bluefy</a>
+        <button
+          className="btn btn-sm"
+          onClick={() => navigator.clipboard?.writeText(link).then(() => toast("Link copied. Paste it in Bluefy."), () => toast(link))}
+        >
+          Copy app link
+        </button>
+      </div>
+      <p className="hint" style={{ margin: "8px 0 0" }}>Until then, use <b>PDF</b> on the bill to share it on WhatsApp.</p>
     </div>
   );
 }
