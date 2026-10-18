@@ -1,13 +1,14 @@
 // Ways to get ESC/POS bytes to the printer: BLE (Web Bluetooth), Bluetooth
 // serial (Web Serial) and the RawBT Android app. Ported from the v1 app.
 
-// GATT services used by common BLE thermal printers.
+const uuid16 = (n) => `0000${n.toString(16).padStart(4, "0")}-0000-1000-8000-00805f9b34fb`;
+// GATT services used by common BLE thermal printers. Written out in full: some
+// Web Bluetooth browsers (e.g. Bluefy on iPhone) don't accept 16-bit numbers.
 const BLE_SERVICES = [
-  0x18f0, 0xff00, 0xffe0, 0xae30, 0xae3a,
+  uuid16(0x18f0), uuid16(0xff00), uuid16(0xffe0), uuid16(0xae30), uuid16(0xae3a),
   "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
   "49535343-fe7d-4ae5-8fa9-9fafd205e455",
 ];
-const uuid16 = (n) => `0000${n.toString(16).padStart(4, "0")}-0000-1000-8000-00805f9b34fb`;
 // Known print-data characteristics, most common first. Other writable
 // characteristics are often control/firmware channels that reset the printer.
 const PRINT_CHARS = [
@@ -52,16 +53,56 @@ export function shortUuid(u) {
   return m ? "0x" + m[1].toUpperCase() : u;
 }
 
+// Lists the printer's services/characteristics. Falls back to asking for each known
+// UUID one by one, for Web Bluetooth browsers without the "list all" calls.
+async function listServices(server) {
+  try {
+    const all = await server.getPrimaryServices();
+    if (all.length) return all;
+  } catch {
+    /* not supported: ask one by one */
+  }
+  const found = [];
+  for (const u of BLE_SERVICES) {
+    try {
+      found.push(await server.getPrimaryService(u));
+    } catch {
+      /* printer doesn't have this service */
+    }
+  }
+  return found;
+}
+
+async function listCharacteristics(svc) {
+  try {
+    const all = await svc.getCharacteristics();
+    if (all.length) return all;
+  } catch {
+    /* not supported: ask one by one */
+  }
+  const found = [];
+  for (const u of PRINT_CHARS) {
+    try {
+      found.push(await svc.getCharacteristic(u));
+    } catch {
+      /* not in this service */
+    }
+  }
+  return found;
+}
+
 async function listChannels(server) {
   const out = [];
-  for (const svc of await server.getPrimaryServices()) {
-    for (const c of await svc.getCharacteristics()) {
-      const p = c.properties;
+  for (const svc of await listServices(server)) {
+    for (const c of await listCharacteristics(svc)) {
+      const p = c.properties || {};
+      // Some browsers don't report properties; known print channels are writable anyway.
+      const known = PRINT_CHARS.includes(c.uuid);
       out.push({
         service: svc.uuid,
         uuid: c.uuid,
         char: c,
-        writable: !!(p.write || p.writeWithoutResponse),
+        writable: !!(p.write || p.writeWithoutResponse) || (!c.properties && known),
         props: ["read", "write", "writeWithoutResponse", "notify", "indicate"].filter((k) => p[k]),
       });
     }
@@ -104,7 +145,7 @@ export async function bleConnect(pickNew) {
 }
 
 export async function bleWrite(c, bytes, slowMode) {
-  const withResp = c.properties.write; // printer confirms each chunk: built-in flow control
+  const withResp = !!c.properties?.write; // printer confirms each chunk: built-in flow control
   const gap = slowMode ? 100 : 40;
   let sent = 0;
   try {
@@ -187,6 +228,10 @@ export function explainPrintError(err) {
   if (err?.name === "NotFoundError" && /cancel/i.test(err.message)) return null;
   if (err?.name === "NotFoundError") return "No printer selected. Make sure the printer is on, Bluetooth is on, and no other app (e.g. Bill Sarthy) is connected to it.";
   if (err?.name === "NetworkError") return "Couldn't reach the printer. Turn it off and on, close other apps connected to it, then try again.";
-  if (err?.name === "SecurityError" || err?.name === "NotAllowedError") return "Bluetooth permission was blocked. Allow Bluetooth for Chrome and try again.";
-  return err?.message || String(err);
+  if (err?.name === "SecurityError" || err?.name === "NotAllowedError") {
+    return isIOS()
+      ? "Bluetooth permission was blocked. On iPhone open Settings → Bluefy → turn on Bluetooth, then try again."
+      : "Bluetooth permission was blocked. Allow Bluetooth for Chrome (phone Settings → Apps → Chrome → Permissions) and try again.";
+  }
+  return `${err?.message || String(err)}${err?.name && err.name !== "Error" ? ` (${err.name})` : ""}`;
 }
