@@ -141,6 +141,7 @@ export default function Plans() {
                       <span className={"tag " + (p.status === "approved" ? "good" : p.status === "pending" ? "warn" : "bad")}>
                         {p.status === "pending" ? "waiting for approval" : p.status}
                       </span>
+                      {p.status === "pending" && p.autoCheck && <div className="hint">{p.autoCheck}</div>}
                     </td>
                   </tr>
                 ))}

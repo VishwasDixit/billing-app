@@ -47,6 +47,27 @@ const RZP_API = "https://api.razorpay.com/v1";
 const MAX_PAYMENT_AGE_DAYS = 7;
 const rupees = (paise) => `₹${(paise / 100).toLocaleString("en-IN")}`;
 
+async function razorpayError(r) {
+  let msg = "";
+  try {
+    msg = (await r.json())?.error?.description || "";
+  } catch {
+    /* not JSON */
+  }
+  return `Razorpay HTTP ${r.status}${msg ? ": " + msg : ""}`;
+}
+
+// Health check: are the API keys accepted by Razorpay?
+export async function razorpayKeyStatus() {
+  if (!razorpayKeys()) return "not set";
+  try {
+    const r = await razorpayApi("/payments?count=1");
+    return r.ok ? "ok" : await razorpayError(r);
+  } catch (err) {
+    return "network error: " + (err?.message || err);
+  }
+}
+
 async function razorpayApi(path, init = {}) {
   const keys = razorpayKeys();
   return fetch(RZP_API + path, {
@@ -67,10 +88,10 @@ export async function checkRazorpayPayment(paymentId, plan, now = Date.now()) {
   try {
     const r = await razorpayApi(`/payments/${encodeURIComponent(paymentId)}`);
     if (r.status === 400 || r.status === 404) return { ok: false, reason: "Razorpay has no payment with this ID. Please check it and try again." };
-    if (!r.ok) return { unreachable: true };
+    if (!r.ok) return { unreachable: true, why: await razorpayError(r) };
     p = await r.json();
-  } catch {
-    return { unreachable: true };
+  } catch (err) {
+    return { unreachable: true, why: "network: " + (err?.message || err) };
   }
   const need = plan.amount * 100;
   if (p.currency !== "INR") return { ok: false, reason: "This payment isn't in rupees." };
@@ -83,10 +104,10 @@ export async function checkRazorpayPayment(paymentId, plan, now = Date.now()) {
         method: "POST",
         body: JSON.stringify({ amount: p.amount, currency: "INR" }),
       });
-      if (!c.ok) return { unreachable: true };
+      if (!c.ok) return { unreachable: true, why: "capture: " + (await razorpayError(c)) };
       p = await c.json();
-    } catch {
-      return { unreachable: true };
+    } catch (err) {
+      return { unreachable: true, why: "capture network: " + (err?.message || err) };
     }
   }
   if (p.status !== "captured") {
@@ -122,7 +143,11 @@ export async function recheckPendingLinks(db, filter = {}, limit = 20) {
     // Pending entries can be older than the 7-day window: measure age from when it was submitted.
     const res = await checkRazorpayPayment(pay.utr, plan, new Date(pay.createdAt).getTime());
     if (res.ok) approved += (await autoApprove(db, pay, plan)) ? 1 : 0;
-    else if (res.reason) await db.collection("payments").updateOne({ _id: pay._id }, { $set: { autoCheck: res.reason } });
+    else {
+      const note = res.reason || `Couldn't check with Razorpay yet (${res.why}).`;
+      console.warn("Payment auto-check", pay.utr, note);
+      await db.collection("payments").updateOne({ _id: pay._id }, { $set: { autoCheck: note, autoCheckedAt: new Date() } });
+    }
   }
   return approved;
 }
