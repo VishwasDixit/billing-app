@@ -7,6 +7,8 @@ import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { PAPER } from "../printer/receipt.js";
 import { printTest, warmLogo } from "../printer/index.js";
 import { prepareLogo } from "../printer/escpos.js";
+import { resizeLogo } from "../lib/image.js";
+import { useShowPictures } from "../lib/prefs.js";
 import {
   printer, bleConnect, bleWrite, shortUuid, saveChannel, savedChannelFor, onPrinterChange, explainPrintError,
 } from "../printer/transports.js";
@@ -30,6 +32,7 @@ export default function Settings() {
   const [f, setF] = useState(() => pick(shop));
   const [diag, setDiag] = useState(false);
   const [pw, setPw] = useState(false);
+  const [showPictures, setShowPictures] = useShowPictures();
   const { busy, error, run } = useAction();
   const access = accessState(shop);
 
@@ -120,8 +123,12 @@ export default function Settings() {
 
           <section className="card stack">
             <h2>Menu</h2>
-            <p className="muted small" style={{ margin: 0 }}>Add, edit or hide items and set Half/Full prices.</p>
+            <p className="muted small" style={{ margin: 0 }}>Add, edit or hide items, set Half/Full prices and add photos.</p>
             <Link className="btn" to="/menu">Edit menu</Link>
+            <label className="check">
+              <input type="checkbox" checked={showPictures} onChange={(e) => setShowPictures(e.target.checked)} />
+              Show pictures on the billing screen (this device)
+            </label>
           </section>
         </div>
 
@@ -182,35 +189,6 @@ export default function Settings() {
       {pw && <PasswordModal onClose={() => setPw(false)} />}
     </div>
   );
-}
-
-// Resize to max 256 px; PNG keeps transparency, JPEG if PNG is too big.
-async function resizeLogo(file) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((res, rej) => {
-      const i = new Image();
-      i.onload = () => res(i);
-      i.onerror = rej;
-      i.src = url;
-    });
-    const scale = Math.min(1, 256 / Math.max(img.width, img.height));
-    const c = document.createElement("canvas");
-    c.width = Math.round(img.width * scale);
-    c.height = Math.round(img.height * scale);
-    const ctx = c.getContext("2d");
-    ctx.drawImage(img, 0, 0, c.width, c.height);
-    let data = c.toDataURL("image/png");
-    if (data.length > 75000) {
-      ctx.globalCompositeOperation = "destination-over";
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, c.width, c.height);
-      data = c.toDataURL("image/jpeg", 0.85);
-    }
-    return data;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }
 
 function PasswordModal({ onClose }) {

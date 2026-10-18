@@ -65,6 +65,10 @@ export async function handle(req, res) {
     const out = await match.route.handler(ctx);
     if (res.writableEnded) return;
     if (out && out.__response) return send(res, out.status, out.data, out.headers);
+    if (out && out.__raw) {
+      res.writeHead(out.status, { ...out.headers, "Content-Length": out.body.length });
+      return res.end(out.body);
+    }
     return send(res, 200, out ?? { ok: true });
   } catch (err) {
     return sendError(res, err);

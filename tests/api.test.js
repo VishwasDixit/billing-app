@@ -261,3 +261,73 @@ describe("subscriptions", () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe("menu pictures", () => {
+  // Smallest valid PNG (1x1 transparent pixel).
+  const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+  it("gives every seeded item a default picture that exists", async () => {
+    const fs = await import("node:fs");
+    const { c } = await registered("pics@shop.test");
+    const menu = (await c("GET", "/menu")).body;
+    for (const m of menu) {
+      expect(m.image).toMatch(/^\/menu\/[a-z]+\.svg$/);
+      expect(fs.existsSync(new URL(`../public${m.image}`, import.meta.url))).toBe(true);
+    }
+    expect(menu.filter((m) => m.image === "/menu/plate.svg")).toHaveLength(0);
+    const added = (await c("POST", "/menu", { name: "Masala Dosa", category: "South Indian", variants: [{ label: "", price: 80 }] })).body;
+    expect(added.image).toMatch(/^\/menu\/.+\.svg$/);
+  });
+
+  it("uploads, serves, replaces and removes a photo", async () => {
+    const { c } = await registered("photo@shop.test");
+    const item = (await c("GET", "/menu")).body.find((m) => m.name === "Tea");
+
+    const up = await c("PUT", `/menu/${item.id}/image`, { dataUrl: PNG });
+    expect(up.status).toBe(200);
+    expect(up.body.image).toMatch(/^\/api\/menu-images\/[a-f0-9]{24}$/);
+
+    const r = await fetch(base.replace(/\/api$/, "") + up.body.image);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("image/png");
+    expect(r.headers.get("cache-control")).toMatch(/immutable/);
+    expect(Buffer.from(await r.arrayBuffer()).equals(Buffer.from(PNG.split(",")[1], "base64"))).toBe(true);
+
+    // Replacing deletes the old photo.
+    const again = await c("PUT", `/menu/${item.id}/image`, { dataUrl: PNG });
+    expect((await fetch(base.replace(/\/api$/, "") + up.body.image)).status).toBe(404);
+
+    const removed = await c("DELETE", `/menu/${item.id}/image`);
+    expect(removed.body.image).toBe("/menu/tea.svg");
+    expect((await fetch(base.replace(/\/api$/, "") + again.body.image)).status).toBe(404);
+  });
+
+  it("rejects bad or oversized photos and other shops", async () => {
+    const a = await registered("photo-a@shop.test");
+    const b = await registered("photo-b@shop.test");
+    const item = (await a.c("GET", "/menu")).body[0];
+    expect((await a.c("PUT", `/menu/${item.id}/image`, { dataUrl: "data:image/png;base64," + Buffer.from("not an image").toString("base64") })).status).toBe(400);
+    expect((await a.c("PUT", `/menu/${item.id}/image`, { dataUrl: "data:image/svg+xml;base64,PHN2Zy8+" })).status).toBe(400);
+    const big = "data:image/jpeg;base64," + Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(100 * 1024)]).toString("base64");
+    expect((await a.c("PUT", `/menu/${item.id}/image`, { dataUrl: big })).status).toBe(400);
+    expect((await b.c("PUT", `/menu/${item.id}/image`, { dataUrl: PNG })).status).toBe(404);
+    expect((await b.c("DELETE", `/menu/${item.id}/image`)).status).toBe(404);
+    expect((await a.c("PUT", `/menu/${item.id}`, { image: "https://evil.example/x.png" })).status).toBe(400);
+  });
+
+  it("adds default pictures only to items that have none", async () => {
+    const { c, shop } = await registered("legacy-pics@shop.test");
+    const db = await getDb();
+    const { ObjectId } = await import("mongodb");
+    const sid = new ObjectId(shop.id);
+    // Simulate a menu created before pictures existed, plus one custom photo.
+    await db.collection("menuItems").updateMany({ shopId: sid }, { $unset: { image: "" } });
+    const tea = await db.collection("menuItems").findOne({ shopId: sid, name: "Tea" });
+    await c("PUT", `/menu/${tea._id}/image`, { dataUrl: PNG });
+
+    const r = await c("POST", "/menu/default-images");
+    expect(r.body.updated).toBe(79);
+    expect(r.body.menu.find((m) => m.name === "Dal Tadka").image).toBe("/menu/dal.svg");
+    expect(r.body.menu.find((m) => m.name === "Tea").image).toMatch(/^\/api\/menu-images\//);
+  });
+});

@@ -10,6 +10,7 @@ export class HttpError extends Error {
 
 // Handlers return this when they need a status code or headers.
 export const respond = (status, data, headers) => ({ __response: true, status, data, headers });
+export const respondRaw = (status, body, headers) => ({ __raw: true, status, body, headers });
 
 export function send(res, status, data, headers = {}) {
   res.statusCode = status;

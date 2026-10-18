@@ -255,3 +255,19 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .page { padding: 12px; }
 }
 .field .seg { align-self: flex-start; }
+
+/* ---------- Menu pictures ---------- */
+.item-pic { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #f3f1ec; }
+.item-pic.letter { display: grid; place-items: center; font-weight: 700; font-size: 20px; color: #6b5a3e; }
+.menu-grid.with-pics { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
+.menu-grid.with-pics .menu-item { padding: 0 0 10px; overflow: visible; gap: 4px; justify-content: flex-start; }
+.menu-grid.with-pics .menu-item .name, .menu-grid.with-pics .menu-item .price { padding: 0 10px; }
+.menu-grid.with-pics .menu-item .badge { z-index: 1; }
+.tile-pic { height: 92px; aspect-ratio: auto; border-radius: 10px 10px 0 0; }
+.tile-pic.letter { font-size: 28px; }
+.photo-pick { display: flex; gap: 14px; align-items: center; }
+.photo-preview { width: 96px; height: 96px; border-radius: 12px; object-fit: cover; background: #f3f1ec; border: 1px solid var(--border); flex: none; }
+@media (max-width: 860px) {
+  .menu-grid.with-pics { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+  .tile-pic { height: 78px; }
+}

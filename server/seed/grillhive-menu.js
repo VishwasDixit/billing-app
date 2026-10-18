@@ -1,5 +1,6 @@
 // GrillHive "Pure Veg Dhaba" menu: the default menu for every new shop.
 // Items with two prices use variants (Half/Full, Plain/Butter).
+import { defaultImageFor } from "../../shared/menuImages.js";
 
 const one = (name, price, note) => ({ name, variants: [{ label: "", price }], ...(note ? { note } : {}) });
 const hf = (name, half, full) => ({ name, variants: [{ label: "Half", price: half }, { label: "Full", price: full }] });
@@ -116,7 +117,7 @@ export function defaultMenu(shopId) {
   let sort = 0;
   const now = new Date();
   return Object.entries(MENU).flatMap(([category, items]) =>
-    items.map((it) => ({ shopId, category, ...it, active: true, sort: sort++, createdAt: now }))
+    items.map((it) => ({ shopId, category, ...it, image: defaultImageFor(it.name, category), active: true, sort: sort++, createdAt: now }))
   );
 }
 

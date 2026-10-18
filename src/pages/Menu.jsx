@@ -2,6 +2,9 @@ import { useMemo, useState } from "react";
 import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Field, Modal, useAction, useToast } from "../components/ui.jsx";
+import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
+import { menuPhoto } from "../lib/image.js";
+import { ItemPicture } from "../components/ItemPicture.jsx";
 
 const PRESETS = {
   single: [{ label: "", price: 0 }],
@@ -10,7 +13,7 @@ const PRESETS = {
 };
 
 export default function Menu() {
-  const { menu, shop, resetMenu } = useApp();
+  const { menu, shop, resetMenu, addDefaultPictures } = useApp();
   const toast = useToast();
   const cur = shop.currency || "₹";
   const [editing, setEditing] = useState(null);
@@ -27,6 +30,7 @@ export default function Menu() {
     return [...g.entries()];
   }, [menu, q]);
   const categories = [...new Set(menu.map((m) => m.category).filter(Boolean))];
+  const missingPictures = menu.filter((m) => !m.image).length;
 
   return (
     <div className="page">
@@ -40,6 +44,19 @@ export default function Menu() {
         </div>
       </div>
 
+      {missingPictures > 0 && (
+        <div className="card" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <span>{missingPictures} item{missingPictures > 1 ? "s have" : " has"} no picture yet.</span>
+          <button
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={() => run(async () => toast(`Added pictures to ${await addDefaultPictures()} items`))}
+          >
+            Add default pictures
+          </button>
+        </div>
+      )}
+
       <div className="cards">
         {groups.map(([cat, items]) => (
           <div className="card" key={cat} style={{ padding: 0 }}>
@@ -48,6 +65,9 @@ export default function Menu() {
               <tbody>
                 {items.map((m) => (
                   <tr key={m.id} className="click" onClick={() => setEditing(m)}>
+                    <td style={{ width: 52 }}>
+                      <ItemPicture item={m} size={40} />
+                    </td>
                     <td>
                       {m.name} {m.active === false && <span className="tag">hidden</span>}
                       {m.note && <div className="muted small">{m.note}</div>}
@@ -82,10 +102,29 @@ export default function Menu() {
 }
 
 function ItemEditor({ item, categories, onClose }) {
-  const { saveMenuItem, deleteMenuItem } = useApp();
+  const { saveMenuItem, deleteMenuItem, setMenuPhoto, removeMenuPhoto } = useApp();
   const toast = useToast();
   const [f, setF] = useState({ ...item, variants: item.variants.map((v) => ({ ...v })) });
-  const { busy, error, run } = useAction();
+  // null = keep, data URL = new photo, "default" = back to the drawn picture
+  const [photo, setPhoto] = useState(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const { busy, error, setError, run } = useAction();
+
+  const hasPhoto = !!item.image && !isDefaultImage(item.image);
+  const preview =
+    photo && photo !== "default" ? photo : photo === "default" || !hasPhoto ? defaultImageFor(f.name, f.category) : item.image;
+
+  const onPhoto = async (file) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    try {
+      setPhoto(await menuPhoto(file));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
 
   const setVariant = (i, k, v) => setF({ ...f, variants: f.variants.map((x, j) => (j === i ? { ...x, [k]: v } : x)) });
 
@@ -94,7 +133,16 @@ function ItemEditor({ item, categories, onClose }) {
     run(async () => {
       const variants = f.variants.map((v) => ({ label: f.variants.length > 1 ? v.label.trim() : "", price: Number(v.price) || 0 }));
       if (variants.length > 1 && variants.some((v) => !v.label)) throw new Error("Give each price a name, e.g. Half / Full.");
-      await saveMenuItem({ id: f.id, name: f.name, category: f.category, note: f.note || "", variants, active: f.active !== false });
+      const saved = await saveMenuItem({ id: f.id, name: f.name, category: f.category, note: f.note || "", variants, active: f.active !== false });
+      try {
+        if (photo === "default" && hasPhoto) await removeMenuPhoto(saved.id);
+        else if (photo && photo !== "default") await setMenuPhoto(saved.id, photo);
+        // A renamed item without its own photo follows its new name's picture.
+        else if (!hasPhoto && saved.image !== defaultImageFor(f.name, f.category)) await removeMenuPhoto(saved.id);
+      } catch (err) {
+        setF({ ...f, id: saved.id });
+        throw new Error(`Item saved, but the photo couldn't be uploaded: ${err.message}`);
+      }
       toast(f.id ? "Item updated" : "Item added");
       onClose();
     });
@@ -103,6 +151,25 @@ function ItemEditor({ item, categories, onClose }) {
   return (
     <Modal title={f.id ? "Edit item" : "Add item"} onClose={onClose}>
       <form className="stack" onSubmit={save}>
+        <div className="photo-pick">
+          <img src={preview} alt="" className="photo-preview" />
+          <div className="stack" style={{ gap: 6 }}>
+            <label className="btn btn-sm">
+              📷 Take photo
+              <input type="file" accept="image/*" capture="environment" hidden onChange={(e) => (onPhoto(e.target.files[0]), (e.target.value = ""))} />
+            </label>
+            <label className="btn btn-sm">
+              🖼️ Choose photo
+              <input type="file" accept="image/*" hidden onChange={(e) => (onPhoto(e.target.files[0]), (e.target.value = ""))} />
+            </label>
+            {(photo ? photo !== "default" : hasPhoto) && (
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setPhoto(hasPhoto ? "default" : null)}>
+                Use default picture
+              </button>
+            )}
+            {photoBusy && <span className="hint">Preparing photo…</span>}
+          </div>
+        </div>
         <Field label="Name">
           <input required maxLength={60} autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
         </Field>
@@ -155,7 +222,7 @@ function ItemEditor({ item, categories, onClose }) {
           )}
           <span className="spacer" />
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy}>Save</button>
+          <button className="btn btn-primary" disabled={busy || photoBusy}>{busy ? "Saving…" : "Save"}</button>
         </div>
       </form>
     </Modal>

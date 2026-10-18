@@ -7,6 +7,8 @@ import { Modal, Seg, useToast } from "../components/ui.jsx";
 import { printBill } from "../printer/index.js";
 import { connect, connectedName, explainPrintError, onPrinterChange } from "../printer/transports.js";
 import { shareBillPdf } from "../printer/pdf.js";
+import { ItemPicture } from "../components/ItemPicture.jsx";
+import { useShowPictures } from "../lib/prefs.js";
 
 const lineKey = (itemId, variant) => `${itemId}|${variant}`;
 
@@ -26,6 +28,7 @@ export default function Billing() {
   const [cartOpen, setCartOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const [printError, setPrintError] = useState(null);
+  const [showPictures] = useShowPictures();
 
   // Shop defaults may change in Settings.
   useEffect(() => setDiscount(shop.defaultDiscount || { type: "percent", value: 0 }), [shop.defaultDiscount]);
@@ -116,7 +119,7 @@ export default function Billing() {
             </button>
           ))}
         </div>
-        <div className="menu-grid">
+        <div className={"menu-grid" + (showPictures ? " with-pics" : "")}>
           {shown.length === 0 && <div className="empty" style={{ gridColumn: "1/-1" }}>{menu.length ? "No items match." : "Your menu is empty. Tap “Edit menu” to add items."}</div>}
           {shown.map((m, i) => {
             const qty = qtyOf(m.id);
@@ -126,6 +129,7 @@ export default function Billing() {
               showCat && <div key={"c" + m.id} className="cat-title">{m.category || "Other"}</div>,
               <button key={m.id} className="menu-item" onClick={() => tap(m)}>
                 {qty > 0 && <span className="badge">{qty}</span>}
+                {showPictures && <ItemPicture item={m} className="tile-pic" />}
                 <span className="name">{m.name}</span>
                 <span className="price">
                   {m.variants.length > 1 ? prices.map((p) => money(p, cur)).join(" / ") : money(prices[0], cur)}

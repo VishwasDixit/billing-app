@@ -26,6 +26,18 @@ export default defineConfig({
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [/^\/api/],
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
+        // Uploaded menu photos never change (a new photo gets a new URL), so cache them for offline billing.
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith("/api/menu-images/"),
+            handler: "CacheFirst",
+            options: {
+              cacheName: "menu-photos",
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
       },
     }),
   ],

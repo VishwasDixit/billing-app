@@ -1,10 +1,13 @@
 import { z } from "zod";
 import { ObjectId } from "mongodb";
-import { HttpError } from "../http.js";
+import { HttpError, respondRaw } from "../http.js";
 import { subscriptionStatus } from "../subscription.js";
 import { defaultMenu } from "../seed/grillhive-menu.js";
+import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
+const MAX_PHOTO = 90 * 1024; // decoded bytes; the phone resizes photos to ~20–60 KB
+const PHOTO_URL = /^\/api\/menu-images\/[a-f0-9]{24}$/;
 
 export function publicShop(shop, isAdmin = false) {
   const { deviceSeq, ...rest } = shop;
@@ -45,7 +48,27 @@ const MenuItem = z.object({
   variants: z.array(Variant).min(1).max(6),
   active: z.boolean().default(true),
   sort: z.number().optional(),
+  // Only our own pictures: a default illustration or an uploaded photo.
+  image: z
+    .string()
+    .refine((u) => u === "" || isDefaultImage(u) || PHOTO_URL.test(u), "image must be a menu picture")
+    .optional(),
 });
+
+// Checks a data URL really is a PNG / JPEG / WebP by its first bytes.
+function decodePhoto(dataUrl) {
+  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || "");
+  if (!m) throw new HttpError(400, "Photo must be a PNG, JPEG or WebP image.");
+  const buf = Buffer.from(m[2], "base64");
+  if (buf.length > MAX_PHOTO) throw new HttpError(400, "Photo is too large. Please try again (it is resized automatically).");
+  const isPng = buf[0] === 0x89 && buf.toString("ascii", 1, 4) === "PNG";
+  const isJpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  const isWebp = buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP";
+  if (!(isPng || isJpeg || isWebp)) throw new HttpError(400, "That file isn't a valid image.");
+  return { type: isPng ? "image/png" : isJpeg ? "image/jpeg" : "image/webp", data: buf };
+}
+
+const photoId = (url) => (PHOTO_URL.test(url || "") ? new ObjectId(url.slice(-24)) : null);
 
 const oid = (id) => {
   if (!ObjectId.isValid(id)) throw new HttpError(404, "Not found.");
@@ -90,6 +113,7 @@ export default [
         const last = await db.collection("menuItems").find({ shopId: shop._id }).sort({ sort: -1 }).limit(1).next();
         item.sort = (last?.sort ?? -1) + 1;
       }
+      if (!item.image) item.image = defaultImageFor(item.name, item.category);
       const doc = { ...item, shopId: shop._id, createdAt: new Date() };
       doc._id = (await db.collection("menuItems").insertOne(doc)).insertedId;
       return publicItem(doc);
@@ -111,8 +135,10 @@ export default [
     "DELETE",
     "/menu/:id",
     async ({ db, shop, params }) => {
-      const { deletedCount } = await db.collection("menuItems").deleteOne({ _id: oid(params.id), shopId: shop._id });
+      const _id = oid(params.id);
+      const { deletedCount } = await db.collection("menuItems").deleteOne({ _id, shopId: shop._id });
       if (!deletedCount) throw new HttpError(404, "Menu item not found.");
+      await db.collection("menuImages").deleteMany({ shopId: shop._id, itemId: _id });
       return { ok: true };
     },
   ],
@@ -121,9 +147,76 @@ export default [
     "/menu/reset-default",
     async ({ db, shop }) => {
       await db.collection("menuItems").deleteMany({ shopId: shop._id });
+      await db.collection("menuImages").deleteMany({ shopId: shop._id });
       await db.collection("menuItems").insertMany(defaultMenu(shop._id));
       return (await db.collection("menuItems").find({ shopId: shop._id }).sort({ sort: 1 }).toArray()).map(publicItem);
     },
+  ],
+
+  // Menu photos (uploaded or taken with the camera), stored in MongoDB.
+  [
+    "PUT",
+    "/menu/:id/image",
+    async ({ db, shop, params, body }) => {
+      const _id = oid(params.id);
+      const item = await db.collection("menuItems").findOne({ _id, shopId: shop._id });
+      if (!item) throw new HttpError(404, "Menu item not found.");
+      const { type, data } = decodePhoto(z.object({ dataUrl: z.string() }).parse(body).dataUrl);
+      const { insertedId } = await db.collection("menuImages").insertOne({ shopId: shop._id, itemId: _id, type, data, createdAt: new Date() });
+      const updated = await db
+        .collection("menuItems")
+        .findOneAndUpdate({ _id }, { $set: { image: `/api/menu-images/${insertedId}`, updatedAt: new Date() } }, { returnDocument: "after" });
+      const old = photoId(item.image);
+      if (old) await db.collection("menuImages").deleteOne({ _id: old, shopId: shop._id });
+      return publicItem(updated);
+    },
+  ],
+  [
+    "DELETE",
+    "/menu/:id/image",
+    async ({ db, shop, params }) => {
+      const _id = oid(params.id);
+      const item = await db.collection("menuItems").findOne({ _id, shopId: shop._id });
+      if (!item) throw new HttpError(404, "Menu item not found.");
+      const old = photoId(item.image);
+      if (old) await db.collection("menuImages").deleteOne({ _id: old, shopId: shop._id });
+      const updated = await db
+        .collection("menuItems")
+        .findOneAndUpdate({ _id }, { $set: { image: defaultImageFor(item.name, item.category), updatedAt: new Date() } }, { returnDocument: "after" });
+      return publicItem(updated);
+    },
+  ],
+  // Gives every item without a picture its default illustration (menus made before pictures existed).
+  [
+    "POST",
+    "/menu/default-images",
+    async ({ db, shop }) => {
+      const missing = await db
+        .collection("menuItems")
+        .find({ shopId: shop._id, $or: [{ image: { $exists: false } }, { image: "" }] })
+        .toArray();
+      if (missing.length) {
+        await db.collection("menuItems").bulkWrite(
+          missing.map((m) => ({ updateOne: { filter: { _id: m._id }, update: { $set: { image: defaultImageFor(m.name, m.category) } } } }))
+        );
+      }
+      const menu = await db.collection("menuItems").find({ shopId: shop._id }).sort({ sort: 1 }).toArray();
+      return { updated: missing.length, menu: menu.map(publicItem) };
+    },
+  ],
+  // Public so <img> tags can load it; ids are random and a new photo always gets a new id.
+  [
+    "GET",
+    "/menu-images/:id",
+    async ({ db, params }) => {
+      const img = await db.collection("menuImages").findOne({ _id: oid(params.id) });
+      if (!img) throw new HttpError(404, "Picture not found.");
+      return respondRaw(200, Buffer.from(img.data.buffer ?? img.data), {
+        "Content-Type": img.type,
+        "Cache-Control": "public, max-age=31536000, immutable",
+      });
+    },
+    { auth: false },
   ],
 
   // Each phone/computer gets its own bill-number prefix, so offline devices never clash.

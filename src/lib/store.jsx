@@ -166,11 +166,26 @@ export function AppProvider({ children }) {
         return shop;
       },
       loadMenu,
+      // Returns the saved item (new items need its id before a photo can be attached).
       async saveMenuItem(item) {
         const { id, ...body } = item;
-        if (id) await put(`/menu/${id}`, body);
-        else await post("/menu", body);
+        const saved = id ? await put(`/menu/${id}`, body) : await post("/menu", body);
+        await loadMenu();
+        return saved;
+      },
+      async setMenuPhoto(id, dataUrl) {
+        await put(`/menu/${id}/image`, { dataUrl });
         return loadMenu();
+      },
+      async removeMenuPhoto(id) {
+        await del(`/menu/${id}/image`);
+        return loadMenu();
+      },
+      async addDefaultPictures() {
+        const r = await post("/menu/default-images");
+        setMenu(r.menu);
+        await kvSet("menu", r.menu);
+        return r.updated;
       },
       async deleteMenuItem(id) {
         await del(`/menu/${id}`);
