@@ -6,6 +6,7 @@ import { fmtDateTime, money } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { receiptText, reminderText, timeAgo, waLink } from "../lib/udhar.js";
 import { BillDetail } from "./Bills.jsx";
+import { LANGUAGE_OPTIONS, languageFor } from "../../shared/messages.js";
 
 const STATE_TAG = {
   open: ["bad", "Udhar open"],
@@ -214,7 +215,9 @@ function ReceivePayment({ customer, cur, shop, onClose, onSaved }) {
 }
 
 function EditCustomer({ customer, onClose, onSaved }) {
-  const [f, setF] = useState({ name: customer.name, phone: customer.phone || "", address: customer.address || "", note: customer.note || "" });
+  const { shop } = useApp();
+  const [f, setF] = useState({ name: customer.name, phone: customer.phone || "", address: customer.address || "", note: customer.note || "", language: customer.language || "" });
+  const shopLang = LANGUAGE_OPTIONS.find(([c]) => c === languageFor({}, shop))?.[1];
   const { busy, error, run } = useAction();
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return (
@@ -224,6 +227,12 @@ function EditCustomer({ customer, onClose, onSaved }) {
         <Field label="Phone"><input type="tel" inputMode="tel" pattern="[0-9+\- ]{10,15}" maxLength={15} value={f.phone} onChange={set("phone")} /></Field>
         <Field label="Address"><input maxLength={160} value={f.address} onChange={set("address")} /></Field>
         <Field label="Note"><input maxLength={160} value={f.note} onChange={set("note")} /></Field>
+        <Field label="Message language">
+          <select value={f.language} onChange={(e) => setF({ ...f, language: e.target.value })}>
+            <option value="">Shop default ({shopLang})</option>
+            {LANGUAGE_OPTIONS.filter(([c]) => c !== "custom" || shop.reminderLanguage === "custom").map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+          </select>
+        </Field>
         {error && <div className="error">{error}</div>}
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>

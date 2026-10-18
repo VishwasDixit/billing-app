@@ -8,27 +8,8 @@ export function waNumber(phone) {
   return d.length >= 11 && d.length <= 13 ? d : null;
 }
 
-const rs = (n) => "₹" + (Math.round(n * 100) / 100).toLocaleString("en-IN");
-
-export function reminderText(customer, shop) {
-  return [
-    `Namaste ${customer.name} ji 🙏`,
-    `${shop.name} par aapka udhar ${rs(customer.due)} baaki hai.`,
-    `Kripya jaldi bhugtan karein.`,
-    shop.upiId ? `UPI: ${shop.upiId}` : "",
-    `Dhanyavaad!`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-export function receiptText(customer, shop, amount, balance) {
-  return [
-    `Namaste ${customer.name} ji 🙏`,
-    `${shop.name} ko aapka ${rs(amount)} mil gaya hai. Dhanyavaad!`,
-    balance > 0 ? `Baaki udhar: ${rs(balance)}` : `Aapka pura udhar chuk gaya hai ✅`,
-  ].join("\n");
-}
+// Message text (in the chosen language) lives in shared/messages.js.
+export { reminderText, receiptText } from "../../shared/messages.js";
 
 export const waLink = (phone, text) => {
   const n = waNumber(phone);

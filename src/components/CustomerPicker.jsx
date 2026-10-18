@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Field, Modal, useAction } from "./ui.jsx";
+import { LANGUAGE_OPTIONS, languageFor } from "../../shared/messages.js";
 
 // Choose (or add) the customer an udhar bill belongs to.
 export function CustomerPicker({ value, onChange, currency }) {
@@ -65,8 +66,9 @@ export function CustomerPicker({ value, onChange, currency }) {
 }
 
 export function NewCustomer({ initialName = "", initialPhone = "", onClose, onCreated }) {
-  const { addCustomer } = useApp();
-  const [f, setF] = useState({ name: initialName, phone: initialPhone, address: "", note: "" });
+  const { addCustomer, shop } = useApp();
+  const [f, setF] = useState({ name: initialName, phone: initialPhone, address: "", note: "", language: "" });
+  const shopLang = LANGUAGE_OPTIONS.find(([c]) => c === languageFor({}, shop))?.[1];
   const { busy, error, run } = useAction();
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
@@ -90,6 +92,12 @@ export function NewCustomer({ initialName = "", initialPhone = "", onClose, onCr
         </Field>
         <Field label="Note (optional)" hint="e.g. works at the petrol pump, pays on the 1st">
           <input maxLength={160} value={f.note} onChange={set("note")} />
+        </Field>
+        <Field label="Reminder language">
+          <select value={f.language} onChange={set("language")}>
+            <option value="">Shop default ({shopLang})</option>
+            {LANGUAGE_OPTIONS.filter(([c]) => c !== "custom").map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+          </select>
         </Field>
         {error && <div className="error">{error}</div>}
         <div className="modal-actions">

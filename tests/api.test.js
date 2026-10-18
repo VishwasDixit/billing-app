@@ -515,3 +515,16 @@ describe("udhar (credit) accounts", () => {
     expect(a.payments.find((p) => p.mode === "credit")).toMatchObject({ bills: 2, sales: 650 });
   });
 });
+
+describe("reminder language", () => {
+  it("saves the shop language, a custom template and a per-customer language", async () => {
+    const { c } = await registered("lang@shop.test");
+    expect((await c("PUT", "/shop", { reminderLanguage: "gujarati" })).body.reminderLanguage).toBe("gujarati");
+    expect((await c("PUT", "/shop", { reminderLanguage: "klingon" })).status).toBe(400);
+    expect((await c("PUT", "/shop", { reminderLanguage: "custom", reminderTemplate: "Hi {name}, {amount} due" })).body.reminderTemplate).toBe("Hi {name}, {amount} due");
+    const cust = (await c("POST", "/customers", { clientId: crypto.randomUUID(), name: "Lata", language: "marathi" })).body;
+    expect(cust.language).toBe("marathi");
+    expect((await c("PUT", `/customers/${cust.id}`, { language: "" })).body.language).toBe("");
+    expect((await c("PUT", `/customers/${cust.id}`, { language: "french" })).status).toBe(400);
+  });
+});

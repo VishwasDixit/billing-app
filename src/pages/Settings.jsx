@@ -9,6 +9,7 @@ import { printTest, warmLogo } from "../printer/index.js";
 import { prepareLogo } from "../printer/escpos.js";
 import { resizeLogo } from "../lib/image.js";
 import { useShowPictures } from "../lib/prefs.js";
+import { LANGUAGE_OPTIONS, DEFAULT_LANGUAGE, DEFAULT_TEMPLATE, reminderText } from "../../shared/messages.js";
 import {
   printer, bleConnect, bleWrite, shortUuid, saveChannel, savedChannelFor, onPrinterChange, explainPrintError,
 } from "../printer/transports.js";
@@ -22,6 +23,8 @@ const pick = (s) => ({
   footer: s.footer || "",
   currency: s.currency || "₹",
   upiId: s.upiId || "",
+  reminderLanguage: s.reminderLanguage || DEFAULT_LANGUAGE,
+  reminderTemplate: s.reminderTemplate || "",
   gstPercent: s.gstPercent ?? 0,
   defaultDiscount: { ...(s.defaultDiscount || { type: "percent", value: 0 }) },
   printer: { ...s.printer },
@@ -124,6 +127,24 @@ export default function Settings() {
                 <Seg value={f.defaultDiscount.type} onChange={(v) => set("defaultDiscount", { ...f.defaultDiscount, type: v })} options={[["percent", "%"], ["flat", "Flat"]]} />
               </div>
               <span className="hint">You can still change discount and GST on any single bill.</span>
+            </div>
+          </section>
+
+          <section className="card stack">
+            <h2>Udhar reminders</h2>
+            <Field label="Message language" hint="Used for WhatsApp reminders and payment receipts. You can also set a different language for any customer.">
+              <select value={f.reminderLanguage} onChange={(e) => set("reminderLanguage", e.target.value)}>
+                {LANGUAGE_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+              </select>
+            </Field>
+            {f.reminderLanguage === "custom" && (
+              <Field label="Your message" hint="Use {name}, {amount}, {shop} and {upi}. They are filled in for each customer.">
+                <textarea rows={4} maxLength={500} placeholder={DEFAULT_TEMPLATE} value={f.reminderTemplate} onChange={(e) => set("reminderTemplate", e.target.value)} />
+              </Field>
+            )}
+            <div className="field">
+              Preview
+              <pre className="diag-log" style={{ minHeight: 0 }}>{reminderText({ name: "Ramesh", due: 450 }, { ...shop, ...f })}</pre>
             </div>
           </section>
 

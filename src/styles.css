@@ -289,3 +289,5 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .remind-panel { position: sticky; bottom: calc(var(--nav-h) + 8px); background: var(--panel); border: 2px solid #25d366; border-radius: 14px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.15); display: flex; flex-direction: column; gap: 10px; z-index: 20; }
 .btn-wa { background: #25d366; border-color: #25d366; color: #fff; }
 .btn-wa:hover { filter: brightness(1.05); border-color: #25d366; }
+.field .seg { flex: none; }
+.field > div > .input { min-width: 0; }

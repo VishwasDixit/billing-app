@@ -4,6 +4,7 @@ import { HttpError, respondRaw } from "../http.js";
 import { subscriptionStatus } from "../subscription.js";
 import { defaultMenu } from "../seed/grillhive-menu.js";
 import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
+import { LANGUAGE_CODES } from "../../shared/messages.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
 const MAX_PHOTO = 90 * 1024; // decoded bytes; the phone resizes photos to ~20–60 KB
@@ -26,6 +27,9 @@ const ShopSettings = z
     gstin: z.string().trim().max(20),
     footer: z.string().trim().max(80),
     currency: z.string().trim().max(4),
+    // Language of udhar reminders / receipts, and the text used when it's "custom".
+    reminderLanguage: z.enum(LANGUAGE_CODES),
+    reminderTemplate: z.string().trim().max(500),
     // Shop's own UPI ID, shown in udhar reminders so customers can pay directly.
     upiId: z
       .string()

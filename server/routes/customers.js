@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError } from "../http.js";
 import { round2 } from "../../shared/totals.js";
+import { LANGUAGE_CODES } from "../../shared/messages.js";
 
 // Udhar (credit) accounts. A customer's due is never stored: it is
 // Σ creditAmount of their non-void credit bills − Σ their payments.
@@ -18,6 +19,8 @@ export const CustomerIn = z.object({
     .default(""),
   address: z.string().trim().max(160).optional().default(""),
   note: z.string().trim().max(160).optional().default(""),
+  // "" = use the shop's reminder language
+  language: z.enum(["", ...LANGUAGE_CODES]).optional().default(""),
 });
 
 const PaymentIn = z.object({
@@ -36,7 +39,7 @@ export async function upsertCustomer(db, shopId, c) {
   const now = new Date();
   await db.collection("customers").updateOne(
     { shopId, clientId: c.clientId },
-    { $setOnInsert: { shopId, clientId: c.clientId, name: c.name, phone: c.phone || "", address: c.address || "", note: c.note || "", createdAt: now } },
+    { $setOnInsert: { shopId, clientId: c.clientId, name: c.name, phone: c.phone || "", address: c.address || "", note: c.note || "", language: c.language || "", createdAt: now } },
     { upsert: true }
   );
 }
@@ -67,6 +70,7 @@ function summary(c, b) {
     phone: c.phone,
     address: c.address,
     note: c.note,
+    language: c.language || "",
     createdAt: c.createdAt,
     lastBillAt: cr?.lastBillAt || null,
     lastPaymentAt: pd?.lastPaymentAt || null,

@@ -262,7 +262,7 @@ export function AppProvider({ children }) {
           status: "paid",
           ...(credit
             ? {
-                customer: { clientId: customer.clientId, name: customer.name, phone: customer.phone || "", address: customer.address || "", note: customer.note || "" },
+                customer: { clientId: customer.clientId, name: customer.name, phone: customer.phone || "", address: customer.address || "", note: customer.note || "", language: customer.language || "" },
                 paidNow: paid,
                 creditAmount,
                 // Printed on the receipt; the server recomputes dues itself.
@@ -277,8 +277,8 @@ export function AppProvider({ children }) {
       },
       loadCustomers,
       // Adds an udhar customer; works offline (created on the server when its bill syncs).
-      async addCustomer({ name, phone = "", address = "", note = "" }) {
-        const c = { clientId: uuid(), name: name.trim(), phone: phone.trim(), address: address.trim(), note: note.trim() };
+      async addCustomer({ name, phone = "", address = "", note = "", language = "" }) {
+        const c = { clientId: uuid(), name: name.trim(), phone: phone.trim(), address: address.trim(), note: note.trim(), language };
         try {
           const saved = await post("/customers", c);
           await loadCustomers();
