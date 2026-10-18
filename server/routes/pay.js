@@ -51,6 +51,8 @@ export default [
       plans: Object.values(PLANS),
       razorpayKeyId: razorpayKeys()?.id || null,
       upi: process.env.UPI_ID ? { id: process.env.UPI_ID, name: process.env.UPI_NAME || "Billing App" } : null,
+      // A Razorpay.me (or other) payment page; payments are confirmed by the admin.
+      paymentLink: /^https:\/\/[^\s]+$/.test(process.env.PAYMENT_LINK || "") ? process.env.PAYMENT_LINK : null,
       status,
     }),
   ],
@@ -141,6 +143,7 @@ export default [
     { auth: false },
   ],
 
+  // Manual payments, approved by the admin: UPI (reference / UTR) or a payment link (Razorpay payment ID).
   [
     "POST",
     "/pay/upi",
@@ -148,15 +151,26 @@ export default [
       const input = z
         .object({
           plan: PlanId,
-          utr: z.string().trim().regex(/^[A-Za-z0-9]{6,30}$/, "enter the UPI reference / UTR number from your payment app"),
+          via: z.enum(["upi", "link"]).default("upi"),
+          utr: z.string().trim().min(1, "enter the payment reference"),
         })
         .parse(body);
-      const utr = input.utr.toUpperCase();
-      if (await db.collection("payments").findOne({ method: "upi", utr, status: { $in: ["pending", "approved"] } })) {
-        throw new HttpError(409, "This UTR has already been submitted.");
+      let utr;
+      if (input.via === "link") {
+        if (!/^pay_[A-Za-z0-9]{8,30}$/.test(input.utr)) {
+          throw new HttpError(400, "Enter the Razorpay payment ID from your receipt. It starts with pay_ (e.g. pay_N3abc12XYZ).");
+        }
+        utr = input.utr; // Razorpay IDs are case-sensitive
+      } else {
+        if (!/^[A-Za-z0-9]{6,30}$/.test(input.utr)) throw new HttpError(400, "Enter the UPI reference / UTR number from your payment app.");
+        utr = input.utr.toUpperCase();
+      }
+      const method = input.via === "link" ? "link" : "upi";
+      if (await db.collection("payments").findOne({ method, utr, status: { $in: ["pending", "approved"] } })) {
+        throw new HttpError(409, "This payment reference has already been submitted.");
       }
       const plan = PLANS[input.plan];
-      const doc = { shopId: shop._id, plan: plan.id, amount: plan.amount, method: "upi", utr, status: "pending", createdAt: new Date() };
+      const doc = { shopId: shop._id, plan: plan.id, amount: plan.amount, method, utr, status: "pending", createdAt: new Date() };
       doc._id = (await db.collection("payments").insertOne(doc)).insertedId;
       return publicPayment(doc);
     },

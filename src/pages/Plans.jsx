@@ -22,6 +22,7 @@ export default function Plans() {
   const [cfg, setCfg] = useState(null);
   const [history, setHistory] = useState([]);
   const [upiPlan, setUpiPlan] = useState(null);
+  const [linkPlan, setLinkPlan] = useState(null);
   const { busy, error, run } = useAction();
   const access = accessState(shop);
 
@@ -108,7 +109,12 @@ export default function Plans() {
                   Pay by UPI QR
                 </button>
               )}
-              {!cfg.razorpayKeyId && !cfg.upi && <span className="muted small">Payments aren't set up yet. Contact the app owner.</span>}
+              {cfg.paymentLink && (
+                <button className={"btn" + (cfg.razorpayKeyId || cfg.upi ? "" : " btn-primary")} onClick={() => setLinkPlan(p)}>
+                  Pay ₹{p.amount} via Razorpay
+                </button>
+              )}
+              {!cfg.razorpayKeyId && !cfg.upi && !cfg.paymentLink && <span className="muted small">Payments aren't set up yet. Contact the app owner.</span>}
             </div>
           </div>
         ))}
@@ -124,7 +130,7 @@ export default function Plans() {
                   <tr key={p.id}>
                     <td>{fmtDateTime(p.createdAt)}</td>
                     <td>{p.plan === "yearly" ? "Yearly" : "Monthly"} · ₹{p.amount}</td>
-                    <td>{p.method === "upi" ? `UPI ${p.utr}` : "Online"}</td>
+                    <td>{p.method === "upi" ? `UPI ${p.utr}` : p.method === "link" ? `Razorpay ${p.utr}` : "Online"}</td>
                     <td>
                       <span className={"tag " + (p.status === "approved" ? "good" : p.status === "pending" ? "warn" : "bad")}>
                         {p.status === "pending" ? "waiting for approval" : p.status}
@@ -138,6 +144,7 @@ export default function Plans() {
         </div>
       )}
 
+      {linkPlan && cfg?.paymentLink && <LinkModal plan={linkPlan} link={cfg.paymentLink} onClose={() => setLinkPlan(null)} onSubmitted={load} />}
       {upiPlan && cfg?.upi && <UpiModal plan={upiPlan} upi={cfg.upi} shopName={shop.name} onClose={() => setUpiPlan(null)} onSubmitted={load} />}
     </div>
   );
@@ -179,6 +186,45 @@ function UpiModal({ plan, upi, shopName, onClose, onSubmitted }) {
           </Field>
           {error && <div className="error">{error}</div>}
           <button className="btn btn-primary" disabled={busy}>I have paid – submit</button>
+        </form>
+      </div>
+    </Modal>
+  );
+}
+
+// Pay on the owner's Razorpay.me page, then submit the payment ID for approval.
+function LinkModal({ plan, link, onClose, onSubmitted }) {
+  const toast = useToast();
+  const [payId, setPayId] = useState("");
+  const { busy, error, run } = useAction();
+  return (
+    <Modal title={`Pay ₹${plan.amount} via Razorpay`} onClose={onClose}>
+      <div className="stack">
+        <ol className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+          <li>Tap the button below and enter the amount <b>₹{plan.amount}</b>.</li>
+          <li>Pay with UPI, card or netbanking.</li>
+          <li>Copy the <b>Payment ID</b> from the receipt (starts with <code>pay_</code>) and paste it here.</li>
+        </ol>
+        <a className="btn btn-primary" href={link} target="_blank" rel="noopener noreferrer">
+          Open payment page (₹{plan.amount})
+        </a>
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(async () => {
+              await post("/pay/upi", { plan: plan.id, via: "link", utr: payId });
+              toast("Submitted. Your plan starts as soon as the payment is confirmed.");
+              onSubmitted();
+              onClose();
+            });
+          }}
+        >
+          <Field label="Razorpay Payment ID" hint="Also in the confirmation SMS / email from Razorpay.">
+            <input required value={payId} onChange={(e) => setPayId(e.target.value.trim())} placeholder="pay_XXXXXXXXXXXXXX" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+          </Field>
+          {error && <div className="error">{error}</div>}
+          <button className="btn" disabled={busy}>I have paid – submit</button>
         </form>
       </div>
     </Modal>

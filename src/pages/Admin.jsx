@@ -62,7 +62,7 @@ export default function Admin() {
                   <td>{fmtDateTime(p.createdAt)}</td>
                   <td>{p.shopName}</td>
                   <td>{p.plan} · ₹{p.amount}</td>
-                  <td>{p.method === "upi" ? <>UPI <code>{p.utr}</code></> : "Razorpay"}</td>
+                  <td>{p.method === "upi" ? <>UPI <code>{p.utr}</code></> : p.method === "link" ? <>Razorpay link <code>{p.utr}</code></> : "Razorpay online"}</td>
                   <td><span className={"tag " + (p.status === "approved" ? "good" : p.status === "pending" ? "warn" : "bad")}>{p.status}</span></td>
                   <td className="num">
                     {p.status === "pending" && (
@@ -77,7 +77,7 @@ export default function Admin() {
             </tbody>
           </table>
           {payments.length === 0 && <div className="empty">No payments yet.</div>}
-          {pending.length > 0 && <p className="hint" style={{ padding: "0 12px 12px" }}>Check each UTR in your bank / UPI app before approving.</p>}
+          {pending.length > 0 && <p className="hint" style={{ padding: "0 12px 12px" }}>Check each reference before approving: UPI UTRs in your bank / UPI app, pay_ IDs in Razorpay Dashboard → Payments.</p>}
         </div>
       )}
 
