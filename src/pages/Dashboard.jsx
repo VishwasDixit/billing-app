@@ -77,6 +77,13 @@ export default function Dashboard() {
             <Stat label="Expenses" value={money(data.totals.expenses, cur)} delta={data.growth.expenses} prev={money(data.previous.expenses, cur)} invert />
             <Stat label="Profit" value={money(data.totals.profit, cur)} delta={data.growth.profit} prev={money(data.previous.profit, cur)} tone={data.totals.profit < 0 ? "bad" : ""} />
             <Stat label="GST collected" value={money(data.totals.gst, cur)} />
+            {data.credit && (data.credit.given > 0 || data.credit.collected > 0 || data.credit.outstanding > 0) && (
+              <>
+                <Stat label="Udhar given" value={money(data.credit.given, cur)} />
+                <Stat label="Udhar collected" value={money(data.credit.collected, cur)} />
+                <Stat label="Udhar outstanding (all time)" value={money(data.credit.outstanding, cur)} tone={data.credit.outstanding > 0 ? "bad" : ""} />
+              </>
+            )}
           </div>
           <p className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
             Changes compare with the previous {data.days.length === 1 ? "day" : `${data.days.length} days`} ({shortDate(data.range.prevFrom)} – {shortDate(data.range.prevTo)}). Profit = sales − expenses.
@@ -114,7 +121,7 @@ export default function Dashboard() {
                 <tbody>
                   {[...data.payments].sort((a, b) => b.sales - a.sales).map((p) => (
                     <tr key={p.mode}>
-                      <td>{p.mode?.toUpperCase()}</td>
+                      <td>{p.mode === "credit" ? "UDHAR" : p.mode?.toUpperCase()}</td>
                       <td className="num muted">{p.bills} bills</td>
                       <td className="num"><b>{money(p.sales, cur)}</b></td>
                     </tr>

@@ -14,6 +14,7 @@ export default function Bills() {
   const [from, setFrom] = useState(todayYmd());
   const [to, setTo] = useState(todayYmd());
   const [q, setQ] = useState("");
+  const [udharOnly, setUdharOnly] = useState(false);
   const [bills, setBills] = useState([]);
   const [pending, setPending] = useState([]);
   const [open, setOpen] = useState(null);
@@ -23,6 +24,7 @@ export default function Bills() {
     run(async () => {
       setPending(await outboxAll(shop.id));
       const params = new URLSearchParams({ from, to, limit: "500" });
+      if (udharOnly) params.set("mode", "credit");
       if (q.trim()) params.set("q", q.trim());
       const r = await get("/bills?" + params);
       setBills(r.bills);
@@ -30,7 +32,7 @@ export default function Bills() {
   }, [run, shop.id, from, to, q]);
 
   // Reload when the date range changes or queued bills finish uploading.
-  useEffect(load, [from, to, sync.pending]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [from, to, sync.pending, udharOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pendingShown = pending.filter((b) => {
     const d = new Date(new Date(b.createdAt).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10);
@@ -48,6 +50,7 @@ export default function Bills() {
           <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} aria-label="From" />
           <span className="muted">to</span>
           <input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} aria-label="To" />
+          <button className={"chip" + (udharOnly ? " on" : "")} onClick={() => setUdharOnly(!udharOnly)}>Udhar only</button>
           <form onSubmit={(e) => (e.preventDefault(), load())} style={{ display: "flex", gap: 6 }}>
             <input className="input" style={{ width: 130 }} placeholder="Bill no." value={q} onChange={(e) => setQ(e.target.value)} />
             <button className="btn">Search</button>
@@ -84,7 +87,11 @@ export default function Bills() {
                 </td>
                 <td className="muted">{fmtDateTime(b.createdAt)}</td>
                 <td>{b.itemCount}</td>
-                <td>{b.paymentMode?.toUpperCase()}</td>
+                <td>
+                  {(b.paymentMode === "credit" ? "UDHAR" : b.paymentMode?.toUpperCase())}
+                  {b.customer && <div className="muted small">{b.customer.name}</div>}
+                  {b.udhar && <UdharTag udhar={b.udhar} cur={cur} />}
+                </td>
                 <td className="num" style={b.status === "void" ? { textDecoration: "line-through", color: "var(--muted)" } : null}>{money(b.total, cur)}</td>
               </tr>
             ))}
@@ -99,7 +106,14 @@ export default function Bills() {
   );
 }
 
-function BillDetail({ bill, onClose, onChanged }) {
+const UDHAR_TAG = { open: ["bad", "Udhar open"], part: ["warn", "Part paid"], cleared: ["good", "Udhar cleared ✅"] };
+
+function UdharTag({ udhar, cur }) {
+  const [cls, label] = UDHAR_TAG[udhar.state];
+  return <span className={"tag " + cls}>{label}{udhar.state === "part" ? ` · ${money(udhar.left, cur)} left` : ""}</span>;
+}
+
+export function BillDetail({ bill, onClose, onChanged }) {
   const { shop } = useApp();
   const cur = shop.currency || "₹";
   const toast = useToast();
@@ -152,7 +166,9 @@ function BillDetail({ bill, onClose, onChanged }) {
       }
     >
       <p className="muted small" style={{ marginTop: -8 }}>
-        {fmtDateTime(bill.createdAt)} · {bill.paymentMode?.toUpperCase()}
+        {fmtDateTime(bill.createdAt)} · {bill.paymentMode === "credit" ? "UDHAR" : bill.paymentMode?.toUpperCase()}
+        {bill.customer && <> · {bill.customer.name}{bill.customer.phone ? ` (${bill.customer.phone})` : ""}</>}
+        {bill.udhar && <> · <UdharTag udhar={bill.udhar} cur={cur} /></>}
         {bill.status === "void" && <> · <span className="tag bad">void: {bill.voidReason}</span></>}
         {bill.pending && <> · <span className="tag warn">{bill.syncError || "waiting to upload"}</span></>}
       </p>
@@ -171,6 +187,12 @@ function BillDetail({ bill, onClose, onChanged }) {
           {bill.discount?.amount > 0 && <tr><td className="muted">Discount</td><td className="num">−{money(bill.discount.amount, cur)}</td></tr>}
           {bill.gst?.amount > 0 && <tr><td className="muted">GST ({bill.gst.percent}%)</td><td className="num">{money(bill.gst.amount, cur)}</td></tr>}
           <tr><td><b>Total</b></td><td className="num"><b>{money(bill.total, cur)}</b></td></tr>
+          {bill.paymentMode === "credit" && (
+            <>
+              <tr><td className="muted">Paid now</td><td className="num">{money(bill.paidNow || 0, cur)}</td></tr>
+              <tr><td className="muted">Udhar on this bill</td><td className="num due-text">{money(bill.creditAmount ?? bill.total, cur)}</td></tr>
+            </>
+          )}
         </tbody>
       </table>
       {voiding && (

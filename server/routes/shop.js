@@ -26,6 +26,12 @@ const ShopSettings = z
     gstin: z.string().trim().max(20),
     footer: z.string().trim().max(80),
     currency: z.string().trim().max(4),
+    // Shop's own UPI ID, shown in udhar reminders so customers can pay directly.
+    upiId: z
+      .string()
+      .trim()
+      .max(60)
+      .refine((u) => u === "" || /^[\w.\-]{2,}@[\w.\-]{2,}$/.test(u), "enter a UPI ID like name@okbank"),
     gstPercent: z.number().min(0).max(100),
     defaultDiscount: z.object({ type: z.enum(["percent", "flat"]), value: z.number().min(0).max(100000) }),
     printer: z.object({

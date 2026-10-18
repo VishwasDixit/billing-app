@@ -9,11 +9,12 @@ import { connect, connectedName, explainPrintError, onPrinterChange } from "../p
 import { shareBillPdf } from "../printer/pdf.js";
 import { ItemPicture } from "../components/ItemPicture.jsx";
 import { useShowPictures } from "../lib/prefs.js";
+import { CustomerPicker } from "../components/CustomerPicker.jsx";
 
 const lineKey = (itemId, variant) => `${itemId}|${variant}`;
 
 export default function Billing() {
-  const { shop, menu, recordBill } = useApp();
+  const { shop, menu, recordBill, customers } = useApp();
   const toast = useToast();
   const nav = useNavigate();
   const cur = shop.currency || "₹";
@@ -25,6 +26,8 @@ export default function Billing() {
   const [discount, setDiscount] = useState(shop.defaultDiscount || { type: "percent", value: 0 });
   const [gstPercent, setGstPercent] = useState(shop.gstPercent || 0);
   const [paymentMode, setPaymentMode] = useState("cash");
+  const [customer, setCustomer] = useState(null); // udhar customer
+  const [paidNow, setPaidNow] = useState(0);
   const [cartOpen, setCartOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const [printError, setPrintError] = useState(null);
@@ -65,11 +68,17 @@ export default function Billing() {
 
   const lines = [...cart.entries()];
   const t = computeTotals(lines.map(([, l]) => l), discount, gstPercent);
+  const credit = paymentMode === "credit";
+  const paidNowClamped = Math.min(Math.max(Number(paidNow) || 0, 0), t.total);
+  const udharThisBill = Math.round((t.total - paidNowClamped) * 100) / 100;
+  const currentDue = customer ? customers.find((c) => c.clientId === customer.clientId)?.due || 0 : 0;
+  const needCustomer = credit && !customer;
   const access = accessState(shop);
 
   // Saves the bill, then prints / shares it. The bill is kept even if printing fails.
   async function finish(kind) {
     if (!cart.size || busy) return;
+    if (needCustomer) return toast("Choose the customer for this udhar bill.");
     if (!access.active) {
       toast("Your plan has ended. Choose a plan to keep billing.");
       return nav("/plans");
@@ -77,11 +86,13 @@ export default function Billing() {
     setBusy(kind);
     setPrintError(null);
     try {
-      const bill = await recordBill({ items: lines.map(([, l]) => l), discount, gstPercent, paymentMode });
+      const bill = await recordBill({ items: lines.map(([, l]) => l), discount, gstPercent, paymentMode, customer, paidNow: paidNowClamped });
       setCart(new Map());
       setDiscount(shop.defaultDiscount || { type: "percent", value: 0 });
       setGstPercent(shop.gstPercent || 0);
       setPaymentMode("cash");
+      setCustomer(null);
+      setPaidNow(0);
       setCartOpen(false);
       if (kind === "print") {
         try {
@@ -195,11 +206,26 @@ export default function Billing() {
           <div className="inline">
             <input type="number" min="0" step="0.01" inputMode="decimal" value={gstPercent} onChange={(e) => setGstPercent(Math.max(0, parseFloat(e.target.value) || 0))} />
           </div>
-          <span className="muted">Payment</span>
-          <div className="inline">
-            <Seg value={paymentMode} onChange={setPaymentMode} options={[["cash", "Cash"], ["upi", "UPI"], ["card", "Card"]]} />
-          </div>
         </div>
+        <div className="pay-row">
+          <span className="muted">Payment</span>
+          <Seg value={paymentMode} onChange={setPaymentMode} options={[["cash", "Cash"], ["upi", "UPI"], ["card", "Card"], ["credit", "Udhar"]]} />
+        </div>
+        {credit && (
+          <div className="udhar-box">
+            <CustomerPicker value={customer} onChange={setCustomer} currency={cur} />
+            <div className="bill-opts">
+              <span className="muted">Paid now</span>
+              <div className="inline">
+                <input type="number" min="0" step="0.01" inputMode="decimal" value={paidNow} onChange={(e) => setPaidNow(Math.max(0, parseFloat(e.target.value) || 0))} />
+              </div>
+            </div>
+            <div className="small">
+              Udhar on this bill: <b className="due-text">{money(udharThisBill, cur)}</b>
+              {customer && <> · Total due after: <b>{money(currentDue + udharThisBill, cur)}</b></>}
+            </div>
+          </div>
+        )}
 
         <div className="totals">
           <div className="row"><span>Subtotal</span><span>{money(t.subtotal, cur)}</span></div>
@@ -211,13 +237,13 @@ export default function Billing() {
         <PrinterBar method={shop.printer?.method} />
 
         <div className="bill-actions">
-          <button className="btn btn-primary btn-lg" disabled={!cart.size || !!busy} onClick={() => finish("print")}>
+          <button className="btn btn-primary btn-lg" disabled={!cart.size || !!busy || needCustomer} onClick={() => finish("print")}>
             {busy === "print" ? "Printing…" : "Print bill"}
           </button>
-          <button className="btn btn-lg" disabled={!cart.size || !!busy} onClick={() => finish("pdf")} title="Save and share as PDF">
+          <button className="btn btn-lg" disabled={!cart.size || !!busy || needCustomer} onClick={() => finish("pdf")} title="Save and share as PDF">
             PDF
           </button>
-          <button className="btn btn-lg" disabled={!cart.size || !!busy} onClick={() => finish("save")} title="Save without printing">
+          <button className="btn btn-lg" disabled={!cart.size || !!busy || needCustomer} onClick={() => finish("save")} title="Save without printing">
             Save
           </button>
         </div>

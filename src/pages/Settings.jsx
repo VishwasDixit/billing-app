@@ -21,6 +21,7 @@ const pick = (s) => ({
   gstin: s.gstin || "",
   footer: s.footer || "",
   currency: s.currency || "₹",
+  upiId: s.upiId || "",
   gstPercent: s.gstPercent ?? 0,
   defaultDiscount: { ...(s.defaultDiscount || { type: "percent", value: 0 }) },
   printer: { ...s.printer },
@@ -110,6 +111,11 @@ export default function Settings() {
                 <input type="number" min="0" max="100" step="0.01" value={f.gstPercent} onChange={(e) => set("gstPercent", e.target.value)} />
               </Field>
               <Field label="Currency symbol"><input maxLength={4} value={f.currency} onChange={(e) => set("currency", e.target.value)} /></Field>
+            </div>
+            <div className="grid2">
+              <Field label="Shop UPI ID (optional)" hint="Shown in udhar reminders so customers can pay you directly.">
+                <input maxLength={60} placeholder="e.g. grillhive@okaxis" value={f.upiId} onChange={(e) => set("upiId", e.target.value.trim())} />
+              </Field>
             </div>
             <div className="field">
               Default discount

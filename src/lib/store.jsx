@@ -24,6 +24,10 @@ export function AppProvider({ children }) {
   const [booting, setBooting] = useState(true);
   const [online, setOnline] = useState(navigator.onLine);
   const [sync, setSync] = useState({ pending: 0, blocked: 0, errors: 0 });
+  // Udhar customers: last list from the server, ones added offline, and unsynced bills.
+  const [customerList, setCustomerList] = useState([]);
+  const [pendingCustomers, setPendingCustomers] = useState({});
+  const [outbox, setOutbox] = useState([]);
   const shopId = session?.shop?.id;
   const shopIdRef = useRef(shopId);
   shopIdRef.current = shopId;
@@ -36,6 +40,7 @@ export function AppProvider({ children }) {
 
   const refreshCounts = useCallback(async () => {
     const list = await outboxAll(shopIdRef.current);
+    setOutbox(list);
     setSync({
       pending: list.length,
       blocked: list.filter((b) => b.syncState === "blocked").length,
@@ -48,8 +53,42 @@ export function AppProvider({ children }) {
     const r = await syncOutbox(shopIdRef.current);
     setOnline(!r.error?.offline);
     await refreshCounts();
+    if (r.sent > 0) loadCustomersRef.current?.().catch(() => {});
     return r;
   }, [refreshCounts]);
+
+  const loadCustomersRef = useRef(null);
+  const loadCustomers = useCallback(async () => {
+    const r = await get("/customers");
+    setCustomerList(r.customers);
+    await kvSet("customers", r.customers);
+    // Customers added offline are on the server now once their bill has synced.
+    setPendingCustomers((prev) => {
+      const next = { ...prev };
+      for (const c of r.customers) delete next[c.clientId];
+      kvSet("pendingCustomers", next);
+      return next;
+    });
+    return r;
+  }, []);
+  loadCustomersRef.current = loadCustomers;
+
+  // Dues include udhar bills still waiting to upload from this device.
+  const customers = useMemo(() => {
+    const unsynced = {};
+    for (const b of outbox) {
+      if (b.paymentMode === "credit" && b.customer) unsynced[b.customer.clientId] = (unsynced[b.customer.clientId] || 0) + (b.creditAmount || 0);
+    }
+    const known = new Set(customerList.map((c) => c.clientId));
+    const all = [
+      ...customerList,
+      ...Object.values(pendingCustomers).filter((c) => !known.has(c.clientId)).map((c) => ({ ...c, due: 0, pending: true })),
+    ];
+    return all.map((c) => {
+      const due = Math.round(((c.due || 0) + (unsynced[c.clientId] || 0)) * 100) / 100;
+      return { ...c, due, settled: due <= 0 };
+    });
+  }, [customerList, pendingCustomers, outbox]);
 
   const loadMenu = useCallback(async () => {
     const m = await get("/menu");
@@ -65,6 +104,8 @@ export function AppProvider({ children }) {
       if (cached) {
         setSession(cached);
         setMenu((await kvGet("menu")) || []);
+        setCustomerList((await kvGet("customers")) || []);
+        setPendingCustomers((await kvGet("pendingCustomers")) || {});
         warmLogo(cached.shop);
         setBooting(false);
       }
@@ -72,6 +113,7 @@ export function AppProvider({ children }) {
         const fresh = await get("/auth/me");
         await applySession(fresh);
         await loadMenu();
+        loadCustomers().catch(() => {});
         setOnline(true);
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
@@ -84,7 +126,7 @@ export function AppProvider({ children }) {
         setBooting(false);
       }
     })();
-  }, [applySession, loadMenu]);
+  }, [applySession, loadMenu, loadCustomers]);
 
   // Bill-number prefix for this device (A, B, …) so offline devices never clash.
   const ensureDevice = useCallback(async () => {
@@ -197,9 +239,12 @@ export function AppProvider({ children }) {
         await kvSet("menu", m);
       },
       // Saves a bill on this device first, then uploads it. Works offline.
-      async recordBill({ items, discount, gstPercent, paymentMode }) {
+      async recordBill({ items, discount, gstPercent, paymentMode, customer, paidNow }) {
         const { billNo, deviceCode } = await nextBillNo();
         const t = computeTotals(items, discount, gstPercent);
+        const credit = paymentMode === "credit";
+        const paid = credit ? Math.min(Math.max(Number(paidNow) || 0, 0), t.total) : t.total;
+        const creditAmount = Math.round((t.total - paid) * 100) / 100;
         const bill = {
           shopId: shopIdRef.current,
           clientId: uuid(),
@@ -215,11 +260,38 @@ export function AppProvider({ children }) {
           total: t.total,
           paymentMode,
           status: "paid",
+          ...(credit
+            ? {
+                customer: { clientId: customer.clientId, name: customer.name, phone: customer.phone || "", address: customer.address || "", note: customer.note || "" },
+                paidNow: paid,
+                creditAmount,
+                // Printed on the receipt; the server recomputes dues itself.
+                dueAfter: Math.round(((customers.find((c) => c.clientId === customer.clientId)?.due || 0) + creditAmount) * 100) / 100,
+              }
+            : {}),
         };
         await outboxPut(bill);
         await refreshCounts();
         syncNow();
         return bill;
+      },
+      loadCustomers,
+      // Adds an udhar customer; works offline (created on the server when its bill syncs).
+      async addCustomer({ name, phone = "", address = "", note = "" }) {
+        const c = { clientId: uuid(), name: name.trim(), phone: phone.trim(), address: address.trim(), note: note.trim() };
+        try {
+          const saved = await post("/customers", c);
+          await loadCustomers();
+          return saved;
+        } catch (err) {
+          if (!err.offline) throw err;
+          setPendingCustomers((prev) => {
+            const next = { ...prev, [c.clientId]: c };
+            kvSet("pendingCustomers", next);
+            return next;
+          });
+          return { ...c, due: 0, pending: true };
+        }
       },
       syncNow,
       async retryBlocked() {
@@ -227,9 +299,9 @@ export function AppProvider({ children }) {
         return syncNow();
       },
     }),
-    [applySession, loadMenu, nextBillNo, refreshCounts, session, syncNow]
+    [applySession, loadMenu, loadCustomers, nextBillNo, refreshCounts, session, syncNow, customers]
   );
 
-  const value = { session, user: session?.user, shop: session?.shop, menu, booting, online, sync, ...actions };
+  const value = { session, user: session?.user, shop: session?.shop, menu, customers, booting, online, sync, ...actions };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

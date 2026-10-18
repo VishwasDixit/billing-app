@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { round2 } from "../../shared/totals.js";
 import { HttpError } from "../http.js";
+import { totalOutstanding } from "./customers.js";
 
 // Shops are in India: days and hours are counted in IST.
 export const TZ = "Asia/Kolkata";
@@ -101,11 +102,14 @@ export default [
       const prevFrom = toYmd(prevStart);
       const prevTo = toYmd(new Date(start.getTime() - DAY));
 
-      const [cur, prev, exp, prevExp] = await Promise.all([
+      const [cur, prev, exp, prevExp, given, collected, outstanding] = await Promise.all([
         salesSummary(db, shop._id, start, end),
         salesSummary(db, shop._id, prevStart, start),
         expenseSummary(db, shop._id, from, to),
         expenseSummary(db, shop._id, prevFrom, prevTo),
+        db.collection("bills").aggregate([{ $match: { shopId: shop._id, paymentMode: "credit", status: "paid", createdAt: { $gte: start, $lt: end } } }, { $group: { _id: null, v: { $sum: "$creditAmount" } } }]).toArray(),
+        db.collection("customerPayments").aggregate([{ $match: { shopId: shop._id, createdAt: { $gte: start, $lt: end } } }, { $group: { _id: null, v: { $sum: "$amount" } } }]).toArray(),
+        totalOutstanding(db, shop._id),
       ]);
 
       const t = cur.totals[0] || { sales: 0, bills: 0, items: 0, gst: 0, discount: 0 };
@@ -159,6 +163,7 @@ export default [
           qty: i.qty,
           revenue: round2(i.revenue),
         })),
+        credit: { given: round2(given[0]?.v || 0), collected: round2(collected[0]?.v || 0), outstanding },
         expenseCategories: exp.categories.map((c) => ({ category: c._id, amount: round2(c.amount) })),
       };
     },

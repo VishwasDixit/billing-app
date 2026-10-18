@@ -11,6 +11,8 @@ import Menu from "./pages/Menu.jsx";
 import Settings from "./pages/Settings.jsx";
 import Plans from "./pages/Plans.jsx";
 import Admin from "./pages/Admin.jsx";
+import Customers from "./pages/Customers.jsx";
+import CustomerDetail from "./pages/CustomerDetail.jsx";
 
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx")); // charts load on first visit
 
@@ -30,6 +32,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Billing />} />
             <Route path="/bills" element={<Bills />} />
+            <Route path="/customers" element={<Customers />} />
+            <Route path="/customers/:id" element={<CustomerDetail />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/menu" element={<Menu />} />
@@ -50,6 +54,7 @@ function Shell({ children }) {
   const links = [
     ["/", "🧾", "Billing"],
     ["/bills", "📄", "Bills"],
+    ["/customers", "📒", "Udhar"],
     ["/dashboard", "📊", "Dashboard"],
     ["/expenses", "💸", "Expenses"],
     ["/settings", "⚙️", "Settings"],

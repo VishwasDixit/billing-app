@@ -42,6 +42,10 @@ async function ensureIndexes(db) {
     db.collection("bills").createIndex({ shopId: 1, clientId: 1 }, { unique: true }),
     db.collection("bills").createIndex({ shopId: 1, createdAt: -1 }),
     db.collection("expenses").createIndex({ shopId: 1, date: -1 }),
+    db.collection("customers").createIndex({ shopId: 1, clientId: 1 }, { unique: true }),
+    db.collection("customers").createIndex({ shopId: 1, name: 1 }),
+    db.collection("customerPayments").createIndex({ shopId: 1, customerClientId: 1, createdAt: 1 }),
+    db.collection("bills").createIndex({ shopId: 1, "customer.clientId": 1, createdAt: 1 }),
     db.collection("payments").createIndex({ shopId: 1, createdAt: -1 }),
     db.collection("payments").createIndex({ status: 1, createdAt: -1 }),
     db.collection("payments").createIndex(

@@ -271,3 +271,21 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .menu-grid.with-pics { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
   .tile-pic { height: 78px; }
 }
+
+/* ---------- Udhar ---------- */
+.due-text { color: var(--danger); font-weight: 600; }
+.pay-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; flex-wrap: wrap; }
+.udhar-box { border: 1px solid #f3c9c4; background: #fff8f7; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.cust-picker { display: flex; flex-direction: column; gap: 6px; }
+.cust-list { display: flex; flex-direction: column; gap: 4px; max-height: 170px; overflow: auto; }
+.cust-option { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); cursor: pointer; }
+.cust-option:hover { border-color: var(--accent); }
+.cust-chosen { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.ledger-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.ledger-row .amt { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+.ledger-row .bal { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; text-align: right; min-width: 72px; }
+.amt.debit { color: var(--danger); }
+.amt.credit { color: var(--good); }
+.remind-panel { position: sticky; bottom: calc(var(--nav-h) + 8px); background: var(--panel); border: 2px solid #25d366; border-radius: 14px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.15); display: flex; flex-direction: column; gap: 10px; z-index: 20; }
+.btn-wa { background: #25d366; border-color: #25d366; color: #fff; }
+.btn-wa:hover { filter: brightness(1.05); border-color: #25d366; }

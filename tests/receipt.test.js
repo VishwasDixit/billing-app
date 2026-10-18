@@ -44,4 +44,23 @@ describe("receipt layout", () => {
     const large = encode(receiptRows(shop(58, { largeText: true }), bill), shop(58, { largeText: true }));
     expect(has(large, 0x1d, 0x21)).toBe(true);
   });
+
+  it("shows the customer and dues on udhar bills", () => {
+    for (const size of [58, 80, 110]) {
+      const { rows, cols } = receiptRows(shop(size), {
+        ...bill,
+        paymentMode: "credit",
+        paidNow: 100,
+        creditAmount: bill.total - 100,
+        dueAfter: 1250.5,
+        customer: { name: "Ramesh Kumar Yadav From Pahadpur Road Colony", phone: "9876501234" },
+      });
+      const text = rows.map((r) => r.text);
+      expect(Math.max(...text.map((t) => t.length))).toBeLessThanOrEqual(cols);
+      expect(text.some((t) => t.startsWith("Customer: Ramesh"))).toBe(true);
+      expect(text).toContain("Ph: 9876501234");
+      expect(text.find((t) => t.startsWith("Paid by"))).toMatch(/UDHAR$/);
+      expect(text.find((t) => t.startsWith("Total due"))).toMatch(/Rs\.1250\.50$/);
+    }
+  });
 });

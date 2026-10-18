@@ -89,6 +89,10 @@ export function receiptRows(shop, bill) {
   const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   pair(`Bill: ${bill.billNo}`, `${date} ${time}`);
   if (bill.status === "void") center("*** VOID ***", { bold: true });
+  if (bill.customer?.name) {
+    wrap("Customer: " + bill.customer.name, cols).forEach((l) => line(l));
+    if (bill.customer.phone) line("Ph: " + bill.customer.phone);
+  }
   sep();
 
   for (const it of bill.items) {
@@ -111,7 +115,13 @@ export function receiptRows(shop, bill) {
   }
   sep();
   pair("TOTAL", ascii(shop.currency || "₹") + n2(bill.total), large ? { bold: true, tall: true } : { bold: true });
-  if (bill.paymentMode) pair("Paid by", bill.paymentMode.toUpperCase());
+  if (bill.paymentMode === "credit") {
+    // Udhar: what was paid now, what is owed, and the customer's total due if known.
+    pair("Paid by", "UDHAR");
+    pair("Paid now", n2(bill.paidNow || 0));
+    pair("Udhar (this bill)", n2(bill.creditAmount ?? bill.total - (bill.paidNow || 0)));
+    if (typeof bill.dueAfter === "number") pair("Total due", ascii(shop.currency || "₹") + n2(bill.dueAfter), { bold: true });
+  } else if (bill.paymentMode) pair("Paid by", bill.paymentMode.toUpperCase());
   sep();
   if (shop.footer) center(shop.footer);
 

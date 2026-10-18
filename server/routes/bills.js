@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError } from "../http.js";
-import { computeTotals } from "../../shared/totals.js";
+import { computeTotals, round2 } from "../../shared/totals.js";
+import { CustomerIn, upsertCustomer, udharStatusFor } from "./customers.js";
 import { accessEndsAt } from "../subscription.js";
 import { dayRange } from "./analytics.js";
 
@@ -25,7 +26,10 @@ const BillIn = z.object({
     .max(300),
   discount: z.object({ type: z.enum(["percent", "flat"]), value: z.number().min(0) }).default({ type: "percent", value: 0 }),
   gstPercent: z.number().min(0).max(100).default(0),
-  paymentMode: z.enum(["cash", "upi", "card"]).default("cash"),
+  paymentMode: z.enum(["cash", "upi", "card", "credit"]).default("cash"),
+  // Udhar: who owes it, and how much was paid at the counter.
+  customer: CustomerIn.optional(),
+  paidNow: z.number().min(0).optional(),
 });
 
 export function publicBill({ _id, shopId, ...b }) {
@@ -58,7 +62,13 @@ export default [
           continue;
         }
 
+        if (b.paymentMode === "credit" && !b.customer) {
+          results.push({ clientId: b.clientId, ok: false, code: 400, error: "An udhar bill needs a customer." });
+          continue;
+        }
         const t = computeTotals(b.items, b.discount, b.gstPercent);
+        const credit = b.paymentMode === "credit";
+        const paidNow = credit ? round2(Math.min(Math.max(b.paidNow || 0, 0), t.total)) : t.total;
         const doc = {
           shopId: shop._id,
           clientId: b.clientId,
@@ -73,8 +83,12 @@ export default [
           gst: t.gst,
           total: t.total,
           paymentMode: b.paymentMode,
+          paidNow,
+          creditAmount: round2(t.total - paidNow),
+          ...(b.customer ? { customer: { clientId: b.customer.clientId, name: b.customer.name, phone: b.customer.phone } } : {}),
           status: "paid",
         };
+        if (b.customer) await upsertCustomer(db, shop._id, b.customer);
         try {
           await db.collection("bills").insertOne(doc);
           results.push({ clientId: b.clientId, ok: true });
@@ -97,10 +111,14 @@ export default [
       }
       if (query.q) filter.billNo = { $regex: "^" + query.q.replace(/[^A-Za-z0-9-]/g, ""), $options: "i" };
       if (query.status) filter.status = query.status;
+      if (query.mode) filter.paymentMode = query.mode;
       const limit = Math.min(Number(query.limit) || 50, 5000);
       const skip = Math.max(Number(query.skip) || 0, 0);
       const bills = await db.collection("bills").find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).toArray();
-      return { bills: bills.map(publicBill), hasMore: bills.length === limit };
+      // Udhar status (open / part paid / cleared) for credit bills.
+      const ids = [...new Set(bills.filter((b) => b.paymentMode === "credit" && b.customer).map((b) => b.customer.clientId))];
+      const udhar = await udharStatusFor(db, shop._id, ids);
+      return { bills: bills.map((b) => ({ ...publicBill(b), udhar: udhar.get(String(b._id)) || undefined })), hasMore: bills.length === limit };
     },
   ],
   [

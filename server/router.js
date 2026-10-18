@@ -10,6 +10,7 @@ import expenseRoutes from "./routes/expenses.js";
 import analyticsRoutes from "./routes/analytics.js";
 import payRoutes from "./routes/pay.js";
 import adminRoutes from "./routes/admin.js";
+import customerRoutes from "./routes/customers.js";
 
 // Each route: [method, "/path/:param", handler, { auth = true, admin = false }]
 const ROUTES = [
@@ -20,6 +21,7 @@ const ROUTES = [
   ...analyticsRoutes,
   ...payRoutes,
   ...adminRoutes,
+  ...customerRoutes,
 ].map(([method, path, handler, opts = {}]) => {
   const keys = [];
   const re = new RegExp(

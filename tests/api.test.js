@@ -426,3 +426,92 @@ describe("payment link", () => {
     }
   });
 });
+
+describe("udhar (credit) accounts", () => {
+  const cust = (name = "Ramesh Kumar", phone = "9876501234") => ({ clientId: crypto.randomUUID(), name, phone });
+  const creditBill = (customer, rate, paidNow = 0, over = {}) =>
+    bill({ paymentMode: "credit", customer, paidNow, items: [{ name: "Thali", qty: 1, rate }], discount: { type: "flat", value: 0 }, gstPercent: 0, ...over });
+  const customerByName = async (c, name) => (await c("GET", "/customers")).body.customers.find((x) => x.name === name);
+
+  it("needs a customer for an udhar bill and creates it once", async () => {
+    const { c } = await registered("udhar-create@shop.test");
+    const r1 = await c("POST", "/bills", { bills: [bill({ paymentMode: "credit" })] });
+    expect(r1.body.results[0]).toMatchObject({ ok: false, code: 400 });
+
+    const ramesh = cust();
+    const b = creditBill(ramesh, 500, 200);
+    await c("POST", "/bills", { bills: [b] });
+    await c("POST", "/bills", { bills: [b] }); // offline queue resend
+    const list = (await c("GET", "/customers")).body;
+    expect(list.customers).toHaveLength(1);
+    expect(list.customers[0]).toMatchObject({ name: "Ramesh Kumar", phone: "9876501234", due: 300, settled: false });
+    expect(list).toMatchObject({ totalDue: 300, owingCount: 1 });
+  });
+
+  it("tracks dues through payments, voids and deleted payments", async () => {
+    const { c } = await registered("udhar-due@shop.test");
+    const ramesh = cust();
+    await c("POST", "/bills", { bills: [creditBill(ramesh, 500, 200)] });
+    const r = await customerByName(c, "Ramesh Kumar");
+    const pay = await c("POST", `/customers/${r.id}/payments`, { amount: 100, mode: "upi" });
+    expect(pay.body.due).toBe(200);
+
+    const billId = (await c("GET", "/bills?mode=credit")).body.bills[0].id;
+    await c("POST", `/bills/${billId}/void`, { reason: "cancelled" });
+    expect((await customerByName(c, "Ramesh Kumar")).due).toBe(-100); // advance
+
+    const detail = (await c("GET", `/customers/${r.id}`)).body;
+    const paymentId = detail.ledger.find((e) => e.type === "payment").id;
+    expect((await c("DELETE", `/customers/${r.id}/payments/${paymentId}`)).body.due).toBe(0);
+  });
+
+  it("clears the oldest bills first and settles the account", async () => {
+    const { c } = await registered("udhar-fifo@shop.test");
+    const sita = cust("Sita Devi", "9876500000");
+    const old = creditBill(sita, 300, 0, { createdAt: new Date(Date.now() - 86400e3).toISOString(), billNo: "A-1" });
+    const recent = creditBill(sita, 200, 0, { billNo: "A-2" });
+    await c("POST", "/bills", { bills: [old, recent] });
+    const s = await customerByName(c, "Sita Devi");
+
+    await c("POST", `/customers/${s.id}/payments`, { amount: 350 });
+    let bills = (await c("GET", "/bills?mode=credit")).body.bills;
+    expect(bills.find((b) => b.billNo === "A-1").udhar).toEqual({ left: 0, state: "cleared" });
+    expect(bills.find((b) => b.billNo === "A-2").udhar).toEqual({ left: 150, state: "part" });
+
+    const settled = await c("POST", `/customers/${s.id}/payments`, { amount: 150 });
+    expect(settled.body).toMatchObject({ due: 0, settled: true });
+    bills = (await c("GET", "/bills?mode=credit")).body.bills;
+    expect(bills.every((b) => b.udhar.state === "cleared")).toBe(true);
+    const list = (await c("GET", "/customers")).body;
+    expect(list.owingCount).toBe(0);
+
+    const ledger = (await c("GET", `/customers/${s.id}`)).body.ledger;
+    expect(ledger[0].balance).toBe(0); // newest first
+    expect(ledger.map((e) => e.type)).toEqual(["payment", "payment", "bill", "bill"]);
+  });
+
+  it("keeps customers private to their shop and records reminders", async () => {
+    const a = await registered("udhar-a@shop.test");
+    const b = await registered("udhar-b@shop.test");
+    await a.c("POST", "/bills", { bills: [creditBill(cust("Private Person"), 100)] });
+    const p = await customerByName(a.c, "Private Person");
+    expect((await b.c("GET", "/customers")).body.customers).toHaveLength(0);
+    expect((await b.c("GET", `/customers/${p.id}`)).status).toBe(404);
+    expect((await b.c("POST", `/customers/${p.id}/payments`, { amount: 100 })).status).toBe(404);
+    expect((await b.c("POST", `/customers/${p.id}/reminded`)).status).toBe(404);
+
+    expect((await a.c("POST", `/customers/${p.id}/reminded`)).status).toBe(200);
+    expect((await customerByName(a.c, "Private Person")).lastRemindedAt).toBeTruthy();
+    expect((await a.c("POST", "/customers", { clientId: crypto.randomUUID(), name: "Bad Phone", phone: "12" })).status).toBe(400);
+  });
+
+  it("reports udhar given, collected and outstanding on the dashboard", async () => {
+    const { c } = await registered("udhar-dash@shop.test");
+    await c("POST", "/bills", { bills: [creditBill(cust("Mohan"), 400, 100), creditBill(cust("Geeta"), 250)] });
+    const m = await customerByName(c, "Mohan");
+    await c("POST", `/customers/${m.id}/payments`, { amount: 50 });
+    const a = (await c("GET", "/analytics")).body;
+    expect(a.credit).toEqual({ given: 550, collected: 50, outstanding: 500 });
+    expect(a.payments.find((p) => p.mode === "credit")).toMatchObject({ bills: 2, sales: 650 });
+  });
+});
