@@ -63,7 +63,10 @@ export default function Admin() {
                   <td>{p.shopName}</td>
                   <td>{p.plan} · ₹{p.amount}</td>
                   <td>{p.method === "upi" ? <>UPI <code>{p.utr}</code></> : p.method === "link" ? <>Razorpay link <code>{p.utr}</code></> : "Razorpay online"}</td>
-                  <td><span className={"tag " + (p.status === "approved" ? "good" : p.status === "pending" ? "warn" : "bad")}>{p.status}</span></td>
+                  <td>
+                    <span className={"tag " + (p.status === "approved" ? "good" : p.status === "pending" ? "warn" : "bad")}>{p.approvedBy === "razorpay-auto" ? "auto-approved" : p.status}</span>
+                    {p.autoCheck && <div className="hint">{p.autoCheck}</div>}
+                  </td>
                   <td className="num">
                     {p.status === "pending" && (
                       <div className="btn-row" style={{ justifyContent: "flex-end" }}>
@@ -77,6 +80,23 @@ export default function Admin() {
             </tbody>
           </table>
           {payments.length === 0 && <div className="empty">No payments yet.</div>}
+          {pending.some((p) => p.method === "link") && (
+            <div style={{ padding: "12px 12px 0" }}>
+              <button
+                className="btn btn-sm"
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    const r = await post("/admin/payments/recheck", {});
+                    toast(r.approved ? `Razorpay confirmed ${r.approved} payment(s): plans extended` : "Razorpay hasn't confirmed any pending payment yet");
+                    load();
+                  })
+                }
+              >
+                Check pending payments with Razorpay
+              </button>
+            </div>
+          )}
           {pending.length > 0 && <p className="hint" style={{ padding: "0 12px 12px" }}>Check each reference before approving: UPI UTRs in your bank / UPI app, pay_ IDs in Razorpay Dashboard → Payments.</p>}
         </div>
       )}

@@ -43,6 +43,90 @@ async function approveRazorpay(db, orderId, paymentId) {
 
 const publicPayment = ({ _id, shopId, ...p }) => ({ ...p, id: String(_id) });
 
+const RZP_API = "https://api.razorpay.com/v1";
+const MAX_PAYMENT_AGE_DAYS = 7;
+const rupees = (paise) => `₹${(paise / 100).toLocaleString("en-IN")}`;
+
+async function razorpayApi(path, init = {}) {
+  const keys = razorpayKeys();
+  return fetch(RZP_API + path, {
+    ...init,
+    headers: {
+      Authorization: "Basic " + Buffer.from(`${keys.id}:${keys.secret}`).toString("base64"),
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+    },
+  });
+}
+
+/**
+ * Asks Razorpay whether a payment ID really paid for `plan`.
+ * @returns {{ok: true} | {ok: false, reason: string} | {unreachable: true}}
+ */
+export async function checkRazorpayPayment(paymentId, plan, now = Date.now()) {
+  let p;
+  try {
+    const r = await razorpayApi(`/payments/${encodeURIComponent(paymentId)}`);
+    if (r.status === 400 || r.status === 404) return { ok: false, reason: "Razorpay has no payment with this ID. Please check it and try again." };
+    if (!r.ok) return { unreachable: true };
+    p = await r.json();
+  } catch {
+    return { unreachable: true };
+  }
+  const need = plan.amount * 100;
+  if (p.currency !== "INR") return { ok: false, reason: "This payment isn't in rupees." };
+  if (p.amount < need) return { ok: false, reason: `This payment is ${rupees(p.amount)}, but the ${plan.name.toLowerCase()} plan is ${rupees(need)}.` };
+  if (now - p.created_at * 1000 > MAX_PAYMENT_AGE_DAYS * 864e5) return { ok: false, reason: "This payment is too old to use for a new plan." };
+  if (p.status === "authorized") {
+    // Money is held but not collected yet: capture it.
+    try {
+      const c = await razorpayApi(`/payments/${encodeURIComponent(paymentId)}/capture`, {
+        method: "POST",
+        body: JSON.stringify({ amount: p.amount, currency: "INR" }),
+      });
+      if (!c.ok) return { unreachable: true };
+      p = await c.json();
+    } catch {
+      return { unreachable: true };
+    }
+  }
+  if (p.status !== "captured") {
+    return { ok: false, reason: p.status === "failed" ? "This payment failed. No money was taken." : "This payment isn't complete yet. Try again in a minute." };
+  }
+  return { ok: true };
+}
+
+// Approves a pending link payment after Razorpay confirms it. Returns true if the plan was extended.
+async function autoApprove(db, payment, plan) {
+  try {
+    const done = await db.collection("payments").findOneAndUpdate(
+      { _id: payment._id, status: "pending" },
+      { $set: { status: "approved", razorpayPaymentId: payment.utr, approvedAt: new Date(), approvedBy: "razorpay-auto" }, $unset: { autoCheck: "" } },
+      { returnDocument: "after" }
+    );
+    if (!done) return false;
+  } catch (err) {
+    if (err.code === 11000) return false; // this payment ID was already used for another plan
+    throw err;
+  }
+  await grantPlan(db, payment.shopId, plan.id);
+  return true;
+}
+
+// Re-checks pending payment-link entries with Razorpay (e.g. ones submitted before keys were set).
+export async function recheckPendingLinks(db, filter = {}, limit = 20) {
+  if (!razorpayKeys()) return 0;
+  const pending = await db.collection("payments").find({ ...filter, method: "link", status: "pending" }).limit(limit).toArray();
+  let approved = 0;
+  for (const pay of pending) {
+    const plan = PLANS[pay.plan];
+    // Pending entries can be older than the 7-day window: measure age from when it was submitted.
+    const res = await checkRazorpayPayment(pay.utr, plan, new Date(pay.createdAt).getTime());
+    if (res.ok) approved += (await autoApprove(db, pay, plan)) ? 1 : 0;
+    else if (res.reason) await db.collection("payments").updateOne({ _id: pay._id }, { $set: { autoCheck: res.reason } });
+  }
+  return approved;
+}
+
 export default [
   [
     "GET",
@@ -59,9 +143,13 @@ export default [
   [
     "GET",
     "/pay/history",
-    async ({ db, shop }) => ({
-      payments: (await db.collection("payments").find({ shopId: shop._id, status: { $ne: "created" } }).sort({ createdAt: -1 }).limit(50).toArray()).map(publicPayment),
-    }),
+    async ({ db, shop }) => {
+      const approved = await recheckPendingLinks(db, { shopId: shop._id }, 5);
+      return {
+        approved,
+        payments: (await db.collection("payments").find({ shopId: shop._id, status: { $ne: "created" } }).sort({ createdAt: -1 }).limit(50).toArray()).map(publicPayment),
+      };
+    },
   ],
 
   [
@@ -166,12 +254,30 @@ export default [
         utr = input.utr.toUpperCase();
       }
       const method = input.via === "link" ? "link" : "upi";
-      if (await db.collection("payments").findOne({ method, utr, status: { $in: ["pending", "approved"] } })) {
-        throw new HttpError(409, "This payment reference has already been submitted.");
-      }
       const plan = PLANS[input.plan];
-      const doc = { shopId: shop._id, plan: plan.id, amount: plan.amount, method, utr, status: "pending", createdAt: new Date() };
-      doc._id = (await db.collection("payments").insertOne(doc)).insertedId;
+      const existing = await db.collection("payments").findOne({ method, utr, status: { $in: ["pending", "approved"] } });
+      // With keys, resubmitting your own pending ID asks Razorpay again instead of failing.
+      const retryOwnPending =
+        existing && existing.status === "pending" && String(existing.shopId) === String(shop._id) && method === "link" && !!razorpayKeys();
+      if (existing && !retryOwnPending) throw new HttpError(409, "This payment reference has already been submitted.");
+
+      // With API keys, Razorpay itself confirms the payment and the plan starts immediately.
+      let check = null;
+      if (method === "link" && razorpayKeys()) {
+        if (await db.collection("payments").findOne({ razorpayPaymentId: utr })) {
+          throw new HttpError(409, "This payment has already been used for a plan.");
+        }
+        check = await checkRazorpayPayment(utr, plan);
+        if (check.reason) throw new HttpError(400, check.reason);
+      }
+
+      const doc = retryOwnPending
+        ? existing
+        : { shopId: shop._id, plan: plan.id, amount: plan.amount, method, utr, status: "pending", createdAt: new Date() };
+      if (!retryOwnPending) doc._id = (await db.collection("payments").insertOne(doc)).insertedId;
+      if (check?.ok && (await autoApprove(db, doc, PLANS[doc.plan]))) {
+        return { ...publicPayment(await db.collection("payments").findOne({ _id: doc._id })), autoApproved: true };
+      }
       return publicPayment(doc);
     },
   ],

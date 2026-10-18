@@ -333,12 +333,96 @@ describe("menu pictures", () => {
 });
 
 describe("payment link", () => {
-  it("accepts a Razorpay payment ID for admin approval", async () => {
-    const { c } = await registered("link@shop.test");
-    expect((await c("POST", "/pay/upi", { plan: "monthly", via: "link", utr: "412345678901" })).status).toBe(400);
-    const p = await c("POST", "/pay/upi", { plan: "yearly", via: "link", utr: "pay_N3abc12XYZdef" });
-    expect(p.status).toBe(200);
-    expect(p.body).toMatchObject({ method: "link", utr: "pay_N3abc12XYZdef", status: "pending", amount: 400 });
-    expect((await c("POST", "/pay/upi", { plan: "yearly", via: "link", utr: "pay_N3abc12XYZdef" })).status).toBe(409);
+  // Fake Razorpay API: payments keyed by ID. Other requests (our own server) pass through.
+  const realFetch = globalThis.fetch;
+  let payments = {};
+  let captured = [];
+  let offline = false;
+  beforeAll(() => {
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (!u.startsWith("https://api.razorpay.com/")) return realFetch(url, init);
+      if (offline) throw new TypeError("fetch failed");
+      const m = /\/payments\/([^/]+)(\/capture)?$/.exec(u);
+      const p = m && payments[decodeURIComponent(m[1])];
+      if (!p) return new Response(JSON.stringify({ error: { code: "BAD_REQUEST_ERROR" } }), { status: 400 });
+      if (m[2]) {
+        captured.push(p.id);
+        p.status = "captured";
+      }
+      return new Response(JSON.stringify(p), { status: 200 });
+    };
+  });
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+  });
+  const pay = (id, amount, status = "captured", ageDays = 0) =>
+    (payments[id] = { id, amount, currency: "INR", status, created_at: Math.floor((Date.now() - ageDays * 864e5) / 1000) });
+
+  it("approves a real ₹49 payment immediately and extends the plan", async () => {
+    const { c } = await registered("auto-ok@shop.test");
+    pay("pay_AutoOk49xxxxxx", 4900);
+    const r = await c("POST", "/pay/upi", { plan: "monthly", via: "link", utr: "pay_AutoOk49xxxxxx" });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ autoApproved: true, status: "approved", approvedBy: "razorpay-auto" });
+    expect((await c("GET", "/auth/me")).body.shop.status).toMatchObject({ state: "paid", daysLeft: 37 });
+    // The same payment can't buy a second plan, even from another shop.
+    const other = await registered("auto-other@shop.test");
+    expect((await other.c("POST", "/pay/upi", { plan: "monthly", via: "link", utr: "pay_AutoOk49xxxxxx" })).status).toBe(409);
+  });
+
+  it("captures an authorized payment before approving", async () => {
+    const { c } = await registered("auto-auth@shop.test");
+    pay("pay_AutoAuth4000xx", 40000, "authorized");
+    const r = await c("POST", "/pay/upi", { plan: "yearly", via: "link", utr: "pay_AutoAuth4000xx" });
+    expect(r.body.autoApproved).toBe(true);
+    expect(captured).toContain("pay_AutoAuth4000xx");
+  });
+
+  it("rejects wrong amounts, failed, unknown and old payments with a reason", async () => {
+    const { c } = await registered("auto-bad@shop.test");
+    pay("pay_TooSmall4000x", 4000);
+    pay("pay_Failed490000x", 4900, "failed");
+    pay("pay_TooOld4900xxx", 4900, "captured", 30);
+    const sub = (utr, plan = "monthly") => c("POST", "/pay/upi", { plan, via: "link", utr });
+    expect((await sub("pay_TooSmall4000x")).body.error).toMatch(/₹40.*₹49/);
+    expect((await sub("pay_AutoOk49xxxxxx".replace("Ok", "No"))).body.error).toMatch(/no payment/i);
+    expect((await sub("pay_Failed490000x")).body.error).toMatch(/failed/);
+    expect((await sub("pay_TooOld4900xxx")).body.error).toMatch(/too old/);
+    expect((await sub("pay_TooSmall4000x")).status).toBe(400);
+    pay("pay_Monthly4900xx", 4900);
+    expect((await sub("pay_Monthly4900xx", "yearly")).body.error).toMatch(/₹49.*₹400/);
+    expect((await c("GET", "/pay/history")).body.payments).toHaveLength(0);
+  });
+
+  it("keeps the payment pending when Razorpay can't be reached, then approves it later", async () => {
+    const { c } = await registered("auto-later@shop.test");
+    const admin = client();
+    await admin("POST", "/auth/login", { email: "admin@shop.test", password: "secret12" });
+    offline = true;
+    pay("pay_LaterPaid4900x", 4900);
+    const r = await c("POST", "/pay/upi", { plan: "monthly", via: "link", utr: "pay_LaterPaid4900x" });
+    expect(r.body).toMatchObject({ status: "pending" });
+    expect(r.body.autoApproved).toBeUndefined();
+    offline = false;
+    // Opening the Plans page re-checks it with Razorpay.
+    const h = await c("GET", "/pay/history");
+    expect(h.body.approved).toBe(1);
+    expect(h.body.payments[0].status).toBe("approved");
+    expect((await admin("POST", "/admin/payments/recheck", {})).body.approved).toBe(0);
+  });
+
+  it("still waits for the admin when no Razorpay keys are set", async () => {
+    const { c } = await registered("no-keys@shop.test");
+    const saved = process.env.RAZORPAY_KEY_SECRET;
+    delete process.env.RAZORPAY_KEY_SECRET;
+    try {
+      expect((await c("POST", "/pay/upi", { plan: "monthly", via: "link", utr: "412345678901" })).status).toBe(400);
+      const p = await c("POST", "/pay/upi", { plan: "yearly", via: "link", utr: "pay_N3abc12XYZdef" });
+      expect(p.body).toMatchObject({ method: "link", status: "pending", amount: 400 });
+      expect((await c("POST", "/pay/upi", { plan: "yearly", via: "link", utr: "pay_N3abc12XYZdef" })).status).toBe(409);
+    } finally {
+      process.env.RAZORPAY_KEY_SECRET = saved;
+    }
   });
 });

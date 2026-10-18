@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import { HttpError } from "../http.js";
 import { hashPassword, isAdminEmail } from "../auth.js";
 import { grantPlan, subscriptionStatus, PLANS } from "../subscription.js";
+import { recheckPendingLinks } from "./pay.js";
 
 const oid = (id) => {
   if (!ObjectId.isValid(id)) throw new HttpError(404, "Not found.");
@@ -57,6 +58,18 @@ export default [
         .toArray();
       const names = new Map(shops.map((s) => [String(s._id), s.name]));
       return { payments: list.map(({ _id, shopId, ...p }) => ({ ...p, id: String(_id), shopId: String(shopId), shopName: names.get(String(shopId)) || "?" })) };
+    },
+    admin,
+  ],
+  // Asks Razorpay about every pending payment-link entry and approves the paid ones.
+  [
+    "POST",
+    "/admin/payments/recheck",
+    async ({ db }) => {
+      if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+        throw new HttpError(400, "Add your Razorpay API keys in Vercel first, then the app can check payments itself.");
+      }
+      return { approved: await recheckPendingLinks(db, {}, 100) };
     },
     admin,
   ],

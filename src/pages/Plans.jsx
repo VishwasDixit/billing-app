@@ -31,6 +31,12 @@ export default function Plans() {
       const [c, h] = await Promise.all([get("/pay/config"), get("/pay/history")]);
       setCfg(c);
       setHistory(h.payments);
+      // The server re-checks pending Razorpay payments; pick up any that just got approved.
+      if (h.approved > 0) {
+        toast("Payment confirmed by Razorpay. Your plan is active ✅");
+        await refresh();
+        await retryBlocked();
+      }
     });
   useEffect(() => {
     load();
@@ -111,7 +117,7 @@ export default function Plans() {
               )}
               {cfg.paymentLink && (
                 <button className={"btn" + (cfg.razorpayKeyId || cfg.upi ? "" : " btn-primary")} onClick={() => setLinkPlan(p)}>
-                  Pay ₹{p.amount} via Razorpay
+                  {cfg.razorpayKeyId ? "Paid on razorpay.me? Enter payment ID" : `Pay ₹${p.amount} via Razorpay`}
                 </button>
               )}
               {!cfg.razorpayKeyId && !cfg.upi && !cfg.paymentLink && <span className="muted small">Payments aren't set up yet. Contact the app owner.</span>}
@@ -144,7 +150,7 @@ export default function Plans() {
         </div>
       )}
 
-      {linkPlan && cfg?.paymentLink && <LinkModal plan={linkPlan} link={cfg.paymentLink} onClose={() => setLinkPlan(null)} onSubmitted={load} />}
+      {linkPlan && cfg?.paymentLink && <LinkModal plan={linkPlan} link={cfg.paymentLink} autoCheck={!!cfg.razorpayKeyId} onClose={() => setLinkPlan(null)} onSubmitted={load} onPaid={afterPaid} />}
       {upiPlan && cfg?.upi && <UpiModal plan={upiPlan} upi={cfg.upi} shopName={shop.name} onClose={() => setUpiPlan(null)} onSubmitted={load} />}
     </div>
   );
@@ -193,7 +199,7 @@ function UpiModal({ plan, upi, shopName, onClose, onSubmitted }) {
 }
 
 // Pay on the owner's Razorpay.me page, then submit the payment ID for approval.
-function LinkModal({ plan, link, onClose, onSubmitted }) {
+function LinkModal({ plan, link, autoCheck, onClose, onSubmitted, onPaid }) {
   const toast = useToast();
   const [payId, setPayId] = useState("");
   const { busy, error, run } = useAction();
@@ -213,9 +219,14 @@ function LinkModal({ plan, link, onClose, onSubmitted }) {
           onSubmit={(e) => {
             e.preventDefault();
             run(async () => {
-              await post("/pay/upi", { plan: plan.id, via: "link", utr: payId });
-              toast("Submitted. Your plan starts as soon as the payment is confirmed.");
-              onSubmitted();
+              const r = await post("/pay/upi", { plan: plan.id, via: "link", utr: payId });
+              if (r.autoApproved) {
+                toast("Payment confirmed by Razorpay. Your plan is active ✅");
+                await onPaid();
+              } else {
+                toast("Submitted. Your plan starts as soon as the payment is confirmed.");
+                onSubmitted();
+              }
               onClose();
             });
           }}
@@ -224,7 +235,7 @@ function LinkModal({ plan, link, onClose, onSubmitted }) {
             <input required value={payId} onChange={(e) => setPayId(e.target.value.trim())} placeholder="pay_XXXXXXXXXXXXXX" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
           </Field>
           {error && <div className="error">{error}</div>}
-          <button className="btn" disabled={busy}>I have paid – submit</button>
+          <button className="btn" disabled={busy}>{busy ? (autoCheck ? "Checking with Razorpay…" : "Submitting…") : "I have paid – submit"}</button>
         </form>
       </div>
     </Modal>
