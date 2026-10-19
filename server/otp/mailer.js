@@ -14,6 +14,20 @@ const gmailConfigured = () => !!(process.env.GMAIL_USER && process.env.GMAIL_APP
 
 export const emailOtpEnabled = () => gmailConfigured() || !!testTransport || process.env.OTP_DEV_LOG === "1";
 
+// Like emailOtpEnabled, but also confirms Gmail accepts the login (cached), so a wrong
+// App password falls back to password sign-in instead of breaking sign-up.
+let readyCache = { at: 0, ok: false };
+export async function emailOtpReady() {
+  if (testTransport || (!gmailConfigured() && process.env.OTP_DEV_LOG === "1")) return true;
+  if (!gmailConfigured()) return false;
+  const ttl = readyCache.ok ? 10 * 60e3 : 60e3;
+  if (Date.now() - readyCache.at < ttl) return readyCache.ok;
+  const ok = (await verifyGmail()) === "ok";
+  readyCache = { at: Date.now(), ok };
+  if (!ok) console.error("Gmail login failed; email codes are off until GMAIL_APP_PASSWORD is fixed.");
+  return ok;
+}
+
 const PURPOSE = {
   register: { subject: "Verify your email", title: "Verify your email", line: "Use this code to finish creating your shop account." },
   login: { subject: "Your login code", title: "Your login code", line: "Use this code to log in." },

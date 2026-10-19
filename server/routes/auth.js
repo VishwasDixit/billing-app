@@ -4,7 +4,7 @@ import { hashPassword, checkPassword, sessionCookie, clearCookie, publicUser, is
 import { TRIAL_DAYS } from "../subscription.js";
 import { defaultMenu, GRILLHIVE_SHOP } from "../seed/grillhive-menu.js";
 import { createCode, verifyCode } from "../otp/codes.js";
-import { sendOtpEmail, emailOtpEnabled } from "../otp/mailer.js";
+import { sendOtpEmail, emailOtpReady } from "../otp/mailer.js";
 import { publicShop } from "./shop.js";
 
 const Register = z.object({
@@ -33,8 +33,8 @@ async function otp(promise) {
   }
 }
 
-function assertEmailOtp() {
-  if (!emailOtpEnabled()) throw new HttpError(503, "Email codes aren't set up yet. Please use your password.");
+async function assertEmailOtp() {
+  if (!(await emailOtpReady())) throw new HttpError(503, "Email codes aren't working right now. Please use your password.");
 }
 
 async function assertEmailFree(db, email) {
@@ -48,7 +48,7 @@ async function createAccount(db, d) {
   const shop = newShop({ name: d.shopName, phone: d.phone, ownerEmail: d.email });
   const { insertedId: shopId } = await db.collection("shops").insertOne(shop);
   await db.collection("menuItems").insertMany(defaultMenu(shopId));
-  const user = { shopId, name: d.name, email: d.email, phone: d.phone, passwordHash: d.passwordHash, emailVerified: emailOtpEnabled(), createdAt: new Date() };
+  const user = { shopId, name: d.name, email: d.email, phone: d.phone, passwordHash: d.passwordHash, emailVerified: !!d.verified, createdAt: new Date() };
   try {
     user._id = (await db.collection("users").insertOne(user)).insertedId;
   } catch (err) {
@@ -89,7 +89,7 @@ async function sessionPayload(db, user) {
 
 export default [
   // Which sign-in options the login screen should show.
-  ["GET", "/auth/config", async () => ({ emailOtp: emailOtpEnabled() }), { auth: false }],
+  ["GET", "/auth/config", async () => ({ emailOtp: await emailOtpReady() }), { auth: false }],
 
   // Direct sign-up, only while email codes aren't set up (otherwise use register/start + verify).
   [
@@ -98,7 +98,7 @@ export default [
     async ({ db, body }) => {
       const input = Register.parse(body);
       assertAuthConfigured();
-      if (emailOtpEnabled()) throw new HttpError(400, "Please verify your email to sign up.", { code: "VERIFY_EMAIL" });
+      if (await emailOtpReady()) throw new HttpError(400, "Please verify your email to sign up.", { code: "VERIFY_EMAIL" });
       await assertEmailFree(db, input.email);
       const user = await createAccount(db, { ...input, passwordHash: await hashPassword(input.password) });
       return respond(201, await sessionPayload(db, user), { "Set-Cookie": sessionCookie(user) });
@@ -112,7 +112,7 @@ export default [
     async ({ db, body }) => {
       const input = Register.parse(body);
       assertAuthConfigured();
-      assertEmailOtp();
+      await assertEmailOtp();
       await assertEmailFree(db, input.email);
       const { password, ...rest } = input;
       const { code } = await otp(createCode({ db, key: input.email, purpose: "register", payload: { ...rest, passwordHash: await hashPassword(password) } }));
@@ -129,7 +129,7 @@ export default [
       const { email, code } = CodeIn.parse(body);
       const details = await otp(verifyCode({ db, key: email, purpose: "register", code }));
       await assertEmailFree(db, email);
-      const user = await createAccount(db, details);
+      const user = await createAccount(db, { ...details, verified: true });
       return respond(201, await sessionPayload(db, user), { "Set-Cookie": sessionCookie(user) });
     },
     { auth: false },
@@ -140,7 +140,7 @@ export default [
     "/auth/otp/send",
     async ({ db, body }) => {
       const { email, purpose } = z.object({ email: Email, purpose: z.enum(["login", "reset"]) }).parse(body);
-      assertEmailOtp();
+      await assertEmailOtp();
       const user = await db.collection("users").findOne({ email });
       if (user) {
         const { code } = await otp(createCode({ db, key: email, purpose }));
