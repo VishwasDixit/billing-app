@@ -35,6 +35,27 @@ export function otpEmail({ code, purpose, appName = "Billing" }) {
   return { subject: `${code} is your ${p.subject.toLowerCase()} code`, text, html };
 }
 
+// Checks the Gmail login without sending anything (used by /api/health?check=gmail).
+export async function verifyGmail() {
+  if (!gmailConfigured()) return "not set";
+  try {
+    await gmailTransport().verify();
+    return "ok";
+  } catch (err) {
+    return "error: " + String(err?.response || err?.message || err).slice(0, 160);
+  }
+}
+
+function gmailTransport() {
+  transport ||= nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD.replace(/\s/g, "") },
+  });
+  return transport;
+}
+
 export async function sendOtpEmail({ to, code, purpose, appName }) {
   const msg = otpEmail({ code, purpose, appName });
   if (testTransport) return testTransport({ to, code, purpose, ...msg });
@@ -45,11 +66,5 @@ export async function sendOtpEmail({ to, code, purpose, appName }) {
     }
     throw new Error("Email sending is not set up (GMAIL_USER / GMAIL_APP_PASSWORD).");
   }
-  transport ||= nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD.replace(/\s/g, "") },
-  });
-  await transport.sendMail({ from: `"${appName || "Billing"}" <${process.env.GMAIL_USER}>`, to, subject: msg.subject, text: msg.text, html: msg.html });
+  await gmailTransport().sendMail({ from: `"${appName || "Billing"}" <${process.env.GMAIL_USER}>`, to, subject: msg.subject, text: msg.text, html: msg.html });
 }

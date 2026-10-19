@@ -1,6 +1,6 @@
 import { getDb, describeDbError } from "./db.js";
 import { razorpayKeyStatus } from "./routes/pay.js";
-import { emailOtpEnabled } from "./otp/mailer.js";
+import { emailOtpEnabled, verifyGmail } from "./otp/mailer.js";
 import { HttpError, readBody, send, sendError } from "./http.js";
 import { requireUser, jwtSecretOk } from "./auth.js";
 import { subscriptionStatus } from "./subscription.js";
@@ -38,7 +38,11 @@ export async function handle(req, res) {
     const path = "/" + (url.searchParams.get("path") ?? url.pathname.replace(/^\/api\/?/, "")).replace(/^\/+/, "");
     url.searchParams.delete("path");
 
-    if (path === "/health" && req.method === "GET") return send(res, 200, await health());
+    if (path === "/health" && req.method === "GET") {
+      const h = await health();
+      if (url.searchParams.get("check") === "gmail") h.gmail = await verifyGmail();
+      return send(res, 200, h);
+    }
 
     let match = null;
     let methodMismatch = false;
