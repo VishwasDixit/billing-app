@@ -1,5 +1,6 @@
 import { getDb, describeDbError } from "./db.js";
 import { razorpayKeyStatus } from "./routes/pay.js";
+import { emailOtpEnabled } from "./otp/mailer.js";
 import { HttpError, readBody, send, sendError } from "./http.js";
 import { requireUser, jwtSecretOk } from "./auth.js";
 import { subscriptionStatus } from "./subscription.js";
@@ -88,6 +89,7 @@ async function health() {
     UPI_ID: !!process.env.UPI_ID,
     RAZORPAY_KEYS: !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET),
     razorpay: await razorpayKeyStatus(),
+    EMAIL_OTP: !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) || emailOtpEnabled(),
     RAZORPAY_WEBHOOK_SECRET: !!process.env.RAZORPAY_WEBHOOK_SECRET,
   };
   try {

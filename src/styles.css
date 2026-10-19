@@ -302,3 +302,86 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .field .seg { flex: none; }
 .field > div > .input { min-width: 0; }
 .ios-help { border: 1px solid #c7d7f5; background: #f2f6fe; border-radius: 10px; padding: 12px; }
+
+/* ---------- Door dog (login animation) ---------- */
+.door-dog { text-align: center; margin: -4px auto 4px; max-width: 280px; }
+.door-dog svg { width: 100%; height: auto; display: block; overflow: visible; }
+.dd-caption { font-size: 13px; color: var(--muted); min-height: 18px; margin-top: 2px; transition: color .2s; }
+.dd-success .dd-caption { color: var(--good); font-weight: 600; }
+.dd-fail .dd-caption { color: var(--danger); font-weight: 600; }
+
+.door-dog .dd-door, .door-dog .dd-tail, .door-dog .dd-head, .door-dog .dd-ear, .door-dog .dd-eyes, .door-dog .dd-dog { transform-box: fill-box; }
+.dd-door { transform-origin: 0% 50%; transition: transform .35s ease; }
+.dd-tail { transform-origin: 100% 100%; animation: dd-wag .6s ease-in-out infinite alternate; }
+.dd-head { transform-origin: 15% 85%; transition: transform .35s ease; }
+.dd-ear { transform-origin: 60% 0%; transition: transform .35s ease; }
+.dd-eyes { transform-origin: 50% 50%; animation: dd-blink 4.5s infinite; }
+.dd-dog { transform-origin: 50% 100%; }
+.dd-brow, .dd-frown, .dd-tear, .dd-tongue, .dd-heart, .dd-glow { opacity: 0; transition: opacity .25s; }
+.dd-smile { transition: opacity .25s; }
+
+@keyframes dd-wag { from { transform: rotate(-14deg); } to { transform: rotate(18deg); } }
+@keyframes dd-blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
+@keyframes dd-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
+
+/* idle: gentle breathing */
+.dd-idle .dd-dog { animation: dd-bob 2.4s ease-in-out infinite; }
+
+/* waiting: head tilt, ears up, excited tail, tongue out */
+.dd-waiting .dd-head { transform: rotate(-12deg); }
+.dd-waiting .dd-ear { transform: rotate(-22deg); }
+.dd-waiting .dd-tail { animation-duration: .18s; }
+.dd-waiting .dd-tongue { opacity: 1; }
+.dd-waiting .dd-dog { animation: dd-bob .5s ease-in-out infinite; }
+
+/* success: door opens, dog hops in, door closes, heart */
+.dd-success .dd-door { animation: dd-door-open 2s ease forwards; }
+.dd-success .dd-glow { animation: dd-glow 2s ease forwards; }
+.dd-success .dd-dog { animation: dd-go-in 1.6s .25s ease-in forwards; }
+.dd-success .dd-tail { animation-duration: .15s; }
+.dd-success .dd-tongue { opacity: 1; }
+.dd-success .dd-heart { animation: dd-heart 1.4s 1.4s ease-out forwards; }
+@keyframes dd-door-open { 0% { transform: scaleX(1); } 15%, 78% { transform: scaleX(.1); } 100% { transform: scaleX(1); } }
+@keyframes dd-glow { 0% { opacity: 0; } 15%, 75% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes dd-go-in {
+  0% { transform: translate(0, 0); }
+  15% { transform: translate(6px, -14px); }
+  28% { transform: translate(18px, 0); }
+  45% { transform: translate(44px, -6px); }
+  60% { transform: translate(70px, 0); }
+  80% { transform: translate(104px, -6px) scale(.72); opacity: 1; }
+  100% { transform: translate(122px, -8px) scale(.5); opacity: 0; }
+}
+@keyframes dd-heart { 0% { opacity: 0; transform: translateY(6px) scale(.5); } 30% { opacity: 1; transform: translateY(-4px) scale(1.1); } 100% { opacity: 0; transform: translateY(-22px) scale(1); } }
+.dd-heart { transform-box: fill-box; transform-origin: 50% 50%; }
+
+/* fail: sad face, droopy ears and tail, a tear, a little shake */
+.dd-fail .dd-head { transform: rotate(14deg) translateY(4px); }
+.dd-fail .dd-ear { transform: rotate(26deg); }
+.dd-fail .dd-tail { animation: none; transform: rotate(62deg); }
+.dd-fail .dd-brow, .dd-fail .dd-frown { opacity: 1; }
+.dd-fail .dd-smile { opacity: 0; }
+.dd-fail .dd-eyes { animation: none; transform: scaleY(.7); }
+.dd-fail .dd-tear { animation: dd-tear 1.6s .3s ease-in infinite; }
+.dd-fail .dd-dog { animation: dd-shake .5s ease-in-out; }
+@keyframes dd-tear { 0% { opacity: 0; transform: translateY(0); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(14px); } }
+@keyframes dd-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .door-dog *, .door-dog *::before { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition: none !important; }
+  .dd-success .dd-dog { opacity: 0; }
+}
+
+/* ---------- OTP input ---------- */
+.otp-boxes { display: flex; gap: 8px; justify-content: center; }
+.otp-boxes input {
+  width: 44px; height: 52px; text-align: center; font-size: 22px; font-weight: 700; border: 1.5px solid var(--border);
+  border-radius: 10px; background: var(--panel); font-variant-numeric: tabular-nums;
+}
+.otp-boxes input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.otp-boxes.error input { border-color: var(--danger); animation: dd-shake .4s; }
+.auth-tabs { display: flex; background: var(--bg); border-radius: 10px; padding: 3px; }
+.auth-tabs button { flex: 1; border: none; background: none; padding: 8px; border-radius: 8px; cursor: pointer; color: var(--muted); font-weight: 500; }
+.auth-tabs button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.link-btn { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 13px; text-decoration: underline; }
+.link-btn:disabled { color: var(--muted); text-decoration: none; cursor: default; }

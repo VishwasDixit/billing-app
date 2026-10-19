@@ -176,6 +176,12 @@ export function AppProvider({ children }) {
 
   const actions = useMemo(
     () => ({
+      // Finishes a sign-in whose session the screen already received (after the dog animation).
+      async completeLogin(s) {
+        await applySession(s);
+        await loadMenu();
+        loadCustomers().catch(() => {});
+      },
       async login(email, password) {
         const s = await post("/auth/login", { email, password });
         await applySession(s);

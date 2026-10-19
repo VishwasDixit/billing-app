@@ -21,6 +21,8 @@ for (const file of [".env.local", ".env"]) {
 }
 
 process.env.JWT_SECRET ||= "dev-only-secret-change-me-in-production";
+// Without Gmail settings, print email codes to this log so OTP flows can be tried locally.
+process.env.OTP_DEV_LOG ||= "1";
 
 if (!process.env.MONGODB_URI) {
   const { MongoMemoryServer } = await import("mongodb-memory-server");

@@ -4,6 +4,7 @@ import { useApp, accessState } from "./lib/store.jsx";
 import { ToastProvider } from "./components/ui.jsx";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
+import ForgotPassword from "./pages/ForgotPassword.jsx";
 import Billing from "./pages/Billing.jsx";
 import Bills from "./pages/Bills.jsx";
 import Expenses from "./pages/Expenses.jsx";
@@ -25,6 +26,7 @@ export default function App() {
       {!session ? (
         <Routes>
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot" element={<ForgotPassword />} />
           <Route path="*" element={<Login />} />
         </Routes>
       ) : (
