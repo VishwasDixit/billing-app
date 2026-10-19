@@ -40,7 +40,13 @@ export async function handle(req, res) {
 
     if (path === "/health" && req.method === "GET") {
       const h = await health();
-      if (url.searchParams.get("check") === "gmail") h.gmail = await verifyGmail();
+      if (url.searchParams.get("check") === "gmail") {
+        h.gmail = await verifyGmail();
+        // Enough to spot a wrong account or a cut-off password, without revealing either.
+        const u = process.env.GMAIL_USER || "";
+        h.gmailUser = u.replace(/^(.{3}).*(@.*)$/, "$1***$2");
+        h.gmailPasswordLength = (process.env.GMAIL_APP_PASSWORD || "").replace(/\s/g, "").length;
+      }
       return send(res, 200, h);
     }
 
