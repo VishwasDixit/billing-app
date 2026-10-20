@@ -422,3 +422,5 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .admin-stats .value { font-size: 18px; }
   .admin-stats .label { font-size: 12px; }
 }
+.export-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.card .banner { border-radius: 8px; justify-content: flex-start; text-align: left; }

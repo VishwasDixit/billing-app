@@ -152,3 +152,53 @@ describe("OTP rules", () => {
     expect(JSON.stringify(doc)).not.toContain(fresh.code);
   });
 });
+
+describe("plan reminder emails", () => {
+  it("emails shops that are ending or expired, once per stage automatically", async () => {
+    process.env.ADMIN_EMAIL = "boss@x.test";
+    const db = await getDb();
+    const { runReminders, dueReminders, reminderEmail } = await import("../server/reminders.js");
+    const boss = await registerVerified("boss@x.test");
+    await registerVerified("ending@x.test");
+    await registerVerified("expired@x.test");
+    await registerVerified("fine@x.test");
+    await registerVerified("blocked@x.test");
+    const shopOf = async (email) => (await db.collection("users").findOne({ email })).shopId;
+    const DAY = 864e5;
+    await db.collection("shops").updateOne({ _id: await shopOf("ending@x.test") }, { $set: { trialEndsAt: new Date(Date.now() + 2 * DAY) } });
+    await db.collection("shops").updateOne({ _id: await shopOf("expired@x.test") }, { $set: { trialEndsAt: new Date(Date.now() - DAY), prices: { monthly: 29 } } });
+    await db.collection("shops").updateOne({ _id: await shopOf("blocked@x.test") }, { $set: { trialEndsAt: new Date(Date.now() - DAY), blocked: { at: new Date() } } });
+    // Leftover shops from other tests in this file are on a 7-day trial: not due.
+    const due = (await dueReminders(db)).map((d) => d.owner.email);
+    expect(due.sort()).toEqual(["ending@x.test", "expired@x.test"]);
+
+    const expiredDue = (await dueReminders(db)).find((d) => d.owner.email === "expired@x.test");
+    const mail = reminderEmail(expiredDue, "https://app.test");
+    expect(mail.subject).toContain("has ended");
+    expect(mail.text).toContain("₹29/month");
+    expect(mail.html).toContain("https://app.test/plans");
+
+    const before = inbox.length;
+    const first = await runReminders(db, { trigger: "auto" });
+    expect(first.sent).toBe(2);
+    expect(inbox.slice(before).map((m) => m.to).sort()).toEqual(["ending@x.test", "expired@x.test"]);
+    expect((await runReminders(db, { trigger: "auto" })).sent).toBe(0); // already reminded
+
+    // The admin page: listed with the cooldown, and the manual send skips recent ones.
+    const list = await boss("GET", "/admin/reminders");
+    expect(list.body.due.map((d) => d.canSend)).toEqual([false, false]);
+    expect((await boss("POST", "/admin/reminders/send", {})).body.sent).toBe(0);
+    await db.collection("shops").updateMany({}, { $set: { "reminders.lastAt": new Date(Date.now() - 2 * DAY) } });
+    const manual = await boss("POST", "/admin/reminders/send", { shopIds: [String(await shopOf("ending@x.test"))] });
+    expect(manual.body.sent).toBe(1);
+    expect((await boss("GET", "/admin/reminders")).body.runs[0]).toMatchObject({ trigger: "manual", sent: 1 });
+  });
+
+  it("only lets Vercel Cron start the daily run", async () => {
+    process.env.CRON_SECRET = "cron-secret-123";
+    expect((await client()("GET", "/cron/reminders")).status).toBe(401);
+    const r = await fetch(base + "/cron/reminders", { headers: { authorization: "Bearer cron-secret-123" } });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ sent: 0 });
+  });
+});

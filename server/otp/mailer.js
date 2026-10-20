@@ -73,6 +73,19 @@ function gmailTransport() {
   return transport;
 }
 
+// Any other email (e.g. plan reminders), from the same Gmail sender.
+export async function sendEmail({ to, subject, text, html, kind = "email" }) {
+  if (testTransport) return testTransport({ to, subject, text, html, purpose: kind });
+  if (!gmailConfigured()) {
+    if (process.env.OTP_DEV_LOG === "1") {
+      console.log(`[dev email] to=${to} subject=${subject}`);
+      return;
+    }
+    throw new Error("Email sending is not set up (GMAIL_USER / GMAIL_APP_PASSWORD).");
+  }
+  await gmailTransport().sendMail({ from: { name: senderName(), address: process.env.GMAIL_USER }, replyTo: process.env.GMAIL_USER, to, subject, text, html });
+}
+
 export async function sendOtpEmail({ to, code, purpose, appName }) {
   const msg = otpEmail({ code, purpose, appName });
   if (testTransport) return testTransport({ to, code, purpose, ...msg });

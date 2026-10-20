@@ -4,6 +4,8 @@ import { HttpError } from "../http.js";
 import { hashPassword, isAdminEmail } from "../auth.js";
 import { grantPlan, subscriptionStatus, plansFor, PLANS } from "../subscription.js";
 import { recheckPendingLinks } from "./pay.js";
+import { dueReminders, runReminders, lastRuns, REMIND_DAYS, reminderCooldownHours } from "../reminders.js";
+import { emailOtpReady } from "../otp/mailer.js";
 
 const oid = (id) => {
   if (!ObjectId.isValid(id)) throw new HttpError(404, "Not found.");
@@ -13,6 +15,43 @@ const oid = (id) => {
 const admin = { admin: true };
 
 export default [
+  // Who would get a plan reminder now, and the last few runs.
+  [
+    "GET",
+    "/admin/reminders",
+    async ({ db }) => {
+      const due = await dueReminders(db);
+      return {
+        remindDays: REMIND_DAYS,
+        cooldownHours: reminderCooldownHours,
+        emailReady: await emailOtpReady(),
+        auto: !!process.env.CRON_SECRET,
+        due: due.map((d) => ({
+          shopId: String(d.shop._id),
+          shop: d.shop.name,
+          owner: d.owner.name,
+          email: d.owner.email,
+          stage: d.stage,
+          daysLeft: d.status.daysLeft,
+          endsAt: d.status.endsAt,
+          lastSentAt: d.shop.reminders?.lastAt || null,
+          canSend: !d.recentlySent,
+        })),
+        runs: await lastRuns(db),
+      };
+    },
+    admin,
+  ],
+  [
+    "POST",
+    "/admin/reminders/send",
+    async ({ db, body }) => {
+      const { shopIds } = z.object({ shopIds: z.array(z.string()).max(500).optional() }).parse(body || {});
+      if (!(await emailOtpReady())) throw new HttpError(503, "Email isn't working right now (check the Gmail App password).");
+      return runReminders(db, { trigger: "manual", shopIds: shopIds ?? null });
+    },
+    admin,
+  ],
   [
     "GET",
     "/admin/shops",

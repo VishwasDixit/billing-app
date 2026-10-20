@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { get, post, put } from "../lib/api.js";
 import { fmtDate, fmtDateTime, money } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
+import { downloadExcel, downloadPdf } from "../lib/adminExport.js";
 
 const STATUS = [
   ["all", "All"],
@@ -108,7 +109,11 @@ export default function Admin() {
     <div className="page">
       <div className="page-head">
         <h1>Admin</h1>
-        <Seg value={tab} onChange={setTab} options={[["shops", `Shops (${shops.length})`], ["payments", `Payments${pending.length ? ` (${pending.length} new)` : ""}`]]} />
+        <Seg
+          value={tab}
+          onChange={setTab}
+          options={[["shops", `Shops (${shops.length})`], ["payments", `Payments${pending.length ? ` (${pending.length} new)` : ""}`], ["reminders", "Reminders"]]}
+        />
       </div>
 
       <div className="stats admin-stats">
@@ -145,6 +150,17 @@ export default function Admin() {
                 {l} · {counts[k]}
               </button>
             ))}
+          </div>
+          <div className="export-row">
+            <span className="small muted">Download {visible.length === shops.length ? "all" : "these"} {visible.length} shop{visible.length === 1 ? "" : "s"}:</span>
+            <button className="btn btn-sm" disabled={busy || !visible.length} onClick={() => run(() => downloadExcel(visible))}>📊 Excel</button>
+            <button
+              className="btn btn-sm"
+              disabled={busy || !visible.length}
+              onClick={() => run(() => downloadPdf(visible, { title: `Shopkeepers${status !== "all" ? ` · ${STATUS.find(([k]) => k === status)[1]}` : ""}${q ? ` · "${q}"` : ""}` }))}
+            >
+              📄 PDF
+            </button>
           </div>
 
           <div className="shop-list">
@@ -234,7 +250,95 @@ export default function Admin() {
         </>
       )}
 
+      {tab === "reminders" && <Reminders onOpenShop={(id) => (setTab("shops"), setManageId(id))} />}
+
       {manage && <ManageShop shop={manage} onClose={() => setManageId(null)} onDone={load} />}
+    </div>
+  );
+}
+
+function Reminders({ onOpenShop }) {
+  const toast = useToast();
+  const [data, setData] = useState(null);
+  const { busy, error, run } = useAction();
+  const load = () => run(async () => setData(await get("/admin/reminders")));
+  useEffect(() => {
+    load();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const send = (shopIds) =>
+    run(async () => {
+      const n = shopIds ? shopIds.length : data.due.filter((d) => d.canSend).length;
+      if (!shopIds && !confirm(`Email a renewal reminder to ${n} shopkeeper${n === 1 ? "" : "s"} now?`)) return;
+      const r = await post("/admin/reminders/send", shopIds ? { shopIds } : {});
+      toast(`Sent ${r.sent} reminder${r.sent === 1 ? "" : "s"}${r.failed ? `, ${r.failed} failed` : ""}`);
+      setData(await get("/admin/reminders"));
+    });
+
+  if (!data) return <div className="empty">{error || "Loading…"}</div>;
+  const ready = data.due.filter((d) => d.canSend);
+  return (
+    <div className="stack">
+      <div className="card stack">
+        <div>
+          <h2 style={{ margin: 0 }}>Renewal reminder emails</h2>
+          <p className="small muted" style={{ margin: "4px 0 0" }}>
+            For shops whose access ends within {data.remindDays} days, and shops whose access has ended. Blocked shops are skipped.
+          </p>
+        </div>
+        <div className={"banner " + (data.auto ? "info" : "warn")} style={{ margin: 0 }}>
+          {data.auto
+            ? "Automatic: every day around 10 AM, each shop gets one email when its plan is about to end and one when it ends."
+            : "Automatic daily emails aren't switched on yet (CRON_SECRET is missing in Vercel)."}
+        </div>
+        {!data.emailReady && <div className="error">Email isn't working right now. Check the Gmail App password.</div>}
+        <div className="btn-row">
+          <button className="btn btn-primary" disabled={busy || !ready.length || !data.emailReady} onClick={() => send()}>
+            ✉️ Email all {ready.length} now
+          </button>
+          <button className="btn" disabled={busy} onClick={load}>Refresh</button>
+        </div>
+        {data.due.length > ready.length && (
+          <p className="hint" style={{ margin: 0 }}>Shops emailed in the last {data.cooldownHours} hours are skipped so nobody gets spammed.</p>
+        )}
+        {error && <div className="error">{error}</div>}
+      </div>
+
+      <div className="shop-list">
+        {data.due.map((d) => (
+          <div key={d.shopId} className="card shop-row">
+            <button className="shop-main" onClick={() => onOpenShop(d.shopId)}>
+              <div className="shop-title">
+                <b>{d.shop}</b>
+                <span className={"tag " + (d.stage === "expired" ? "bad" : "warn")}>{d.stage === "expired" ? "expired" : `${d.daysLeft} day${d.daysLeft === 1 ? "" : "s"} left`}</span>
+              </div>
+              <div className="small">{d.owner} · {d.email}</div>
+              <div className="small muted">
+                {d.stage === "expired" ? "Ended" : "Ends"} {fmtDate(d.endsAt)}
+                {d.lastSentAt ? ` · last reminder ${fmtDateTime(d.lastSentAt)}` : " · not reminded yet"}
+              </div>
+            </button>
+            <div className="shop-actions">
+              <button className="btn btn-sm" disabled={busy || !d.canSend || !data.emailReady} onClick={() => send([d.shopId])}>
+                {d.canSend ? "Send" : "Sent"}
+              </button>
+            </div>
+          </div>
+        ))}
+        {data.due.length === 0 && <div className="empty">No shop needs a reminder right now 🎉</div>}
+      </div>
+
+      {data.runs.length > 0 && (
+        <div className="card">
+          <h4 style={{ margin: "0 0 8px" }}>Recent sends</h4>
+          {data.runs.map((r, i) => (
+            <div key={i} className="small" style={{ padding: "4px 0", borderTop: i ? "1px solid var(--border)" : "none" }}>
+              {fmtDateTime(r.at)} · {r.trigger === "auto" ? "automatic" : "by you"} · <b>{r.sent} sent</b>
+              {r.failed > 0 && <span className="tag bad" style={{ marginLeft: 6 }} title={r.details?.failed?.map((f) => `${f.email}: ${f.error}`).join("\n")}>{r.failed} failed</span>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
