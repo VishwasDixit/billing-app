@@ -385,3 +385,10 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .auth-tabs button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .link-btn { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 13px; text-decoration: underline; }
 .link-btn:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+
+/* Google sign-in, forgot links */
+.google-btn { display: flex; justify-content: center; min-height: 44px; }
+.or-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.or-divider::before, .or-divider::after { content: ""; flex: 1; height: 1px; background: var(--border, #e5e5e5); }
+.auth-links { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 0; }
+.found-email { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--bg); word-break: break-all; }

@@ -55,5 +55,5 @@ export async function requireUser(req, db) {
 }
 
 export function publicUser(u) {
-  return { id: String(u._id), name: u.name, email: u.email, phone: u.phone, role: isAdminEmail(u.email) ? "admin" : "owner" };
+  return { id: String(u._id), name: u.name, email: u.email, phone: u.phone, role: isAdminEmail(u.email) ? "admin" : "owner", canSetPassword: u.passwordResetUntil > new Date() };
 }

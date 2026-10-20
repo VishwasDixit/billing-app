@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { get, post } from "../lib/api.js";
 import { Field } from "../components/ui.jsx";
 import { DoorDog } from "../components/DoorDog.jsx";
 import { OtpInput } from "../components/OtpInput.jsx";
 import { useDogAuth } from "../lib/useDogAuth.js";
+import { GoogleButton, OrDivider } from "../components/GoogleButton.jsx";
 
 export function useResendTimer() {
   const [left, setLeft] = useState(0);
@@ -16,8 +17,19 @@ export function useResendTimer() {
   return [left, () => setLeft(45)];
 }
 
+// Login/sign-up options the server offers (email codes, Google).
+export function useAuthConfig() {
+  const [config, setConfig] = useState({ emailOtp: false, googleClientId: "" });
+  useEffect(() => {
+    get("/auth/config").then(setConfig).catch(() => {});
+  }, []);
+  return config;
+}
+
 export default function Login() {
+  const navigate = useNavigate();
   const [emailOtp, setEmailOtp] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState("");
   const [mode, setMode] = useState("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,6 +43,7 @@ export default function Login() {
     get("/auth/config")
       .then((c) => {
         setEmailOtp(c.emailOtp);
+        setGoogleClientId(c.googleClientId || "");
         if (c.emailOtp) setMode("code");
       })
       .catch(() => {});
@@ -49,6 +62,17 @@ export default function Login() {
 
   const verify = (value = code) => signIn(() => post("/auth/otp/login", { email, code: value }));
 
+  // No shop for this Google account yet: continue to sign-up with it filled in.
+  const google = (credential) =>
+    signIn(async () => {
+      try {
+        return await post("/auth/google", { credential });
+      } catch (err) {
+        if (err.data?.code === "NO_ACCOUNT") navigate("/register", { state: { google: { credential, email: err.data.email, name: err.data.name } } });
+        throw err;
+      }
+    });
+
   return (
     <div className="auth">
       <div className="card stack">
@@ -57,6 +81,13 @@ export default function Login() {
           <h1>Log in</h1>
           <p className="muted small" style={{ margin: 0 }}>Billing, printing and sales reports for your shop.</p>
         </div>
+
+        {googleClientId && (
+          <>
+            <GoogleButton clientId={googleClientId} onCredential={google} />
+            <OrDivider />
+          </>
+        )}
 
         {emailOtp && (
           <div className="auth-tabs" role="tablist">
@@ -102,13 +133,13 @@ export default function Login() {
             </Field>
             {error && <div className="error">{error}</div>}
             <button className="btn btn-primary btn-lg" disabled={busy}>{busy ? "Logging in…" : "Log in"}</button>
-            {emailOtp && (
-              <p className="small" style={{ margin: 0, textAlign: "right" }}>
-                <Link to="/forgot">Forgot password?</Link>
-              </p>
-            )}
           </form>
         )}
+
+        <p className="small auth-links">
+          <Link to="/find-email">Forgot email?</Link>
+          <Link to="/forgot">Forgot password?</Link>
+        </p>
 
         <p className="small muted" style={{ textAlign: "center", margin: 0 }}>
           New shop? <Link to="/register">Start your 7-day free trial</Link>

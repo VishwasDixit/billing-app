@@ -5,7 +5,10 @@ import { TRIAL_DAYS } from "../subscription.js";
 import { defaultMenu, GRILLHIVE_SHOP } from "../seed/grillhive-menu.js";
 import { createCode, verifyCode } from "../otp/codes.js";
 import { sendOtpEmail, emailOtpReady } from "../otp/mailer.js";
+import { verifyGoogleCredential, googleClientId, googleEnabled } from "../google.js";
 import { publicShop } from "./shop.js";
+
+const RESET_WINDOW_MS = 15 * 60 * 1000; // after a Google sign-in, a new password can be set without the old one
 
 const Register = z.object({
   shopName: z.string().trim().min(2).max(40),
@@ -32,6 +35,33 @@ async function otp(promise) {
     throw err;
   }
 }
+
+async function google(credential) {
+  try {
+    return await verifyGoogleCredential(credential);
+  } catch (err) {
+    if (err?.name === "GoogleError") throw new HttpError(401, err.message);
+    throw err;
+  }
+}
+
+// Allows `limit` hits per key per hour (TTL index on rateLimits.expiresAt cleans up).
+async function rateLimit(db, key, limit, message) {
+  const now = new Date();
+  const r = await db.collection("rateLimits").findOneAndUpdate(
+    { _id: key, expiresAt: { $gt: now } },
+    { $inc: { hits: 1 } },
+    { returnDocument: "after" }
+  );
+  if (r) {
+    if (r.hits > limit) throw new HttpError(429, message);
+    return;
+  }
+  await db.collection("rateLimits").replaceOne({ _id: key }, { hits: 1, expiresAt: new Date(now.getTime() + 60 * 60 * 1000) }, { upsert: true });
+}
+
+const digits = (s) => String(s || "").replace(/\D/g, "").slice(-10);
+export const maskEmail = (e) => e.replace(/^([^@]{1,3})[^@]*(@.*)$/, "$1***$2");
 
 async function assertEmailOtp() {
   if (!(await emailOtpReady())) throw new HttpError(503, "Email codes aren't working right now. Please use your password.");
@@ -89,7 +119,12 @@ async function sessionPayload(db, user) {
 
 export default [
   // Which sign-in options the login screen should show.
-  ["GET", "/auth/config", async () => ({ emailOtp: await emailOtpReady() }), { auth: false }],
+  [
+    "GET",
+    "/auth/config",
+    async () => ({ emailOtp: await emailOtpReady(), googleClientId: googleClientId() || (googleEnabled() ? "test" : "") }),
+    { auth: false },
+  ],
 
   // Direct sign-up, only while email codes aren't set up (otherwise use register/start + verify).
   [
@@ -98,9 +133,17 @@ export default [
     async ({ db, body }) => {
       const input = Register.parse(body);
       assertAuthConfigured();
-      if (await emailOtpReady()) throw new HttpError(400, "Please verify your email to sign up.", { code: "VERIFY_EMAIL" });
+      // A Google sign-in proves the email, so no code is needed.
+      let verified = false;
+      if (body?.googleCredential) {
+        const g = await google(body.googleCredential);
+        if (g.email !== input.email) throw new HttpError(400, `Google signed you in as ${g.email}. Use that email, or sign up without Google.`);
+        verified = true;
+      } else if (await emailOtpReady()) {
+        throw new HttpError(400, "Please verify your email to sign up.", { code: "VERIFY_EMAIL" });
+      }
       await assertEmailFree(db, input.email);
-      const user = await createAccount(db, { ...input, passwordHash: await hashPassword(input.password) });
+      const user = await createAccount(db, { ...input, passwordHash: await hashPassword(input.password), verified });
       return respond(201, await sessionPayload(db, user), { "Set-Cookie": sessionCookie(user) });
     },
     { auth: false },
@@ -189,6 +232,42 @@ export default [
     },
     { auth: false },
   ],
+  // Sign in with Google. Also the no-email-code way to recover a forgotten password.
+  [
+    "POST",
+    "/auth/google",
+    async ({ db, body }) => {
+      const { credential } = z.object({ credential: z.string().min(10) }).parse(body);
+      assertAuthConfigured();
+      const g = await google(credential);
+      const user = await db.collection("users").findOne({ email: g.email });
+      if (!user) throw new HttpError(404, `No shop is registered with ${g.email}.`, { code: "NO_ACCOUNT", email: g.email, name: g.name });
+      user.passwordResetUntil = new Date(Date.now() + RESET_WINDOW_MS);
+      await db.collection("users").updateOne({ _id: user._id }, { $set: { emailVerified: true, passwordResetUntil: user.passwordResetUntil } });
+      return respond(200, await sessionPayload(db, user), { "Set-Cookie": sessionCookie(user) });
+    },
+    { auth: false },
+  ],
+  // Forgot which email you signed up with: look it up by phone (masked).
+  [
+    "POST",
+    "/auth/find-email",
+    async ({ db, body, req }) => {
+      const phone = digits(z.object({ phone: z.string() }).parse(body).phone);
+      if (phone.length !== 10) throw new HttpError(400, "Enter the 10-digit phone number you registered with.");
+      const ip = String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
+      const wait = "Too many lookups. Please try again in an hour.";
+      await rateLimit(db, `find-email:ip:${ip}`, 20, wait);
+      await rateLimit(db, `find-email:phone:${phone}`, 5, wait);
+      const users = await db.collection("users").find({}, { projection: { email: 1, phone: 1, shopId: 1 } }).toArray();
+      const found = users.filter((u) => digits(u.phone) === phone);
+      if (!found.length) throw new HttpError(404, "No shop is registered with this phone number.");
+      const shops = await db.collection("shops").find({ _id: { $in: found.map((u) => u.shopId) } }, { projection: { name: 1 } }).toArray();
+      const shopName = Object.fromEntries(shops.map((s) => [String(s._id), s.name]));
+      return { accounts: found.map((u) => ({ email: maskEmail(u.email), shop: shopName[String(u.shopId)] || "" })) };
+    },
+    { auth: false },
+  ],
   ["POST", "/auth/logout", async () => respond(200, { ok: true }, { "Set-Cookie": clearCookie() }), { auth: false }],
   ["GET", "/auth/me", async ({ db, user }) => sessionPayload(db, user)],
   [
@@ -196,10 +275,16 @@ export default [
     "/auth/password",
     async ({ db, user, body }) => {
       const { current, password } = z
-        .object({ current: z.string().min(1), password: z.string().min(6, "must be at least 6 characters").max(100) })
+        .object({ current: z.string().optional(), password: z.string().min(6, "must be at least 6 characters").max(100) })
         .parse(body);
-      if (!(await checkPassword(current, user.passwordHash))) throw new HttpError(400, "Current password is wrong.");
-      await db.collection("users").updateOne({ _id: user._id }, { $set: { passwordHash: await hashPassword(password) } });
+      const resetting = user.passwordResetUntil > new Date();
+      if (!resetting && !(current && (await checkPassword(current, user.passwordHash)))) {
+        throw new HttpError(400, current ? "Current password is wrong." : "Enter your current password.");
+      }
+      await db.collection("users").updateOne(
+        { _id: user._id },
+        { $set: { passwordHash: await hashPassword(password), ...(resetting && { passwordResetAt: new Date() }) }, $unset: { passwordResetUntil: "" } }
+      );
       return { ok: true };
     },
   ],

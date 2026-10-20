@@ -5,6 +5,7 @@ import { ToastProvider } from "./components/ui.jsx";
 import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
+import FindEmail from "./pages/FindEmail.jsx";
 import Billing from "./pages/Billing.jsx";
 import Bills from "./pages/Bills.jsx";
 import Expenses from "./pages/Expenses.jsx";
@@ -27,6 +28,7 @@ export default function App() {
         <Routes>
           <Route path="/register" element={<Register />} />
           <Route path="/forgot" element={<ForgotPassword />} />
+          <Route path="/find-email" element={<FindEmail />} />
           <Route path="*" element={<Login />} />
         </Routes>
       ) : (
