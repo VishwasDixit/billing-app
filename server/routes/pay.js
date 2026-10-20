@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import { HttpError } from "../http.js";
-import { PLANS, grantPlan } from "../subscription.js";
+import { PLANS, plansFor, grantPlan } from "../subscription.js";
 
 const PlanId = z.enum(["monthly", "yearly"]);
 
@@ -139,7 +139,7 @@ export async function recheckPendingLinks(db, filter = {}, limit = 20) {
   const pending = await db.collection("payments").find({ ...filter, method: "link", status: "pending" }).limit(limit).toArray();
   let approved = 0;
   for (const pay of pending) {
-    const plan = PLANS[pay.plan];
+    const plan = { ...PLANS[pay.plan], amount: pay.amount }; // the price when it was submitted
     // Pending entries can be older than the 7-day window: measure age from when it was submitted.
     const res = await checkRazorpayPayment(pay.utr, plan, new Date(pay.createdAt).getTime());
     if (res.ok) approved += (await autoApprove(db, pay, plan)) ? 1 : 0;
@@ -156,8 +156,8 @@ export default [
   [
     "GET",
     "/pay/config",
-    async ({ status }) => ({
-      plans: Object.values(PLANS),
+    async ({ status, shop }) => ({
+      plans: Object.values(plansFor(shop)),
       razorpayKeyId: razorpayKeys()?.id || null,
       upi: process.env.UPI_ID ? { id: process.env.UPI_ID, name: process.env.UPI_NAME || "Billing App" } : null,
       // A Razorpay.me (or other) payment page; payments are confirmed by the admin.
@@ -183,7 +183,7 @@ export default [
     async ({ db, shop, user, body }) => {
       const keys = razorpayKeys();
       if (!keys) throw new HttpError(503, "Online payment isn't set up yet. Please pay by UPI.");
-      const plan = PLANS[PlanId.parse(body.plan)];
+      const plan = plansFor(shop)[PlanId.parse(body.plan)];
       const receipt = `s${String(shop._id).slice(-8)}-${Date.now()}`;
       const r = await fetch("https://api.razorpay.com/v1/orders", {
         method: "POST",
@@ -279,7 +279,7 @@ export default [
         utr = input.utr.toUpperCase();
       }
       const method = input.via === "link" ? "link" : "upi";
-      const plan = PLANS[input.plan];
+      const plan = plansFor(shop)[input.plan];
       const existing = await db.collection("payments").findOne({ method, utr, status: { $in: ["pending", "approved"] } });
       // With keys, resubmitting your own pending ID asks Razorpay again instead of failing.
       const retryOwnPending =
@@ -300,7 +300,7 @@ export default [
         ? existing
         : { shopId: shop._id, plan: plan.id, amount: plan.amount, method, utr, status: "pending", createdAt: new Date() };
       if (!retryOwnPending) doc._id = (await db.collection("payments").insertOne(doc)).insertedId;
-      if (check?.ok && (await autoApprove(db, doc, PLANS[doc.plan]))) {
+      if (check?.ok && (await autoApprove(db, doc, { ...PLANS[doc.plan], amount: doc.amount }))) {
         return { ...publicPayment(await db.collection("payments").findOne({ _id: doc._id })), autoApproved: true };
       }
       return publicPayment(doc);

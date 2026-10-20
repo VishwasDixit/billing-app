@@ -528,3 +528,57 @@ describe("reminder language", () => {
     expect((await c("PUT", `/customers/${cust.id}`, { language: "french" })).status).toBe(400);
   });
 });
+
+describe("admin controls", () => {
+  async function adminClient() {
+    const c = client();
+    const r = await c("POST", "/auth/login", { email: "admin@shop.test", password: "secret12" });
+    if (r.status !== 200) return (await registered("admin@shop.test")).c;
+    return c;
+  }
+
+  it("blocks a shop: logs it out, refuses login, and unblocks", async () => {
+    const admin = await adminClient();
+    const { c, shop } = await registered("blockme@shop.test");
+    expect((await c("POST", `/admin/shops/${shop.id}/block`, { blocked: true })).status).toBe(403);
+
+    expect((await admin("POST", `/admin/shops/${shop.id}/block`, { blocked: true, reason: "Payment pending" })).status).toBe(200);
+    const me = await c("GET", "/auth/me");
+    expect(me.status).toBe(401);
+    expect(me.body).toMatchObject({ code: "BLOCKED" });
+    expect(me.body.error).toContain("Payment pending");
+    const login = await client()("POST", "/auth/login", { email: "blockme@shop.test", password: "secret12" });
+    expect(login.status).toBe(403);
+    expect((await admin("GET", "/admin/shops")).body.shops.find((s) => s.id === shop.id).blocked.reason).toBe("Payment pending");
+
+    expect((await admin("POST", `/admin/shops/${shop.id}/block`, { blocked: false })).status).toBe(200);
+    expect((await client()("POST", "/auth/login", { email: "blockme@shop.test", password: "secret12" })).status).toBe(200);
+  });
+
+  it("won't let the admin block their own shop", async () => {
+    const admin = await adminClient();
+    const me = (await admin("GET", "/auth/me")).body;
+    expect((await admin("POST", `/admin/shops/${me.shop.id}/block`, { blocked: true })).status).toBe(400);
+  });
+
+  it("sets a special price for one shop, used for payments, and resets it", async () => {
+    const admin = await adminClient();
+    const { c, shop } = await registered("cheap@shop.test");
+    const other = (await registered("normalprice@shop.test")).c;
+
+    const r = await admin("PUT", `/admin/shops/${shop.id}/prices`, { monthly: 29, yearly: 250 });
+    expect(r.body).toEqual({ monthly: 29, yearly: 250 });
+    const plans = (await c("GET", "/pay/config")).body.plans;
+    expect(plans.find((p) => p.id === "monthly")).toMatchObject({ amount: 29, standardAmount: 49 });
+    expect((await other("GET", "/pay/config")).body.plans.find((p) => p.id === "monthly").amount).toBe(49);
+
+    const upi = await c("POST", "/pay/upi", { plan: "monthly", via: "upi", utr: "CHEAP12345" });
+    expect(upi.body.amount).toBe(29);
+    const listed = (await admin("GET", "/admin/shops")).body.shops.find((s) => s.id === shop.id);
+    expect(listed.prices).toEqual({ monthly: 29, yearly: 250, custom: true });
+
+    expect((await admin("PUT", `/admin/shops/${shop.id}/prices`, { monthly: 0 })).status).toBe(400);
+    expect((await admin("PUT", `/admin/shops/${shop.id}/prices`, { monthly: null, yearly: 400 })).body).toEqual({ monthly: 49, yearly: 400 });
+    expect((await admin("GET", "/admin/shops")).body.shops.find((s) => s.id === shop.id).prices.custom).toBe(false);
+  });
+});

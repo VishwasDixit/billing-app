@@ -3,8 +3,8 @@ import { razorpayKeyStatus } from "./routes/pay.js";
 import { emailOtpEnabled, verifyGmail } from "./otp/mailer.js";
 import { googleClientId } from "./google.js";
 import { HttpError, readBody, send, sendError } from "./http.js";
-import { requireUser, jwtSecretOk } from "./auth.js";
-import { subscriptionStatus } from "./subscription.js";
+import { requireUser, jwtSecretOk, clearCookie } from "./auth.js";
+import { subscriptionStatus, blockedMessage } from "./subscription.js";
 import authRoutes from "./routes/auth.js";
 import shopRoutes from "./routes/shop.js";
 import billRoutes from "./routes/bills.js";
@@ -74,6 +74,10 @@ export async function handle(req, res) {
       if (match.route.admin && ctx.user.role !== "admin") throw new HttpError(403, "Admins only.");
       ctx.shop = await db.collection("shops").findOne({ _id: ctx.user.shopId });
       if (!ctx.shop) throw new HttpError(401, "Shop not found. Please log in again.");
+      if (ctx.shop.blocked && ctx.user.role !== "admin") {
+        res.setHeader("Set-Cookie", clearCookie());
+        throw new HttpError(401, blockedMessage(ctx.shop), { code: "BLOCKED" });
+      }
       ctx.status = subscriptionStatus(ctx.shop, { isAdmin: ctx.user.role === "admin" });
     }
 

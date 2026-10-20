@@ -100,9 +100,17 @@ export default function Plans() {
         {(cfg?.plans || []).map((p) => (
           <div key={p.id} className={"card plan" + (p.id === "yearly" ? " best" : "")}>
             <h2 style={{ marginBottom: 0 }}>{p.name}</h2>
-            <div className="price">₹{p.amount}</div>
+            <div className="price">
+              {p.standardAmount > p.amount && <s className="muted" style={{ fontSize: "0.55em", marginRight: 6 }}>₹{p.standardAmount}</s>}₹{p.amount}
+            </div>
             <div className="muted small">
-              {p.days} days{p.id === "yearly" && ` · save ₹${49 * 12 - p.amount} vs monthly`}
+              {p.days} days
+              {p.id === "yearly" && (() => {
+                const monthly = cfg.plans.find((x) => x.id === "monthly")?.amount;
+                const save = monthly * 12 - p.amount;
+                return save > 0 ? ` · save ₹${save} vs monthly` : "";
+              })()}
+              {p.standardAmount > p.amount && <div className="tag good" style={{ display: "inline-block", marginLeft: 6 }}>Special price for you</div>}
             </div>
             <div className="stack" style={{ marginTop: 14 }}>
               {cfg.razorpayKeyId && (

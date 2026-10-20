@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { HttpError, respond } from "../http.js";
 import { hashPassword, checkPassword, sessionCookie, clearCookie, publicUser, isAdminEmail, assertAuthConfigured } from "../auth.js";
-import { TRIAL_DAYS } from "../subscription.js";
+import { TRIAL_DAYS, blockedMessage } from "../subscription.js";
 import { defaultMenu, GRILLHIVE_SHOP } from "../seed/grillhive-menu.js";
 import { createCode, verifyCode } from "../otp/codes.js";
 import { sendOtpEmail, emailOtpReady } from "../otp/mailer.js";
@@ -114,6 +114,7 @@ export function newShop({ name, phone, ownerEmail }) {
 
 async function sessionPayload(db, user) {
   const shop = await db.collection("shops").findOne({ _id: user.shopId });
+  if (shop?.blocked && !isAdminEmail(user.email)) throw new HttpError(403, blockedMessage(shop), { code: "BLOCKED" });
   return { user: publicUser(user), shop: publicShop(shop, isAdminEmail(user.email)) };
 }
 

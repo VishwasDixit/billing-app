@@ -7,6 +7,17 @@ export const PLANS = {
 
 const DAY = 24 * 60 * 60 * 1000;
 
+// The plans with this shop's own prices (set by the admin) in place of the defaults.
+export function plansFor(shop) {
+  const custom = shop?.prices || {};
+  return Object.fromEntries(
+    Object.values(PLANS).map((p) => [p.id, { ...p, amount: custom[p.id] ?? p.amount, ...(custom[p.id] != null && custom[p.id] !== p.amount && { standardAmount: p.amount }) }])
+  );
+}
+
+export const blockedMessage = (shop) =>
+  `This shop has been blocked by the admin${shop.blocked?.reason ? `: ${shop.blocked.reason}` : ""}. Please contact support.`;
+
 // The moment the shop's access ends: trial end or paid period end, whichever is later.
 export function accessEndsAt(shop) {
   const trial = shop.trialEndsAt ? new Date(shop.trialEndsAt).getTime() : 0;

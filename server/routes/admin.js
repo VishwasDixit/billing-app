@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError } from "../http.js";
 import { hashPassword, isAdminEmail } from "../auth.js";
-import { grantPlan, subscriptionStatus, PLANS } from "../subscription.js";
+import { grantPlan, subscriptionStatus, plansFor, PLANS } from "../subscription.js";
 import { recheckPendingLinks } from "./pay.js";
 
 const oid = (id) => {
@@ -40,6 +40,8 @@ export default [
             sales: st?.sales || 0,
             bills: st?.bills || 0,
             lastBillAt: st?.lastBillAt || null,
+            blocked: s.blocked || null,
+            prices: { monthly: plansFor(s).monthly.amount, yearly: plansFor(s).yearly.amount, custom: !!(s.prices?.monthly != null || s.prices?.yearly != null) },
           };
         }),
       };
@@ -118,6 +120,48 @@ export default [
       if (!(await db.collection("shops").findOne({ _id: shopId }))) throw new HttpError(404, "Shop not found.");
       const end = await grantPlan(db, shopId, plan, days ?? PLANS[plan].days);
       return { ok: true, currentPeriodEnd: end };
+    },
+    admin,
+  ],
+  // Block or unblock a shop. Blocked shops are logged out everywhere and can't log in.
+  [
+    "POST",
+    "/admin/shops/:id/block",
+    async ({ db, params, body, user }) => {
+      const { blocked, reason } = z.object({ blocked: z.boolean(), reason: z.string().trim().max(160).optional().default("") }).parse(body);
+      const shopId = oid(params.id);
+      if (String(shopId) === String(user.shopId)) throw new HttpError(400, "You can't block your own admin shop.");
+      const update = blocked ? { $set: { blocked: { at: new Date(), by: user.email, reason } } } : { $unset: { blocked: "" } };
+      const { matchedCount } = await db.collection("shops").updateOne({ _id: shopId }, update);
+      if (!matchedCount) throw new HttpError(404, "Shop not found.");
+      return { ok: true };
+    },
+    admin,
+  ],
+  // Per-shop plan prices. null (or the standard price) goes back to the standard price.
+  [
+    "PUT",
+    "/admin/shops/:id/prices",
+    async ({ db, params, body }) => {
+      const Price = z.number().int().min(1, "price must be at least ₹1").max(100000).nullable().optional();
+      const input = z.object({ monthly: Price, yearly: Price }).parse(body);
+      const $set = {};
+      const $unset = {};
+      for (const id of Object.keys(PLANS)) {
+        if (input[id] === undefined) continue;
+        if (input[id] === null || input[id] === PLANS[id].amount) $unset[`prices.${id}`] = "";
+        else $set[`prices.${id}`] = input[id];
+      }
+      const shopId = oid(params.id);
+      const update = { ...(Object.keys($set).length && { $set }), ...(Object.keys($unset).length && { $unset }) };
+      if (Object.keys(update).length) {
+        const { matchedCount } = await db.collection("shops").updateOne({ _id: shopId }, update);
+        if (!matchedCount) throw new HttpError(404, "Shop not found.");
+      }
+      const shop = await db.collection("shops").findOne({ _id: shopId }, { projection: { prices: 1 } });
+      if (!shop) throw new HttpError(404, "Shop not found.");
+      const plans = plansFor(shop);
+      return { monthly: plans.monthly.amount, yearly: plans.yearly.amount };
     },
     admin,
   ],
