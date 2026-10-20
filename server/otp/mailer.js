@@ -29,12 +29,15 @@ export async function emailOtpReady() {
 }
 
 const PURPOSE = {
-  register: { subject: "Verify your email", title: "Verify your email", line: "Use this code to finish creating your shop account." },
-  login: { subject: "Your login code", title: "Your login code", line: "Use this code to log in." },
-  reset: { subject: "Reset your password", title: "Reset your password", line: "Use this code to set a new password." },
+  register: { subject: "verification code", title: "Verify your email", line: "Use this code to finish creating your shop account." },
+  login: { subject: "login code", title: "Your login code", line: "Use this code to log in." },
+  reset: { subject: "password reset code", title: "Reset your password", line: "Use this code to set a new password." },
 };
 
-export function otpEmail({ code, purpose, appName = "Billing" }) {
+// One steady sender name helps Gmail learn the sender isn't spam (shop names vary per email).
+export const senderName = () => process.env.MAIL_FROM_NAME || "Bizora Billing";
+
+export function otpEmail({ code, purpose, appName = senderName() }) {
   const p = PURPOSE[purpose] || PURPOSE.login;
   const spaced = `${code.slice(0, 3)} ${code.slice(3)}`;
   const text = `${p.title}\n\n${p.line}\n\n${spaced}\n\nThe code is valid for 10 minutes. If you didn't ask for it, you can ignore this email.\n\n— ${appName}`;
@@ -46,7 +49,7 @@ export function otpEmail({ code, purpose, appName = "Billing" }) {
 <tr><td align="center" style="padding:6px 28px 22px"><div style="display:inline-block;background:#e6f4f2;color:#0f766e;font-size:34px;font-weight:800;letter-spacing:8px;padding:14px 22px;border-radius:12px;font-family:Menlo,Consolas,monospace">${spaced}</div></td></tr>
 <tr><td style="padding:0 28px 26px;color:#6b7280;font-size:13px">The code is valid for 10 minutes. If you didn't ask for it, you can ignore this email.</td></tr>
 </table><div style="color:#9aa0a6;font-size:12px;padding-top:14px">${appName}</div></td></tr></table></body></html>`;
-  return { subject: `${code} is your ${p.subject.toLowerCase()} code`, text, html };
+  return { subject: `Your ${senderName()} ${p.subject}: ${code}`, text, html };
 }
 
 // Checks the Gmail login without sending anything (used by /api/health?check=gmail).
@@ -80,5 +83,13 @@ export async function sendOtpEmail({ to, code, purpose, appName }) {
     }
     throw new Error("Email sending is not set up (GMAIL_USER / GMAIL_APP_PASSWORD).");
   }
-  await gmailTransport().sendMail({ from: `"${appName || "Billing"}" <${process.env.GMAIL_USER}>`, to, subject: msg.subject, text: msg.text, html: msg.html });
+  await gmailTransport().sendMail({
+    from: { name: senderName(), address: process.env.GMAIL_USER },
+    replyTo: process.env.GMAIL_USER,
+    to,
+    subject: msg.subject,
+    text: msg.text,
+    html: msg.html,
+    headers: { "X-Auto-Response-Suppress": "All", "Auto-Submitted": "auto-generated" },
+  });
 }

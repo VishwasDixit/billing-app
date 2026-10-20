@@ -177,12 +177,12 @@ export default [
     },
     { auth: false },
   ],
-  // Email a login or password-reset code. Same reply whether or not the account exists.
+  // Email a password-reset code. Same reply whether or not the account exists.
   [
     "POST",
     "/auth/otp/send",
     async ({ db, body }) => {
-      const { email, purpose } = z.object({ email: Email, purpose: z.enum(["login", "reset"]) }).parse(body);
+      const { email, purpose } = z.object({ email: Email, purpose: z.literal("reset").default("reset") }).parse(body);
       await assertEmailOtp();
       const user = await db.collection("users").findOne({ email });
       if (user) {
@@ -191,18 +191,6 @@ export default [
         await sendOtpEmail({ to: email, code, purpose, appName: shop?.name });
       }
       return { sent: true, message: "If this email has an account, we've sent a 6-digit code to it." };
-    },
-    { auth: false },
-  ],
-  [
-    "POST",
-    "/auth/otp/login",
-    async ({ db, body }) => {
-      const { email, code } = CodeIn.parse(body);
-      await otp(verifyCode({ db, key: email, purpose: "login", code }));
-      const user = await db.collection("users").findOne({ email });
-      if (!user) throw new HttpError(400, "No account found for this email.");
-      return respond(200, await sessionPayload(db, user), { "Set-Cookie": sessionCookie(user) });
     },
     { auth: false },
   ],

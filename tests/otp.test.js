@@ -82,20 +82,17 @@ describe("sign-up with email verification", () => {
   });
 });
 
-describe("login with a code", () => {
-  it("logs in with the emailed code", async () => {
+describe("email codes are only for sign-up and password reset", () => {
+  it("no longer logs in with a code", async () => {
     await registerVerified("login@x.test");
     const c = client();
-    const sent = await c("POST", "/auth/otp/send", { email: "login@x.test", purpose: "login" });
-    expect(sent.body.sent).toBe(true);
-    const r = await c("POST", "/auth/otp/login", { email: "login@x.test", code: lastCode("login@x.test", "login") });
-    expect(r.status).toBe(200);
-    expect((await c("GET", "/auth/me")).body.user.email).toBe("login@x.test");
+    expect((await c("POST", "/auth/otp/send", { email: "login@x.test", purpose: "login" })).status).toBe(400);
+    expect((await c("POST", "/auth/otp/login", { email: "login@x.test", code: "123456" })).status).toBe(404);
   });
 
   it("answers the same for unknown emails and sends nothing", async () => {
     const before = inbox.length;
-    const r = await client()("POST", "/auth/otp/send", { email: "nobody@x.test", purpose: "login" });
+    const r = await client()("POST", "/auth/otp/send", { email: "nobody@x.test", purpose: "reset" });
     expect(r.status).toBe(200);
     expect(r.body.message).toMatch(/If this email has an account/);
     expect(inbox.length).toBe(before);
@@ -104,10 +101,15 @@ describe("login with a code", () => {
   it("limits how often codes can be sent", async () => {
     await registerVerified("spam@x.test");
     const c = client();
-    expect((await c("POST", "/auth/otp/send", { email: "spam@x.test", purpose: "login" })).status).toBe(200);
-    const again = await c("POST", "/auth/otp/send", { email: "spam@x.test", purpose: "login" });
+    expect((await c("POST", "/auth/otp/send", { email: "spam@x.test", purpose: "reset" })).status).toBe(200);
+    const again = await c("POST", "/auth/otp/send", { email: "spam@x.test", purpose: "reset" });
     expect(again.status).toBe(429);
     expect(again.body.error).toMatch(/wait \d+ seconds/);
+  });
+
+  it("emails come from one steady sender name with the code in the subject", async () => {
+    const { otpEmail } = await import("../server/otp/mailer.js");
+    expect(otpEmail({ code: "123456", purpose: "reset" }).subject).toBe("Your Bizora Billing password reset code: 123456");
   });
 });
 
@@ -122,7 +124,7 @@ describe("forgot password", () => {
     expect(r.status).toBe(200);
     expect((await client()("POST", "/auth/login", { email: "forgot@x.test", password: "newpass99" })).status).toBe(200);
     expect((await client()("POST", "/auth/login", { email: "forgot@x.test", password: "secret12" })).status).toBe(401);
-    // A login code can't be used to reset, and a used reset code can't be reused.
+    // A used reset code can't be reused.
     expect((await client()("POST", "/auth/password/reset", { email: "forgot@x.test", code, password: "another99" })).status).toBe(400);
   });
 });
