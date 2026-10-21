@@ -23,6 +23,26 @@ beforeAll(async () => {
   images = await import("../server/routes/images.js");
   // Few results for the "indian food" query of "rare dish", plenty otherwise.
   images.setTestFetch(async (url, opts) => {
+    if (url.startsWith("https://commons.wikimedia.org/")) {
+      expect(opts.headers["User-Agent"]).toMatch(/BizoraBilling/);
+      const q = new URL(url).searchParams.get("gsrsearch");
+      calls.push("commons:" + q);
+      const page = (i, mime = "image/jpeg") => ({
+        pageid: 500 + i,
+        index: i,
+        title: `File:Dal Makhani ${i}.jpg`,
+        imageinfo: [
+          {
+            mime,
+            thumburl: `https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Dal_Makhani_${i}.jpg/330px-Dal_Makhani_${i}.jpg?utm_source=x`,
+            descriptionurl: `https://commons.wikimedia.org/wiki/File:Dal_Makhani_${i}.jpg`,
+            extmetadata: { Artist: { value: '<a href="//commons.wikimedia.org/wiki/User:Cook">Cook</a>' }, LicenseShortName: { value: "CC BY-SA 4.0" } },
+          },
+        ],
+      });
+      const pages = Object.fromEntries([...Array(7)].map((_, i) => [500 + i, page(i)]).concat([[999, { ...page(9, "image/svg+xml"), pageid: 999 }]]));
+      return new Response(JSON.stringify({ query: { pages } }), { status: 200 });
+    }
     expect(opts.headers.Authorization).toBe("test-key");
     const q = new URL(url).searchParams.get("query");
     calls.push(q);
@@ -98,6 +118,35 @@ describe("photo search", () => {
     const r = await c("GET", "/images/search?q=samosa");
     expect(r.status).toBe(429);
     expect(r.body.error).toMatch(/Too many photo searches/);
+  });
+});
+
+describe("Wikimedia Commons (no key needed)", () => {
+  it("searches Commons when there is no Pexels key, with author and licence", async () => {
+    const saved = process.env.PEXELS_API_KEY;
+    delete process.env.PEXELS_API_KEY;
+    try {
+      expect(images.queriesFor("Dal Makhani (Full)", "Dal Special")).toEqual(["dal makhani", "dal makhani food", "dal food"]);
+      expect(images.queriesFor("Chhola Bhatura")).toEqual(["chhola bhatura", "chole bhature", "chole bhature food"]);
+      expect(images.commonSpelling("pyaj pakode")).toBe("onion pakora");
+      const c = await shopClient("img-wiki@x.test");
+      const r = await c("GET", "/images/search?q=Dal%20Makhani");
+      expect(r.status).toBe(200);
+      expect(r.body.source).toBe("wikimedia");
+      expect(calls.at(-1)).toBe("commons:dal makhani filetype:bitmap");
+      expect(r.body.results).toHaveLength(7); // the SVG drawing is skipped
+      const first = r.body.results[0];
+      expect(first.url).toBe("https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Dal_Makhani_0.jpg/330px-Dal_Makhani_0.jpg");
+      expect(first.author).toBe("Cook (CC BY-SA 4.0)");
+
+      const item = (await c("GET", "/menu")).body[0];
+      const put = await c("PUT", `/menu/${item.id}`, { image: first.url, imageCredit: { author: first.author, url: first.pexelsUrl } });
+      expect(put.status).toBe(200);
+      expect(put.body.imageCredit.url).toMatch(/^https:\/\/commons\.wikimedia\.org\//);
+      expect((await c("PUT", `/menu/${item.id}`, { image: "https://upload.wikimedia.org/evil.jpg" })).status).toBe(400);
+    } finally {
+      process.env.PEXELS_API_KEY = saved;
+    }
   });
 });
 

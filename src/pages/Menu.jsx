@@ -193,7 +193,7 @@ function ItemEditor({ item, categories, onClose }) {
               </button>
             )}
             {photoBusy && <span className="hint">Preparing photo…</span>}
-            {credit?.author && <span className="hint">Photo: {credit.author} / Pexels</span>}
+            {credit?.author && <span className="hint">Photo: {credit.author}</span>}
           </div>
         </div>
         {searching && (
@@ -272,6 +272,7 @@ function AutoPick({ items, onClose }) {
   const toast = useToast();
   const [list, setList] = useState(null); // [{ itemId, name, photo, more, on }]
   const [skipped, setSkipped] = useState(0);
+  const [source, setSource] = useState("");
   const { busy, error, run } = useAction();
 
   useEffect(() => {
@@ -279,6 +280,7 @@ function AutoPick({ items, onClose }) {
       const r = await post("/images/bulk-suggest", { itemIds: items.slice(0, 100).map((m) => m.id) });
       setList(r.suggestions.map((s) => ({ ...s, on: true })));
       setSkipped(r.skipped + Math.max(0, items.length - 100));
+      setSource(r.source);
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -325,7 +327,11 @@ function AutoPick({ items, onClose }) {
             </button>
           </div>
           <p className="hint" style={{ textAlign: "right", margin: "6px 0 0" }}>
-            <a href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Photos provided by Pexels</a>
+            {source === "pexels" ? (
+              <a href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Photos provided by Pexels</a>
+            ) : (
+              <a href="https://commons.wikimedia.org" target="_blank" rel="noopener noreferrer">Photos from Wikimedia Commons (free licences)</a>
+            )}
           </p>
         </>
       )}

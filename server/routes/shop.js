@@ -4,7 +4,7 @@ import { HttpError, respondRaw } from "../http.js";
 import { subscriptionStatus } from "../subscription.js";
 import { defaultMenu } from "../seed/grillhive-menu.js";
 import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
-import { PEXELS_PHOTO_URL } from "./images.js";
+import { isLibraryPhoto, CREDIT_URL } from "./images.js";
 import { LANGUAGE_CODES } from "../../shared/messages.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
@@ -71,15 +71,15 @@ const MenuItem = z.object({
   variants: z.array(Variant).min(1).max(6),
   active: z.boolean().default(true),
   sort: z.number().optional(),
-  // Our own pictures (a default illustration or an uploaded photo), or a Pexels library link.
+  // Our own pictures (a default illustration or an uploaded photo), or a photo-library link.
   image: z
     .string()
     .max(300)
-    .refine((u) => u === "" || isDefaultImage(u) || PHOTO_URL.test(u) || PEXELS_PHOTO_URL.test(u), "image must be a menu picture")
+    .refine((u) => u === "" || isDefaultImage(u) || PHOTO_URL.test(u) || isLibraryPhoto(u), "image must be a menu picture")
     .optional(),
-  // Credit for a library photo ("Photo by X on Pexels").
+  // Credit for a library photo (author and licence, with a link to its page).
   imageCredit: z
-    .object({ author: z.string().trim().max(80), url: z.string().trim().max(200).refine((u) => u === "" || /^https:\/\/(www\.)?pexels\.com\//.test(u)) })
+    .object({ author: z.string().trim().max(100), url: z.string().trim().max(300).refine((u) => u === "" || CREDIT_URL.test(u)) })
     .nullable()
     .optional(),
 });
@@ -157,7 +157,7 @@ export default [
     async ({ db, shop, params, body }) => {
       const item = MenuItem.partial().parse(body);
       // A picture that isn't a library photo drops the old photo credit.
-      if (item.image !== undefined && !PEXELS_PHOTO_URL.test(item.image) && item.imageCredit === undefined) item.imageCredit = null;
+      if (item.image !== undefined && !isLibraryPhoto(item.image) && item.imageCredit === undefined) item.imageCredit = null;
       const before = await db
         .collection("menuItems")
         .findOneAndUpdate({ _id: oid(params.id), shopId: shop._id }, { $set: { ...item, updatedAt: new Date() } }, { returnDocument: "before" });

@@ -37,9 +37,9 @@ export default defineConfig({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
-          // Menu photos picked from the Pexels library (links never change).
+          // Menu photos picked from the photo libraries (links never change).
           {
-            urlPattern: ({ url }) => url.origin === "https://images.pexels.com",
+            urlPattern: ({ url }) => ["https://images.pexels.com", "https://upload.wikimedia.org", "https://thumb.wikimedia.org"].includes(url.origin),
             handler: "CacheFirst",
             options: {
               cacheName: "library-photos",

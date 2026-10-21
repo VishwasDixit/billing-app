@@ -52,7 +52,7 @@ export function PhotoSearch({ name, category, onPick, onClose }) {
       </div>
       <p className="hint" style={{ margin: "8px 0 0" }}>
         Tap a photo to use it. Only its link is saved, so it takes no storage.{" "}
-        <a href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Photos provided by Pexels</a>
+        {data && <a href={data.creditUrl} target="_blank" rel="noopener noreferrer">{data.credit}</a>}
       </p>
     </Modal>
   );
