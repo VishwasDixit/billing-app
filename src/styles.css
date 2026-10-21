@@ -433,3 +433,9 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .bill-date.past input { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); font-weight: 600; }
 .past-note { color: var(--warn); margin: -4px 0 8px; }
 .past-date-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 14px; }
+.storage-meter { display: grid; gap: 6px; padding: 12px 14px; }
+.storage-top { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.meter { height: 8px; border-radius: 999px; background: var(--bg); overflow: hidden; }
+.meter-fill { height: 100%; border-radius: 999px; background: var(--good); }
+.meter-fill.warn { background: var(--warn); }
+.meter-fill.bad { background: var(--danger); }

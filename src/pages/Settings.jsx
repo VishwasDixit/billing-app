@@ -211,6 +211,18 @@ export default function Settings() {
             <div className="btn-row">
               <Link className="btn" to="/plans">Plans &amp; payments</Link>
               <button className="btn" onClick={() => setPw(true)}>Change password</button>
+              <button
+                className="btn"
+                onClick={() =>
+                  confirm("Log out on every other phone and computer? This one stays logged in.") &&
+                  run(async () => {
+                    await post("/auth/logout-others");
+                    toast("Logged out on all other devices");
+                  })
+                }
+              >
+                Log out other devices
+              </button>
               <button className="btn btn-danger" onClick={() => confirm("Log out of this device?") && logout()}>Log out</button>
             </div>
           </section>
@@ -323,7 +335,7 @@ function PasswordModal({ onClose }) {
           e.preventDefault();
           run(async () => {
             await post("/auth/password", user.canSetPassword ? { password } : { current, password });
-            toast("Password changed");
+            toast("Password changed. Other devices are logged out.");
             onClose();
           });
         }}

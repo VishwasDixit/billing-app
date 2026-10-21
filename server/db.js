@@ -34,7 +34,9 @@ export async function closeDb() {
 }
 
 async function ensureIndexes(db) {
+  await backfillPhoneDigits(db);
   await Promise.all([
+    db.collection("users").createIndex({ phoneDigits: 1 }),
     db.collection("users").createIndex({ email: 1 }, { unique: true }),
     db.collection("users").createIndex({ shopId: 1 }),
     db.collection("rateLimits").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
@@ -54,6 +56,15 @@ async function ensureIndexes(db) {
       { unique: true, partialFilterExpression: { razorpayPaymentId: { $type: "string" } } }
     ),
   ]);
+}
+
+// Older accounts: the searchable last-10-digits phone used by "Forgot email".
+async function backfillPhoneDigits(db) {
+  const users = await db.collection("users").find({ phoneDigits: { $exists: false } }, { projection: { phone: 1 } }).limit(5000).toArray();
+  if (!users.length) return;
+  await db.collection("users").bulkWrite(
+    users.map((u) => ({ updateOne: { filter: { _id: u._id }, update: { $set: { phoneDigits: String(u.phone || "").replace(/\D/g, "").slice(-10) } } } }))
+  );
 }
 
 // Short, secret-free reason for a failed connection (shown on /api/health).

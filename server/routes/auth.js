@@ -45,19 +45,34 @@ async function google(credential) {
   }
 }
 
-// Allows `limit` hits per key per hour (TTL index on rateLimits.expiresAt cleans up).
-async function rateLimit(db, key, limit, message) {
+// Hourly counters in rateLimits (a TTL index on expiresAt cleans them up).
+async function bump(db, key) {
   const now = new Date();
-  const r = await db.collection("rateLimits").findOneAndUpdate(
-    { _id: key, expiresAt: { $gt: now } },
-    { $inc: { hits: 1 } },
-    { returnDocument: "after" }
-  );
-  if (r) {
-    if (r.hits > limit) throw new HttpError(429, message);
-    return;
-  }
+  const r = await db.collection("rateLimits").findOneAndUpdate({ _id: key, expiresAt: { $gt: now } }, { $inc: { hits: 1 } }, { returnDocument: "after" });
+  if (r) return r.hits;
   await db.collection("rateLimits").replaceOne({ _id: key }, { hits: 1, expiresAt: new Date(now.getTime() + 60 * 60 * 1000) }, { upsert: true });
+  return 1;
+}
+async function hitsOf(db, key) {
+  return (await db.collection("rateLimits").findOne({ _id: key, expiresAt: { $gt: new Date() } }))?.hits || 0;
+}
+// Allows `limit` calls per key per hour.
+async function rateLimit(db, key, limit, message) {
+  if (/:ip:$/.test(key)) return;
+  if ((await bump(db, key)) > limit) throw new HttpError(429, message);
+}
+
+// Vercel always sets x-forwarded-for; without it (local dev, tests) per-network limits are skipped.
+export const clientIp = (req) => String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+
+// Wrong-password limits: per account and per network.
+export const LOGIN_LIMITS = { email: 10, ip: 50 };
+const TOO_MANY = "Too many wrong tries. Please wait an hour, or use Forgot password.";
+
+// Logs out every other device: old cookies stop working; the caller gets a fresh one.
+async function newSession(db, user) {
+  const r = await db.collection("users").findOneAndUpdate({ _id: user._id }, { $inc: { sessionVersion: 1 } }, { returnDocument: "after" });
+  return sessionCookie(r);
 }
 
 const digits = (s) => String(s || "").replace(/\D/g, "").slice(-10);
@@ -78,7 +93,7 @@ async function createAccount(db, d) {
   const shop = newShop({ name: d.shopName, phone: d.phone, ownerEmail: d.email });
   const { insertedId: shopId } = await db.collection("shops").insertOne(shop);
   await db.collection("menuItems").insertMany(defaultMenu(shopId));
-  const user = { shopId, name: d.name, email: d.email, phone: d.phone, passwordHash: d.passwordHash, emailVerified: !!d.verified, createdAt: new Date() };
+  const user = { shopId, name: d.name, email: d.email, phone: d.phone, phoneDigits: digits(d.phone), passwordHash: d.passwordHash, emailVerified: !!d.verified, createdAt: new Date() };
   try {
     user._id = (await db.collection("users").insertOne(user)).insertedId;
   } catch (err) {
@@ -131,8 +146,10 @@ export default [
   [
     "POST",
     "/auth/register",
-    async ({ db, body }) => {
+    async ({ db, body, req }) => {
       const input = Register.parse(body);
+      await rateLimit(db, `signup:ip:${clientIp(req)}`, 20, "Too many sign-ups from this network. Please try again in an hour.");
+
       assertAuthConfigured();
       // A Google sign-in proves the email, so no code is needed.
       let verified = false;
@@ -153,8 +170,10 @@ export default [
   [
     "POST",
     "/auth/register/start",
-    async ({ db, body }) => {
+    async ({ db, body, req }) => {
       const input = Register.parse(body);
+      await rateLimit(db, `signup:ip:${clientIp(req)}`, 20, "Too many sign-ups from this network. Please try again in an hour.");
+
       assertAuthConfigured();
       await assertEmailOtp();
       await assertEmailFree(db, input.email);
@@ -182,8 +201,9 @@ export default [
   [
     "POST",
     "/auth/otp/send",
-    async ({ db, body }) => {
+    async ({ db, body, req }) => {
       const { email, purpose } = z.object({ email: Email, purpose: z.literal("reset").default("reset") }).parse(body);
+      await rateLimit(db, `otp:ip:${clientIp(req)}`, 30, "Too many codes requested from this network. Please try again in an hour.");
       await assertEmailOtp();
       const user = await db.collection("users").findOne({ email });
       if (user) {
@@ -204,19 +224,26 @@ export default [
       const user = await db.collection("users").findOne({ email });
       if (!user) throw new HttpError(400, "No account found for this email.");
       await db.collection("users").updateOne({ _id: user._id }, { $set: { passwordHash: await hashPassword(password), passwordResetAt: new Date() } });
-      return respond(200, await sessionPayload(db, user), { "Set-Cookie": sessionCookie(user) });
+      await db.collection("rateLimits").deleteOne({ _id: `login:email:${email}` }); // proved it's theirs
+      const cookie = await newSession(db, user);
+      return respond(200, await sessionPayload(db, user), { "Set-Cookie": cookie });
     },
     { auth: false },
   ],
   [
     "POST",
     "/auth/login",
-    async ({ db, body }) => {
+    async ({ db, body, req }) => {
       const input = Login.parse(body);
+      const ip = clientIp(req);
+      const keys = { email: `login:email:${input.email}`, ip: ip && `login:ip:${ip}` };
+      if ((await hitsOf(db, keys.email)) >= LOGIN_LIMITS.email || (keys.ip && (await hitsOf(db, keys.ip)) >= LOGIN_LIMITS.ip)) throw new HttpError(429, TOO_MANY);
       const user = await db.collection("users").findOne({ email: input.email });
       if (!user || !(await checkPassword(input.password, user.passwordHash))) {
+        await Promise.all([bump(db, keys.email), keys.ip && bump(db, keys.ip)]);
         throw new HttpError(401, "Wrong email or password.");
       }
+      await db.collection("rateLimits").deleteOne({ _id: keys.email });
       return respond(200, await sessionPayload(db, user), { "Set-Cookie": sessionCookie(user) });
     },
     { auth: false },
@@ -244,12 +271,11 @@ export default [
     async ({ db, body, req }) => {
       const phone = digits(z.object({ phone: z.string() }).parse(body).phone);
       if (phone.length !== 10) throw new HttpError(400, "Enter the 10-digit phone number you registered with.");
-      const ip = String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
+      const ip = clientIp(req);
       const wait = "Too many lookups. Please try again in an hour.";
       await rateLimit(db, `find-email:ip:${ip}`, 20, wait);
       await rateLimit(db, `find-email:phone:${phone}`, 5, wait);
-      const users = await db.collection("users").find({}, { projection: { email: 1, phone: 1, shopId: 1 } }).toArray();
-      const found = users.filter((u) => digits(u.phone) === phone);
+      const found = await db.collection("users").find({ phoneDigits: phone }, { projection: { email: 1, shopId: 1 } }).toArray();
       if (!found.length) throw new HttpError(404, "No shop is registered with this phone number.");
       const shops = await db.collection("shops").find({ _id: { $in: found.map((u) => u.shopId) } }, { projection: { name: 1 } }).toArray();
       const shopName = Object.fromEntries(shops.map((s) => [String(s._id), s.name]));
@@ -267,14 +293,25 @@ export default [
         .object({ current: z.string().optional(), password: z.string().min(6, "must be at least 6 characters").max(100) })
         .parse(body);
       const resetting = user.passwordResetUntil > new Date();
-      if (!resetting && !(current && (await checkPassword(current, user.passwordHash)))) {
-        throw new HttpError(400, current ? "Current password is wrong." : "Enter your current password.");
+      if (!resetting) {
+        const key = `password:user:${user._id}`;
+        if ((await hitsOf(db, key)) >= LOGIN_LIMITS.email) throw new HttpError(429, TOO_MANY);
+        if (!(current && (await checkPassword(current, user.passwordHash)))) {
+          if (current) await bump(db, key);
+          throw new HttpError(400, current ? "Current password is wrong." : "Enter your current password.");
+        }
       }
       await db.collection("users").updateOne(
         { _id: user._id },
         { $set: { passwordHash: await hashPassword(password), ...(resetting && { passwordResetAt: new Date() }) }, $unset: { passwordResetUntil: "" } }
       );
-      return { ok: true };
+      // Other devices are logged out; this one stays logged in.
+      return respond(200, { ok: true }, { "Set-Cookie": await newSession(db, user) });
     },
+  ],
+  [
+    "POST",
+    "/auth/logout-others",
+    async ({ db, user }) => respond(200, { ok: true }, { "Set-Cookie": await newSession(db, user) }),
   ],
 ];

@@ -111,13 +111,13 @@ function deviceCode(n) {
 }
 
 export default [
-  ["GET", "/shop", async ({ shop, user }) => publicShop(shop, user.role === "admin")],
+  ["GET", "/shop", async ({ db, shop, user }) => publicShop(await db.collection("shops").findOne({ _id: shop._id }), user.role === "admin")],
   [
     "PUT",
     "/shop",
     async ({ db, shop, user, body }) => {
       const input = ShopSettings.parse(body);
-      const next = { ...shop, ...input };
+      const next = { ...(await db.collection("shops").findOne({ _id: shop._id })), ...input };
       if (next.qrMode === "upi" && !next.upiId) throw new HttpError(400, "Add your shop UPI ID to print a payment QR on bills.");
       if (next.qrMode === "image" && !next.qrImage) throw new HttpError(400, "Upload your QR picture, or choose another QR option.");
       if (input.printer) input.printer = { ...shop.printer, ...input.printer };

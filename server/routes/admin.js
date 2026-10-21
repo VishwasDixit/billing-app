@@ -14,7 +14,38 @@ const oid = (id) => {
 
 const admin = { admin: true };
 
+// The free MongoDB Atlas tier holds 512 MB (data + indexes). DB_LIMIT_MB overrides after an upgrade.
+export const DB_LIMIT_MB = () => Number(process.env.DB_LIMIT_MB) || 512;
+
 export default [
+  [
+    "GET",
+    "/admin/storage",
+    async ({ db }) => {
+      const s = await db.stats();
+      const coll = async (n) => {
+        try {
+          const c = await db.command({ collStats: n });
+          return { count: c.count, bytes: (c.size || 0) + (c.totalIndexSize || 0), avg: c.avgObjSize || 0 };
+        } catch {
+          return { count: 0, bytes: 0, avg: 0 };
+        }
+      };
+      const [bills, menuImages, shops] = await Promise.all([coll("bills"), coll("menuImages"), db.collection("shops").countDocuments()]);
+      const used = (s.dataSize || 0) + (s.indexSize || 0);
+      const limit = DB_LIMIT_MB() * 1024 * 1024;
+      return {
+        usedBytes: used,
+        limitBytes: limit,
+        percent: Math.round((used / limit) * 1000) / 10,
+        shops,
+        perShopBytes: shops ? Math.round(used / shops) : 0,
+        bills: { count: bills.count, bytes: bills.bytes, perBillBytes: Math.round(bills.avg) },
+        photos: menuImages,
+      };
+    },
+    admin,
+  ],
   // Who would get a plan reminder now, and the last few runs.
   [
     "GET",
@@ -173,6 +204,8 @@ export default [
       const update = blocked ? { $set: { blocked: { at: new Date(), by: user.email, reason } } } : { $unset: { blocked: "" } };
       const { matchedCount } = await db.collection("shops").updateOne({ _id: shopId }, update);
       if (!matchedCount) throw new HttpError(404, "Shop not found.");
+      // Blocking ends every session of that shop for good (unblocking needs a fresh login).
+      if (blocked) await db.collection("users").updateMany({ shopId }, { $inc: { sessionVersion: 1 } });
       return { ok: true };
     },
     admin,
@@ -209,7 +242,7 @@ export default [
     "/admin/users/:id/password",
     async ({ db, params, body }) => {
       const { password } = z.object({ password: z.string().min(6, "must be at least 6 characters").max(100) }).parse(body);
-      const { matchedCount } = await db.collection("users").updateOne({ _id: oid(params.id) }, { $set: { passwordHash: await hashPassword(password) } });
+      const { matchedCount } = await db.collection("users").updateOne({ _id: oid(params.id) }, { $set: { passwordHash: await hashPassword(password) }, $inc: { sessionVersion: 1 } });
       if (!matchedCount) throw new HttpError(404, "User not found.");
       return { ok: true };
     },

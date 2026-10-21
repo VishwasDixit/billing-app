@@ -66,6 +66,7 @@ export default function Admin() {
   const [tab, setTab] = useState("shops");
   const [shops, setShops] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [storage, setStorage] = useState(null);
   const [manageId, setManageId] = useState(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
@@ -79,6 +80,7 @@ export default function Admin() {
       const [s, p] = await Promise.all([get("/admin/shops"), get("/admin/payments")]);
       setShops(s.shops);
       setPayments(p.payments);
+      get("/admin/storage").then(setStorage).catch(() => {});
     });
   useEffect(() => {
     load();
@@ -128,6 +130,7 @@ export default function Admin() {
           </button>
         ))}
       </div>
+      {storage && <StorageMeter s={storage} />}
       {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
 
       {tab === "shops" && (
@@ -253,6 +256,31 @@ export default function Admin() {
       {tab === "reminders" && <Reminders onOpenShop={(id) => (setTab("shops"), setManageId(id))} />}
 
       {manage && <ManageShop shop={manage} onClose={() => setManageId(null)} onDone={load} />}
+    </div>
+  );
+}
+
+const mb = (b) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+
+// How full the database is, so you know when to upgrade MongoDB Atlas.
+function StorageMeter({ s }) {
+  const level = s.percent >= 90 ? "bad" : s.percent >= 70 ? "warn" : "good";
+  return (
+    <div className="card storage-meter" style={{ marginBottom: 12 }}>
+      <div className="storage-top">
+        <b>Database storage</b>
+        <span className="small">{mb(s.usedBytes)} of {mb(s.limitBytes)} · {s.percent}%</span>
+      </div>
+      <div className="meter"><div className={"meter-fill " + level} style={{ width: Math.min(100, Math.max(1, s.percent)) + "%" }} /></div>
+      <div className="small muted">
+        ~{mb(s.perShopBytes)} per shop · {s.bills.count.toLocaleString("en-IN")} bills ({s.bills.perBillBytes ? `~${s.bills.perBillBytes} bytes each` : "none yet"}) · photos {mb(s.photos.bytes)}
+      </div>
+      {level !== "good" && (
+        <div className={level === "bad" ? "error" : "banner warn"} style={{ marginTop: 6, borderRadius: 8 }}>
+          {level === "bad" ? "Almost full: new bills may stop saving. " : "Getting full. "}
+          Upgrade the database in MongoDB Atlas (then set DB_LIMIT_MB in Vercel to the new size).
+        </div>
+      )}
     </div>
   );
 }

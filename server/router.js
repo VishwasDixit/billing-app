@@ -43,6 +43,12 @@ export async function handle(req, res) {
 
     if (path === "/health" && req.method === "GET") {
       const h = await health();
+      // Details only for the admin, or while setup is broken (so it can be fixed).
+      const isAdmin = await requireUser(req, await getDb())
+        .then((u) => u.role === "admin")
+        .catch(() => false);
+      if (url.searchParams.get("check") === "gmail" && !isAdmin) return send(res, 403, { error: "Admins only." });
+      if (!isAdmin && h.ok) return send(res, 200, { ok: true, database: h.database });
       if (url.searchParams.get("check") === "gmail") {
         h.gmail = await verifyGmail();
         // Enough to spot a wrong account or a cut-off password, without revealing either.
@@ -74,7 +80,8 @@ export async function handle(req, res) {
     if (match.route.auth) {
       ctx.user = await requireUser(req, db);
       if (match.route.admin && ctx.user.role !== "admin") throw new HttpError(403, "Admins only.");
-      ctx.shop = await db.collection("shops").findOne({ _id: ctx.user.shopId });
+      // Without the big pictures (logo, QR): most requests don't need them.
+      ctx.shop = await db.collection("shops").findOne({ _id: ctx.user.shopId }, { projection: { logo: 0, qrImage: 0 } });
       if (!ctx.shop) throw new HttpError(401, "Shop not found. Please log in again.");
       if (ctx.shop.blocked && ctx.user.role !== "admin") {
         res.setHeader("Set-Cookie", clearCookie());

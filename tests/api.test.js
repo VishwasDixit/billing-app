@@ -90,8 +90,8 @@ describe("auth and shops", () => {
   it("reports setup status on /health without revealing values", async () => {
     const r = await client()("GET", "/health");
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ ok: true, database: "connected", JWT_SECRET: true, MONGODB_URI: true, ADMIN_EMAIL: true });
-    expect(JSON.stringify(r.body)).not.toContain("test-secret");
+    expect(r.body).toEqual({ ok: true, database: "connected" }); // details are admin-only
+    expect((await client()("GET", "/health?check=gmail")).status).toBe(403);
   });
 
   it("explains a missing JWT_SECRET and creates nothing", async () => {
@@ -555,6 +555,13 @@ describe("admin controls", () => {
     expect((await client()("POST", "/auth/login", { email: "blockme@shop.test", password: "secret12" })).status).toBe(200);
   });
 
+  it("shows the full setup status on /health only to the admin", async () => {
+    const admin = await adminClient();
+    const full = await admin("GET", "/health");
+    expect(full.body).toMatchObject({ ok: true, database: "connected", JWT_SECRET: true, MONGODB_URI: true, ADMIN_EMAIL: true });
+    expect(JSON.stringify(full.body)).not.toContain("test-secret");
+  });
+
   it("won't let the admin block their own shop", async () => {
     const admin = await adminClient();
     const me = (await admin("GET", "/auth/me")).body;
@@ -615,5 +622,70 @@ describe("bill date and bill QR settings", () => {
     expect(ok.body).toMatchObject({ qrMode: "upi", qrOn: "credit", upiId: "qr@okaxis" });
     expect((await c("PUT", "/shop", { qrMode: "image" })).status).toBe(400);
     expect((await c("PUT", "/shop", { qrMode: "image", qrImage: "data:image/png;base64,iVBORw0KGgo=" })).body.qrMode).toBe("image");
+  });
+});
+
+describe("security hardening", () => {
+  it("stops password guessing after 10 wrong tries, and a reset clears it", async () => {
+    await registered("guess@shop.test");
+    const c = client();
+    for (let i = 0; i < 10; i++) expect((await c("POST", "/auth/login", { email: "guess@shop.test", password: "wrong" + i })).status).toBe(401);
+    const locked = await c("POST", "/auth/login", { email: "guess@shop.test", password: "secret12" });
+    expect(locked.status).toBe(429);
+    expect(locked.body.error).toMatch(/Too many wrong tries/);
+    await (await getDb()).collection("rateLimits").deleteOne({ _id: "login:email:guess@shop.test" });
+    expect((await c("POST", "/auth/login", { email: "guess@shop.test", password: "secret12" })).status).toBe(200);
+  });
+
+  it("limits wrong tries per network too", async () => {
+    const c = client();
+    const ip = { "x-forwarded-for": "203.0.113.9" };
+    for (let i = 0; i < 50; i++) await c("POST", "/auth/login", { email: `nobody${i}@shop.test`, password: "x" }, ip);
+    expect((await c("POST", "/auth/login", { email: "someone@shop.test", password: "x" }, ip)).status).toBe(429);
+  });
+
+  it("logs out other devices after a password change, keeping this one", async () => {
+    const { c: phone } = await registered("twodev@shop.test");
+    const laptop = client();
+    expect((await laptop("POST", "/auth/login", { email: "twodev@shop.test", password: "secret12" })).status).toBe(200);
+    expect((await phone("POST", "/auth/password", { current: "secret12", password: "newpass1" })).status).toBe(200);
+    expect((await phone("GET", "/auth/me")).status).toBe(200);
+    const old = await laptop("GET", "/auth/me");
+    expect(old.status).toBe(401);
+    expect(old.body.error).toMatch(/logged out of this device/);
+  });
+
+  it("has a log-out-other-devices button", async () => {
+    const { c: a } = await registered("others@shop.test");
+    const b = client();
+    await b("POST", "/auth/login", { email: "others@shop.test", password: "secret12" });
+    expect((await a("POST", "/auth/logout-others")).status).toBe(200);
+    expect((await a("GET", "/auth/me")).status).toBe(200);
+    expect((await b("GET", "/auth/me")).status).toBe(401);
+  });
+
+  it("finds an email by the indexed phone digits", async () => {
+    await registered("indexed@shop.test");
+    const u = await (await getDb()).collection("users").findOne({ email: "indexed@shop.test" });
+    expect(u.phoneDigits).toBe("9876543210");
+  });
+
+  it("reports database storage to the admin only", async () => {
+    const { c } = await registered("notadmin2@shop.test");
+    expect((await c("GET", "/admin/storage")).status).toBe(403);
+    const admin = client();
+    await admin("POST", "/auth/login", { email: "admin@shop.test", password: "secret12" });
+    const r = await admin("GET", "/admin/storage");
+    expect(r.status).toBe(200);
+    expect(r.body.limitBytes).toBe(512 * 1024 * 1024);
+    expect(r.body.usedBytes).toBeGreaterThan(0);
+    expect(r.body.bills.count).toBeGreaterThan(0);
+  });
+
+  it("doesn't load the big pictures on every request", async () => {
+    const { c } = await registered("lightshop@shop.test");
+    await c("PUT", "/shop", { logo: "data:image/png;base64,iVBORw0KGgo=" });
+    expect((await c("GET", "/shop")).body.logo).toMatch(/^data:image/);
+    expect((await c("GET", "/auth/me")).body.shop.logo).toMatch(/^data:image/);
   });
 });

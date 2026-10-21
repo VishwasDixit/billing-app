@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { ObjectId } from "mongodb";
 import { HttpError, parseCookies, cookie } from "./http.js";
+import { blockedMessage } from "./subscription.js";
 
 const COOKIE = "bt";
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
@@ -30,7 +31,8 @@ export function isAdminEmail(email) {
 }
 
 export function sessionCookie(user) {
-  const token = jwt.sign({ uid: String(user._id), sid: String(user.shopId) }, secret(), { expiresIn: MAX_AGE });
+  // sv: bumped on password change / "log out other devices", which invalidates older cookies.
+  const token = jwt.sign({ uid: String(user._id), sid: String(user.shopId), sv: user.sessionVersion || 0 }, secret(), { expiresIn: MAX_AGE });
   return cookie(COOKIE, token, { maxAge: MAX_AGE, secure: process.env.NODE_ENV === "production" });
 }
 
@@ -50,6 +52,12 @@ export async function requireUser(req, db) {
   }
   const user = await db.collection("users").findOne({ _id: new ObjectId(payload.uid) });
   if (!user) throw new HttpError(401, "Please log in.");
+  if ((payload.sv || 0) !== (user.sessionVersion || 0)) {
+    // Say why when the shop was blocked (blocking also ends its sessions).
+    const shop = await db.collection("shops").findOne({ _id: user.shopId }, { projection: { blocked: 1 } });
+    if (shop?.blocked) throw new HttpError(401, blockedMessage(shop), { code: "BLOCKED" });
+    throw new HttpError(401, "You were logged out of this device. Please log in again.");
+  }
   user.role = isAdminEmail(user.email) ? "admin" : "owner";
   return user;
 }
