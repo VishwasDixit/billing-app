@@ -84,6 +84,7 @@ export default function Bills() {
                   <b>{b.billNo}</b>{" "}
                   {b.pending && <span className={"tag " + (b.syncState ? "bad" : "warn")}>{b.syncState ? "not synced" : "syncing"}</span>}
                   {b.status === "void" && <span className="tag bad">void</span>}
+                  {b.backdated && <span className="tag" title={b.enteredAt ? `Added on ${fmtDateTime(b.enteredAt)}` : undefined}>added later</span>}
                 </td>
                 <td className="muted">{fmtDateTime(b.createdAt)}</td>
                 <td>{b.itemCount}</td>
@@ -170,6 +171,7 @@ export function BillDetail({ bill, onClose, onChanged }) {
         {bill.customer && <> · {bill.customer.name}{bill.customer.phone ? ` (${bill.customer.phone})` : ""}</>}
         {bill.udhar && <> · <UdharTag udhar={bill.udhar} cur={cur} /></>}
         {bill.status === "void" && <> · <span className="tag bad">void: {bill.voidReason}</span></>}
+        {bill.backdated && <> · <span className="tag">added later{bill.enteredAt ? ` on ${fmtDateTime(bill.enteredAt)}` : ""}</span></>}
         {bill.pending && <> · <span className="tag warn">{bill.syncError || "waiting to upload"}</span></>}
       </p>
       <table className="table">

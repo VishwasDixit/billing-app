@@ -30,7 +30,11 @@ const BillIn = z.object({
   // Udhar: who owes it, and how much was paid at the counter.
   customer: CustomerIn.optional(),
   paidNow: z.number().min(0).optional(),
+  // A bill entered later for a past day (e.g. forgot to bill yesterday).
+  backdated: z.boolean().optional(),
 });
+
+export const MAX_BACKDATE_DAYS = 90;
 
 export function publicBill({ _id, shopId, ...b }) {
   return { ...b, id: String(_id) };
@@ -56,8 +60,13 @@ export default [
         // Don't trust device clocks that run ahead.
         const createdAt = new Date(Math.min(b.createdAt.getTime(), Date.now() + 5 * 60 * 1000));
 
-        // Bills made before the plan ran out (e.g. saved offline) are still accepted.
-        if (!status.active && createdAt > accessEnd) {
+        if (b.backdated && Date.now() - createdAt > (MAX_BACKDATE_DAYS + 1) * 864e5) {
+          results.push({ clientId: b.clientId, ok: false, code: 400, error: `Bills can be added for up to ${MAX_BACKDATE_DAYS} days back.` });
+          continue;
+        }
+        // Bills made before the plan ran out (e.g. saved offline) are still accepted,
+        // but past-dated bills can't be added once it has ended.
+        if (!status.active && (createdAt > accessEnd || b.backdated)) {
           results.push({ clientId: b.clientId, ok: false, code: 402, error: "Your plan has ended. Renew to keep billing." });
           continue;
         }
@@ -76,6 +85,7 @@ export default [
           deviceCode: b.deviceCode,
           createdAt,
           syncedAt: new Date(),
+          ...(b.backdated ? { backdated: true, enteredAt: new Date() } : {}),
           items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount }) => ({ itemId, name, variant, category, qty, rate, amount })),
           itemCount: t.itemCount,
           subtotal: t.subtotal,

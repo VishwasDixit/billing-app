@@ -64,3 +64,41 @@ describe("receipt layout", () => {
     }
   });
 });
+
+describe("GSTIN and payment QR on the bill", () => {
+  const upiShop = (extra = {}) => ({ ...shop(58), gstin: "09ABCDE1234F1Z5", upiId: "grillhive@okaxis", qrMode: "upi", ...extra });
+
+  it("prints the GSTIN in bold right under the shop name", () => {
+    const { rows } = receiptRows(upiShop(), bill);
+    expect(rows[1]).toMatchObject({ text: "GSTIN: 09ABCDE1234F1Z5", bold: true, align: "center" });
+  });
+
+  it("adds a UPI QR with the exact bill amount", async () => {
+    const layout = receiptRows(upiShop(), bill);
+    expect(layout.qr.kind).toBe("upi");
+    expect(layout.qr.payload).toContain("pa=grillhive%40okaxis");
+    expect(layout.qr.payload).toContain(`am=${bill.total.toFixed(2)}`);
+    expect(layout.rows.some((r) => r.qr)).toBe(true);
+    expect(layout.rows.find((r) => r.text.startsWith("Scan & pay")).text).toBe(`Scan & pay Rs.${bill.total.toFixed(2)}`);
+    // ESC/POS: a raster image (GS v 0) is sent for the QR.
+    const bytes = [...encode(layout, upiShop())];
+    expect(bytes.some((v, i) => v === 0x1d && bytes[i + 1] === 0x76 && bytes[i + 2] === 0x30)).toBe(true);
+    // The QR really decodes back to the payload.
+    const { qrMatrix } = await import("../shared/billQr.js");
+    expect(qrMatrix(layout.qr.payload).length).toBeGreaterThan(20);
+  });
+
+  it("asks only for the unpaid part of an udhar bill, and can be limited to udhar bills", () => {
+    const udhar = { ...bill, paymentMode: "credit", paidNow: 100, creditAmount: bill.total - 100 };
+    expect(receiptRows(upiShop(), udhar).qr.amount).toBe(Math.round((bill.total - 100) * 100) / 100);
+    expect(receiptRows(upiShop({ qrOn: "credit" }), bill).qr).toBeNull();
+    expect(receiptRows(upiShop({ qrOn: "credit" }), udhar).qr).not.toBeNull();
+  });
+
+  it("skips the QR when it's off, the bill is void, or there's no UPI ID", () => {
+    expect(receiptRows(upiShop({ qrMode: "off" }), bill).qr).toBeNull();
+    expect(receiptRows(upiShop(), { ...bill, status: "void" }).qr).toBeNull();
+    expect(receiptRows(upiShop({ upiId: "" }), bill).qr).toBeNull();
+    expect(receiptRows(upiShop({ qrMode: "image", qrImage: "data:image/png;base64,AAAA" }), bill).qr).toMatchObject({ kind: "image" });
+  });
+});

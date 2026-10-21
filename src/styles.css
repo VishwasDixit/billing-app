@@ -221,6 +221,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
   #print-receipt .r-center { text-align: center; }
   #print-receipt .r-bold { font-weight: 700; }
   #print-receipt img { max-width: 50%; max-height: 30mm; margin-bottom: 2mm; }
+  #print-receipt .r-qr img, #print-receipt .r-qr svg { max-width: 70%; max-height: 45mm; height: auto; margin: 1mm 0; }
 }
 
 /* ---------- Phones ---------- */
@@ -424,3 +425,11 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 }
 .export-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .card .banner { border-radius: 8px; justify-content: flex-start; text-align: left; }
+.qr-preview { display: grid; justify-items: center; gap: 6px; padding: 12px; border: 1px dashed var(--border); border-radius: 10px; background: #fff; color: #000; }
+.qr-preview img { max-width: 180px; max-height: 240px; }
+.bill-date { display: flex; align-items: center; gap: 8px; padding: 6px 0 8px; font-size: 13px; color: var(--muted); }
+.bill-date label { white-space: nowrap; }
+.bill-date input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 14px; }
+.bill-date.past input { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+.past-note { color: var(--warn); margin: -4px 0 8px; }
+.past-date-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 14px; }

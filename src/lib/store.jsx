@@ -245,8 +245,17 @@ export function AppProvider({ children }) {
         await kvSet("menu", m);
       },
       // Saves a bill on this device first, then uploads it. Works offline.
-      async recordBill({ items, discount, gstPercent, paymentMode, customer, paidNow }) {
+      // billDate (YYYY-MM-DD, optional): a past day for a bill that was missed; saved at the current time of day on that date.
+      async recordBill({ items, discount, gstPercent, paymentMode, customer, paidNow, billDate }) {
         const { billNo, deviceCode } = await nextBillNo();
+        const now = new Date();
+        const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const backdated = !!billDate && billDate < ymd(now);
+        let createdAt = now;
+        if (backdated) {
+          const [y, m, d] = billDate.split("-").map(Number);
+          createdAt = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+        }
         const t = computeTotals(items, discount, gstPercent);
         const credit = paymentMode === "credit";
         const paid = credit ? Math.min(Math.max(Number(paidNow) || 0, 0), t.total) : t.total;
@@ -256,7 +265,8 @@ export function AppProvider({ children }) {
           clientId: uuid(),
           billNo,
           deviceCode,
-          createdAt: new Date().toISOString(),
+          createdAt: createdAt.toISOString(),
+          ...(backdated ? { backdated: true, enteredAt: now.toISOString() } : {}),
           items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount }) => ({ itemId, name, variant, category, qty, rate, amount })),
           itemCount: t.itemCount,
           subtotal: t.subtotal,

@@ -6,8 +6,9 @@ import { fmtDate } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { PAPER } from "../printer/receipt.js";
 import { printTest, warmLogo } from "../printer/index.js";
-import { prepareLogo } from "../printer/escpos.js";
-import { resizeLogo } from "../lib/image.js";
+import { prepareLogo, prepareQrImage } from "../printer/escpos.js";
+import { resizeLogo, resizeQr } from "../lib/image.js";
+import { billQr, qrSvg } from "../../shared/billQr.js";
 import { useShowPictures } from "../lib/prefs.js";
 import { LANGUAGE_OPTIONS, DEFAULT_LANGUAGE, DEFAULT_TEMPLATE, reminderText } from "../../shared/messages.js";
 import {
@@ -23,6 +24,9 @@ const pick = (s) => ({
   footer: s.footer || "",
   currency: s.currency || "₹",
   upiId: s.upiId || "",
+  qrMode: s.qrMode || "off",
+  qrOn: s.qrOn || "all",
+  qrImage: s.qrImage || "",
   reminderLanguage: s.reminderLanguage || DEFAULT_LANGUAGE,
   reminderTemplate: s.reminderTemplate || "",
   gstPercent: s.gstPercent ?? 0,
@@ -64,6 +68,7 @@ export default function Settings() {
     const draft = { ...shop, ...f };
     try {
       if (draft.printer.printLogo && draft.logo) await prepareLogo(draft.logo, draft.printer.paperSize);
+      if (draft.qrMode === "image" && draft.qrImage) await prepareQrImage(draft.qrImage, draft.printer.paperSize);
       await printTest(draft);
     } catch (err) {
       const msg = explainPrintError(err);
@@ -102,7 +107,9 @@ export default function Settings() {
             <Field label="Address"><textarea rows={2} maxLength={160} value={f.address} onChange={(e) => set("address", e.target.value)} /></Field>
             <div className="grid2">
               <Field label="Phone"><input maxLength={30} value={f.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
-              <Field label="GSTIN (optional)"><input maxLength={20} value={f.gstin} onChange={(e) => set("gstin", e.target.value.toUpperCase())} /></Field>
+              <Field label="GST number (GSTIN)" hint="Printed in bold at the top of every bill.">
+                <input maxLength={15} placeholder="e.g. 09ABCDE1234F1Z5" value={f.gstin} onChange={(e) => set("gstin", e.target.value.toUpperCase().replace(/\s/g, ""))} />
+              </Field>
             </div>
             <Field label="Bill footer"><input maxLength={80} value={f.footer} onChange={(e) => set("footer", e.target.value)} /></Field>
           </section>
@@ -115,11 +122,6 @@ export default function Settings() {
               </Field>
               <Field label="Currency symbol"><input maxLength={4} value={f.currency} onChange={(e) => set("currency", e.target.value)} /></Field>
             </div>
-            <div className="grid2">
-              <Field label="Shop UPI ID (optional)" hint="Shown in udhar reminders so customers can pay you directly.">
-                <input maxLength={60} placeholder="e.g. grillhive@okaxis" value={f.upiId} onChange={(e) => set("upiId", e.target.value.trim())} />
-              </Field>
-            </div>
             <div className="field">
               Default discount
               <div style={{ display: "flex", gap: 8 }}>
@@ -129,6 +131,8 @@ export default function Settings() {
               <span className="hint">You can still change discount and GST on any single bill.</span>
             </div>
           </section>
+
+          <QrSettings f={f} set={set} toast={toast} />
 
           <section className="card stack">
             <h2>Udhar reminders</h2>
@@ -216,6 +220,63 @@ export default function Settings() {
       {diag && <Diagnostics slowMode={f.printer.slowMode} onClose={() => setDiag(false)} />}
       {pw && <PasswordModal onClose={() => setPw(false)} />}
     </div>
+  );
+}
+
+// Payment QR printed on bills: from the UPI ID (exact bill amount) or an uploaded QR picture.
+function QrSettings({ f, set, toast }) {
+  const onPick = async (file) => {
+    if (!file) return;
+    try {
+      set("qrImage", await resizeQr(file));
+    } catch {
+      toast("Couldn't read that image. Try a PNG or JPEG.");
+    }
+  };
+  const sample = billQr({ ...f, upiId: f.upiId }, { billNo: "A-1", total: 100, paymentMode: "cash" });
+  return (
+    <section className="card stack">
+      <h2>Payment QR on bills</h2>
+      <Field label="Shop UPI ID" hint="Used for the bill QR and in udhar reminders so customers can pay you directly.">
+        <input maxLength={60} placeholder="e.g. grillhive@okaxis" value={f.upiId} onChange={(e) => set("upiId", e.target.value.trim())} />
+      </Field>
+      <Seg
+        value={f.qrMode}
+        onChange={(v) => set("qrMode", v)}
+        options={[["off", "No QR"], ["upi", "From UPI ID"], ["image", "My QR picture"]]}
+      />
+      {f.qrMode === "upi" && (
+        <p className="hint" style={{ margin: 0 }}>
+          {f.upiId
+            ? "Each bill gets its own QR with the exact bill amount filled in. Customers just scan and pay."
+            : "Add your UPI ID above first."}
+        </p>
+      )}
+      {f.qrMode === "image" && (
+        <div className="btn-row">
+          <label className="btn btn-sm">
+            {f.qrImage ? "Change QR picture" : "Upload QR picture"}
+            <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => onPick(e.target.files[0])} />
+          </label>
+          {f.qrImage && <button className="btn btn-sm btn-ghost" onClick={() => set("qrImage", "")}>Remove</button>}
+          <span className="hint" style={{ width: "100%" }}>A clear screenshot or photo of your PhonePe / Paytm / bank QR. Crop it to just the QR for the best print.</span>
+        </div>
+      )}
+      {f.qrMode !== "off" && (
+        <>
+          <Field label="Print the QR on">
+            <Seg value={f.qrOn} onChange={(v) => set("qrOn", v)} options={[["all", "Every bill"], ["credit", "Only udhar bills"]]} />
+          </Field>
+          {sample && (
+            <div className="qr-preview">
+              <div className="small"><b>Scan & pay ₹100.00</b> (sample)</div>
+              {sample.kind === "upi" ? <div dangerouslySetInnerHTML={{ __html: qrSvg(sample.payload, 150) }} /> : <img src={sample.image} alt="Your QR" />}
+            </div>
+          )}
+          <p className="hint" style={{ margin: 0 }}>Print a test bill after saving to check your printer reads it well. A QR makes printing a little slower.</p>
+        </>
+      )}
+    </section>
   );
 }
 

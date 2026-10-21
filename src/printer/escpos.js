@@ -1,5 +1,6 @@
 // ESC/POS encoder for thermal printers (58 / 80 / 110 mm).
 import { PAPER } from "./receipt.js";
+import { qrRaster } from "../../shared/billQr.js";
 
 const ESC = 0x1b, GS = 0x1d, LF = 0x0a;
 
@@ -8,9 +9,14 @@ const ESC = 0x1b, GS = 0x1d, LF = 0x0a;
 // inside the click that started printing.
 const logoCache = new Map();
 
-export async function prepareLogo(dataUrl, paperSize) {
+// An uploaded QR picture: bigger than a logo, and pure black/white (dithering would blur it).
+const QR_IMAGE = { frac: 0.6, maxH: 0.6, dither: false };
+export const prepareQrImage = (dataUrl, paperSize) => prepareLogo(dataUrl, paperSize, QR_IMAGE);
+export const cachedQrImage = (dataUrl, paperSize) => (dataUrl ? logoCache.get(paperSize + "|qr|" + dataUrl) || null : null);
+
+export async function prepareLogo(dataUrl, paperSize, opts = null) {
   if (!dataUrl) return null;
-  const key = paperSize + "|" + dataUrl;
+  const key = paperSize + (opts ? "|qr|" : "|") + dataUrl;
   if (logoCache.has(key)) return logoCache.get(key);
   const img = await new Promise((resolve, reject) => {
     const i = new Image();
@@ -19,10 +25,11 @@ export async function prepareLogo(dataUrl, paperSize) {
     i.src = dataUrl;
   });
   const dots = PAPER[paperSize]?.dots || 384;
-  let w = Math.floor((dots * 0.5) / 8) * 8;
+  const maxH = opts ? Math.round(dots * opts.maxH) : 160;
+  let w = Math.floor((dots * (opts?.frac ?? 0.5)) / 8) * 8;
   let h = Math.round((img.height / img.width) * w);
-  if (h > 160) {
-    h = 160;
+  if (h > maxH) {
+    h = maxH;
     w = Math.max(8, Math.floor(((img.width / img.height) * h) / 8) * 8);
   }
   const canvas = document.createElement("canvas");
@@ -43,7 +50,7 @@ export async function prepareLogo(dataUrl, paperSize) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       const black = gray[i] < 128;
-      const err = gray[i] - (black ? 0 : 255);
+      const err = opts && !opts.dither ? 0 : gray[i] - (black ? 0 : 255);
       if (black) data[y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
       if (x + 1 < w) gray[i + 1] += (err * 7) / 16;
       if (y + 1 < h) {
@@ -82,6 +89,17 @@ export function encode(layout, shop) {
   }
 
   for (const row of layout.rows) {
+    if (row.qr) {
+      const dots = PAPER[p.paperSize]?.dots || 384;
+      const r = layout.qr?.kind === "upi" ? qrRaster(layout.qr.payload, Math.round(dots * 0.6)) : cachedQrImage(layout.qr?.image, p.paperSize);
+      if (r) {
+        push(ESC, 0x61, 1);
+        push(GS, 0x76, 0x30, 0, r.bytesPerRow & 0xff, r.bytesPerRow >> 8, r.height & 0xff, r.height >> 8);
+        for (const b of r.data) push(b);
+        push(LF);
+      }
+      continue;
+    }
     push(ESC, 0x61, row.align === "center" ? 1 : 0);
     if (row.bold) push(ESC, 0x45, 1);
     if (row.size === 2) push(GS, 0x21, 0x11);

@@ -32,6 +32,23 @@ export async function resizeLogo(file) {
   return data;
 }
 
+// Payment QR picture (e.g. from PhonePe / Paytm business): up to 600 px, kept sharp.
+export async function resizeQr(file) {
+  const img = await loadImage(file);
+  const scale = Math.min(1, 600 / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(img.width * scale);
+  c.height = Math.round(img.height * scale);
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  let data = c.toDataURL("image/png");
+  if (data.length > 190000) data = c.toDataURL("image/jpeg", 0.9);
+  if (data.length > 200000) data = c.toDataURL("image/jpeg", 0.7);
+  return data;
+}
+
 // Menu photo: centre-cropped square, 400 px, WebP (JPEG where unsupported), under ~60 KB.
 export async function menuPhoto(file) {
   const img = await loadImage(file);

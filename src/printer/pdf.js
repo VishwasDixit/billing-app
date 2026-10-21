@@ -1,5 +1,6 @@
 // Bill as a PDF at the printer's paper width, for sharing on WhatsApp etc.
 import { receiptRows } from "./receipt.js";
+import { qrMatrix } from "../../shared/billQr.js";
 
 const PT_PER_MM = 72 / 25.4;
 
@@ -25,7 +26,19 @@ export async function billPdf(shop, bill) {
     }
   }
 
-  const height = margin * 2 + (logo ? logo.h + 2 : 0) + layout.rows.length * lineMm + 2;
+  // Payment QR: drawn as squares (UPI) so it stays sharp, or the uploaded picture.
+  const qrMm = Math.min(usable * 0.7, 45);
+  let qrImg = null;
+  if (layout.qr?.kind === "image") {
+    try {
+      const props = new jsPDF().getImageProperties(layout.qr.image);
+      qrImg = { w: qrMm, h: Math.min((props.height / props.width) * qrMm, qrMm * 1.6) };
+    } catch {
+      qrImg = null;
+    }
+  }
+  const qrH = layout.qr?.kind === "upi" ? qrMm : qrImg ? qrImg.h : 0;
+  const height = margin * 2 + (logo ? logo.h + 2 : 0) + layout.rows.length * lineMm + (qrH ? qrH + 2 : 0) + 2;
   const doc = new jsPDF({ unit: "mm", format: [paper, Math.max(height, 40)], orientation: "portrait" });
   doc.setProperties({ title: `Bill ${bill.billNo}` });
 
@@ -36,6 +49,21 @@ export async function billPdf(shop, bill) {
     y += logo.h + 2;
   }
   for (const row of layout.rows) {
+    if (row.qr) {
+      if (!qrH) continue;
+      const x0 = (paper - (qrImg ? qrImg.w : qrMm)) / 2;
+      if (layout.qr.kind === "upi") {
+        const m = qrMatrix(layout.qr.payload);
+        const cell = qrMm / (m.length + 2);
+        doc.setFillColor(0, 0, 0);
+        m.forEach((r, ri) => r.forEach((dark, ci) => dark && doc.rect(x0 + (ci + 1) * cell, y + 1 + (ri + 1) * cell, cell, cell, "F")));
+      } else {
+        const fmt = /^data:image\/(\w+)/.exec(layout.qr.image)?.[1]?.toUpperCase() || "PNG";
+        doc.addImage(layout.qr.image, fmt === "JPG" ? "JPEG" : fmt, x0, y + 1, qrImg.w, qrImg.h);
+      }
+      y += qrH + 2;
+      continue;
+    }
     y += lineMm;
     doc.setFont("courier", row.bold ? "bold" : "normal");
     doc.setFontSize(fontPt);

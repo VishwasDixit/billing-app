@@ -1,5 +1,6 @@
 // One receipt layout shared by thermal printing (ESC/POS), PDF and the browser
 // print dialog. Rows are plain ASCII already laid out to the printer's width.
+import { billQr } from "../../shared/billQr.js";
 
 export const PAPER = {
   58: { dots: 384, cols: 32 },
@@ -51,8 +52,8 @@ export function colsFor(printer) {
 }
 
 /**
- * @returns {{ logo: boolean, rows: Array<{text: string, align: 'left'|'center', bold?: boolean, size?: 1|2, tall?: boolean}> }}
- *   size 2 = double width + height (shop name); tall = double height only (TOTAL).
+ * @returns {{ logo: boolean, qr: object|null, rows: Array<{text: string, align: 'left'|'center', bold?: boolean, size?: 1|2, tall?: boolean, qr?: boolean}> }}
+ *   size 2 = double width + height (shop name); tall = double height only (TOTAL); qr = the payment QR goes here.
  */
 export function receiptRows(shop, bill) {
   const p = shop.printer || {};
@@ -79,9 +80,9 @@ export function receiptRows(shop, bill) {
   };
 
   if (shop.name) center(shop.name, large ? { size: 2, bold: true } : { bold: true });
+  if (shop.gstin) center("GSTIN: " + shop.gstin, { bold: true });
   if (shop.address) center(shop.address);
   if (shop.phone) center("Ph: " + shop.phone);
-  if (shop.gstin) center("GSTIN: " + shop.gstin);
   sep();
 
   const d = new Date(bill.createdAt);
@@ -123,18 +124,28 @@ export function receiptRows(shop, bill) {
     if (typeof bill.dueAfter === "number") pair("Total due", ascii(shop.currency || "₹") + n2(bill.dueAfter), { bold: true });
   } else if (bill.paymentMode) pair("Paid by", bill.paymentMode.toUpperCase());
   sep();
+  const qr = billQr(shop, bill);
+  if (qr) {
+    center(`Scan & pay ${ascii(shop.currency || "₹")}${n2(qr.amount)}`, { bold: true });
+    rows.push({ text: "", align: "center", qr: true });
+    if (qr.kind === "upi") center("GPay / PhonePe / Paytm / any UPI app");
+    sep();
+  }
   if (shop.footer) center(shop.footer);
 
-  return { logo: !!(p.printLogo && shop.logo), rows, cols };
+  return { logo: !!(p.printLogo && shop.logo), qr, rows, cols };
 }
 
 export function testRows(shop) {
   const cols = colsFor(shop.printer);
   let ruler = "";
   for (let i = 1; i <= cols; i++) ruler += i % 10;
+  // A Rs.1 sample of the bill QR, to check the printer prints it scannable.
+  const qr = billQr(shop, { billNo: "TEST", total: 1, paymentMode: "credit", creditAmount: 1 });
   return {
     logo: !!(shop.printer?.printLogo && shop.logo),
     cols,
+    qr,
     rows: [
       { text: "TEST PRINT", align: "center" },
       { text: "printer OK", align: "center" },
@@ -142,6 +153,7 @@ export function testRows(shop) {
       { text: ruler, align: "left" },
       { text: "If the ruler fits on one line,", align: "left" },
       { text: `${cols} chars/line is right.`, align: "left" },
+      ...(qr ? [{ text: "-".repeat(cols), align: "left" }, { text: "Sample QR (Rs.1):", align: "center" }, { text: "", align: "center", qr: true }] : []),
     ],
   };
 }

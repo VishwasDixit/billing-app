@@ -2,7 +2,7 @@ import { useEffect, useMemo, useReducer, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useApp, accessState } from "../lib/store.jsx";
 import { computeTotals } from "../../shared/totals.js";
-import { money } from "../lib/format.js";
+import { money, todayYmd } from "../lib/format.js";
 import { Modal, Seg, useToast } from "../components/ui.jsx";
 import { printBill } from "../printer/index.js";
 import { connect, connectedName, explainPrintError, onPrinterChange } from "../printer/transports.js";
@@ -29,6 +29,8 @@ export default function Billing() {
   const [customer, setCustomer] = useState(null); // udhar customer
   const [paidNow, setPaidNow] = useState(0);
   const [cartOpen, setCartOpen] = useState(false);
+  // "" = today. A past date bills a missed day; it stays until changed back.
+  const [billDate, setBillDate] = useState("");
   // Stop the menu behind the full-screen bill sheet from scrolling on phones.
   useEffect(() => {
     document.body.classList.toggle("sheet-open", cartOpen);
@@ -79,6 +81,11 @@ export default function Billing() {
   const currentDue = customer ? customers.find((c) => c.clientId === customer.clientId)?.due || 0 : 0;
   const needCustomer = credit && !customer;
   const access = accessState(shop);
+  const today = todayYmd();
+  const pastDate = billDate && billDate < today ? billDate : "";
+  const pastLabel = pastDate
+    ? new Date(pastDate + "T12:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) + (pastDate === todayYmd(-1) ? " (yesterday)" : "")
+    : "";
 
   // Saves the bill, then prints / shares it. The bill is kept even if printing fails.
   async function finish(kind) {
@@ -91,7 +98,7 @@ export default function Billing() {
     setBusy(kind);
     setPrintError(null);
     try {
-      const bill = await recordBill({ items: lines.map(([, l]) => l), discount, gstPercent, paymentMode, customer, paidNow: paidNowClamped });
+      const bill = await recordBill({ items: lines.map(([, l]) => l), discount, gstPercent, paymentMode, customer, paidNow: paidNowClamped, billDate: pastDate });
       setCart(new Map());
       setDiscount(shop.defaultDiscount || { type: "percent", value: 0 });
       setGstPercent(shop.gstPercent || 0);
@@ -102,7 +109,7 @@ export default function Billing() {
       if (kind === "print") {
         try {
           await printBill(shop, bill);
-          toast(`Bill ${bill.billNo} saved and printed`);
+          toast(`Bill ${bill.billNo} saved${pastDate ? ` for ${pastLabel}` : ""} and printed`);
         } catch (err) {
           const msg = explainPrintError(err);
           if (msg) setPrintError({ bill, msg });
@@ -112,7 +119,7 @@ export default function Billing() {
         const r = await shareBillPdf(shop, bill);
         toast(`Bill ${bill.billNo} saved${r === "downloaded" ? " · PDF downloaded" : ""}`);
       } else {
-        toast(`Bill ${bill.billNo} saved`);
+        toast(`Bill ${bill.billNo} saved${pastDate ? ` for ${pastLabel}` : ""}`);
       }
     } catch (err) {
       toast("Couldn't save the bill: " + err.message);
@@ -128,6 +135,12 @@ export default function Billing() {
           <input className="input" type="search" placeholder="Search menu…" value={q} onChange={(e) => setQ(e.target.value)} />
           <Link className="btn" to="/menu">Edit menu</Link>
         </div>
+        {pastDate && (
+          <div className="past-date-bar">
+            📅 Billing for <b>{pastLabel}</b>
+            <button className="link-btn" onClick={() => setBillDate("")}>Back to today</button>
+          </div>
+        )}
         <div className="chips">
           {categories.map((c) => (
             <button key={c} className={"chip" + (c === cat ? " on" : "")} onClick={() => setCat(c)}>
@@ -177,6 +190,24 @@ export default function Billing() {
             </button>
           </div>
         </div>
+        <div className={"bill-date" + (pastDate ? " past" : "")}>
+          <label htmlFor="bill-date">📅 Bill date</label>
+          <input
+            id="bill-date"
+            type="date"
+            className="input"
+            value={pastDate || today}
+            max={today}
+            min={todayYmd(-90)}
+            onChange={(e) => setBillDate(e.target.value && e.target.value < today ? e.target.value : "")}
+          />
+          {pastDate ? (
+            <button className="btn btn-sm btn-ghost" onClick={() => setBillDate("")}>Today</button>
+          ) : (
+            <button className="btn btn-sm btn-ghost" onClick={() => setBillDate(todayYmd(-1))}>Yesterday</button>
+          )}
+        </div>
+        {pastDate && <div className="small past-note">This bill will be saved on {pastLabel} and count in that day's sales.</div>}
         <div className="cart-list">
           {lines.length === 0 && <div className="empty">Tap menu items to add them.</div>}
           {lines.map(([key, l]) => (

@@ -7,6 +7,7 @@ import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
 import { LANGUAGE_CODES } from "../../shared/messages.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
+const MAX_QR_IMAGE = 200 * 1024;
 const MAX_PHOTO = 90 * 1024; // decoded bytes; the phone resizes photos to ~20–60 KB
 const PHOTO_URL = /^\/api\/menu-images\/[a-f0-9]{24}$/;
 
@@ -24,7 +25,18 @@ const ShopSettings = z
       .refine((s) => s === "" || /^data:image\/(png|jpeg|webp);base64,/.test(s), "logo must be a PNG, JPEG or WebP image"),
     address: z.string().trim().max(160),
     phone: z.string().trim().max(30),
-    gstin: z.string().trim().max(20),
+    gstin: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .refine((g) => g === "" || /^[0-9A-Z]{15}$/.test(g), "GSTIN has 15 letters and numbers, like 09ABCDE1234F1Z5"),
+    // Payment QR on bills: off, made from the UPI ID with the bill amount, or an uploaded picture.
+    qrMode: z.enum(["off", "upi", "image"]),
+    qrOn: z.enum(["all", "credit"]),
+    qrImage: z
+      .string()
+      .max(MAX_QR_IMAGE, "QR picture is too large")
+      .refine((s) => s === "" || /^data:image\/(png|jpeg|webp);base64,/.test(s), "QR picture must be a PNG, JPEG or WebP image"),
     footer: z.string().trim().max(80),
     currency: z.string().trim().max(4),
     // Language of udhar reminders / receipts, and the text used when it's "custom".
@@ -105,6 +117,9 @@ export default [
     "/shop",
     async ({ db, shop, user, body }) => {
       const input = ShopSettings.parse(body);
+      const next = { ...shop, ...input };
+      if (next.qrMode === "upi" && !next.upiId) throw new HttpError(400, "Add your shop UPI ID to print a payment QR on bills.");
+      if (next.qrMode === "image" && !next.qrImage) throw new HttpError(400, "Upload your QR picture, or choose another QR option.");
       if (input.printer) input.printer = { ...shop.printer, ...input.printer };
       const updated = await db
         .collection("shops")

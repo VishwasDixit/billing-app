@@ -1,5 +1,6 @@
 import { receiptRows, testRows, PAPER } from "./receipt.js";
-import { encode, prepareLogo } from "./escpos.js";
+import { encode, prepareLogo, prepareQrImage } from "./escpos.js";
+import { qrSvg } from "../../shared/billQr.js";
 import { sendBytes } from "./transports.js";
 
 export { receiptRows, PAPER };
@@ -19,9 +20,10 @@ export function printTest(shop) {
   return sendBytes(method, encode(testRows(shop), shop), { slowMode: shop.printer?.slowMode });
 }
 
-// Warm the logo raster cache so print bytes can be built synchronously.
+// Warm the logo / QR picture raster cache so print bytes can be built synchronously.
 export function warmLogo(shop) {
   if (shop?.logo && shop.printer?.printLogo) prepareLogo(shop.logo, shop.printer.paperSize).catch(() => {});
+  if (shop?.qrMode === "image" && shop.qrImage) prepareQrImage(shop.qrImage, shop.printer?.paperSize).catch(() => {});
 }
 
 // Fallback for printers installed in the OS: the browser's print dialog at the paper width.
@@ -45,7 +47,11 @@ function browserPrint(shop, layout) {
   el.innerHTML =
     (layout.logo ? `<div class="r-center"><img src="${shop.logo}" alt=""></div>` : "") +
     layout.rows
-      .map((r) => `<div class="${r.align === "center" ? "r-center" : ""}${r.bold ? " r-bold" : ""}">${esc(r.text) || "&nbsp;"}</div>`)
+      .map((r) =>
+        r.qr
+          ? `<div class="r-center r-qr">${layout.qr.kind === "upi" ? qrSvg(layout.qr.payload, 150) : `<img src="${layout.qr.image}" alt="">`}</div>`
+          : `<div class="${r.align === "center" ? "r-center" : ""}${r.bold ? " r-bold" : ""}">${esc(r.text) || "&nbsp;"}</div>`
+      )
       .join("");
   window.print();
 }

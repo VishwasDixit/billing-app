@@ -582,3 +582,38 @@ describe("admin controls", () => {
     expect((await admin("GET", "/admin/shops")).body.shops.find((s) => s.id === shop.id).prices.custom).toBe(false);
   });
 });
+
+describe("bill date and bill QR settings", () => {
+  it("saves a bill on a past day and marks it as added later", async () => {
+    const { c } = await registered("pastday@shop.test");
+    const yesterday = new Date(Date.now() - 864e5);
+    const r = await c("POST", "/bills", { bills: [bill({ createdAt: yesterday.toISOString(), backdated: true })] });
+    expect(r.body.results[0].ok).toBe(true);
+    const saved = (await c("GET", "/bills")).body.bills[0];
+    expect(new Date(saved.createdAt).getTime()).toBe(yesterday.getTime());
+    expect(saved).toMatchObject({ backdated: true });
+    expect(saved.enteredAt).toBeTruthy();
+
+    const old = await c("POST", "/bills", { bills: [bill({ createdAt: new Date(Date.now() - 120 * 864e5).toISOString(), backdated: true })] });
+    expect(old.body.results[0]).toMatchObject({ ok: false, code: 400 });
+  });
+
+  it("refuses past-dated bills once the plan has ended", async () => {
+    const { c, shop } = await registered("pastexpired@shop.test");
+    const { ObjectId } = await import("mongodb");
+    await (await getDb()).collection("shops").updateOne({ _id: new ObjectId(shop.id) }, { $set: { trialEndsAt: new Date(Date.now() - 864e5) } });
+    const r = await c("POST", "/bills", { bills: [bill({ createdAt: new Date(Date.now() - 3 * 864e5).toISOString(), backdated: true })] });
+    expect(r.body.results[0]).toMatchObject({ ok: false, code: 402 });
+  });
+
+  it("validates GSTIN and the QR settings", async () => {
+    const { c } = await registered("qr@shop.test");
+    expect((await c("PUT", "/shop", { gstin: "12345" })).status).toBe(400);
+    expect((await c("PUT", "/shop", { gstin: "09abcde1234f1z5" })).body.gstin).toBe("09ABCDE1234F1Z5");
+    expect((await c("PUT", "/shop", { qrMode: "upi" })).body.error).toMatch(/UPI ID/);
+    const ok = await c("PUT", "/shop", { qrMode: "upi", qrOn: "credit", upiId: "qr@okaxis" });
+    expect(ok.body).toMatchObject({ qrMode: "upi", qrOn: "credit", upiId: "qr@okaxis" });
+    expect((await c("PUT", "/shop", { qrMode: "image" })).status).toBe(400);
+    expect((await c("PUT", "/shop", { qrMode: "image", qrImage: "data:image/png;base64,iVBORw0KGgo=" })).body.qrMode).toBe("image");
+  });
+});
