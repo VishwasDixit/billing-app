@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Field, Modal, useAction, useToast } from "../components/ui.jsx";
 import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
 import { menuPhoto } from "../lib/image.js";
 import { ItemPicture } from "../components/ItemPicture.jsx";
+import { PhotoSearch } from "../components/PhotoSearch.jsx";
+import { post, put } from "../lib/api.js";
 
 const PRESETS = {
   single: [{ label: "", price: 0 }],
@@ -14,6 +16,8 @@ const PRESETS = {
 
 export default function Menu() {
   const { menu, shop, resetMenu, addDefaultPictures } = useApp();
+  const [autoPick, setAutoPick] = useState(false);
+  const plainItems = menu.filter((m) => !m.image || isDefaultImage(m.image));
   const toast = useToast();
   const cur = shop.currency || "₹";
   const [editing, setEditing] = useState(null);
@@ -43,6 +47,14 @@ export default function Menu() {
           </button>
         </div>
       </div>
+
+      {plainItems.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <span>{plainItems.length} item{plainItems.length > 1 ? "s use" : " uses"} a drawn picture. Want real food photos?</span>
+          <button className="btn" onClick={() => setAutoPick(true)}>✨ Auto-pick photos</button>
+        </div>
+      )}
+      {autoPick && <AutoPick items={plainItems} onClose={() => setAutoPick(false)} />}
 
       {missingPictures > 0 && (
         <div className="card" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -105,14 +117,21 @@ function ItemEditor({ item, categories, onClose }) {
   const { saveMenuItem, deleteMenuItem, setMenuPhoto, removeMenuPhoto } = useApp();
   const toast = useToast();
   const [f, setF] = useState({ ...item, variants: item.variants.map((v) => ({ ...v })) });
-  // null = keep, data URL = new photo, "default" = back to the drawn picture
+  // null = keep, data URL = new photo, "default" = back to the drawn picture, { link } = library photo
   const [photo, setPhoto] = useState(null);
+  const [searching, setSearching] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const { busy, error, setError, run } = useAction();
 
   const hasPhoto = !!item.image && !isDefaultImage(item.image);
-  const preview =
-    photo && photo !== "default" ? photo : photo === "default" || !hasPhoto ? defaultImageFor(f.name, f.category) : item.image;
+  const preview = photo?.link
+    ? photo.link.url
+    : photo && photo !== "default"
+      ? photo
+      : photo === "default" || !hasPhoto
+        ? defaultImageFor(f.name, f.category)
+        : item.image;
+  const credit = photo?.link ? { author: photo.link.author } : !photo && hasPhoto ? item.imageCredit : null;
 
   const onPhoto = async (file) => {
     if (!file) return;
@@ -133,9 +152,12 @@ function ItemEditor({ item, categories, onClose }) {
     run(async () => {
       const variants = f.variants.map((v) => ({ label: f.variants.length > 1 ? v.label.trim() : "", price: Number(v.price) || 0 }));
       if (variants.length > 1 && variants.some((v) => !v.label)) throw new Error("Give each price a name, e.g. Half / Full.");
-      const saved = await saveMenuItem({ id: f.id, name: f.name, category: f.category, note: f.note || "", variants, active: f.active !== false });
+      const link = photo?.link ? { image: photo.link.url, imageCredit: { author: photo.link.author, url: photo.link.pexelsUrl } } : {};
+      const saved = await saveMenuItem({ id: f.id, name: f.name, category: f.category, note: f.note || "", variants, active: f.active !== false, ...link });
       try {
-        if (photo === "default" && hasPhoto) await removeMenuPhoto(saved.id);
+        if (photo?.link) {
+          /* saved with the item */
+        } else if (photo === "default" && hasPhoto) await removeMenuPhoto(saved.id);
         else if (photo && photo !== "default") await setMenuPhoto(saved.id, photo);
         // A renamed item without its own photo follows its new name's picture.
         else if (!hasPhoto && saved.image !== defaultImageFor(f.name, f.category)) await removeMenuPhoto(saved.id);
@@ -162,14 +184,29 @@ function ItemEditor({ item, categories, onClose }) {
               🖼️ Choose photo
               <input type="file" accept="image/*" hidden onChange={(e) => (onPhoto(e.target.files[0]), (e.target.value = ""))} />
             </label>
+            <button type="button" className="btn btn-sm" onClick={() => setSearching(true)}>
+              🔍 Find photo
+            </button>
             {(photo ? photo !== "default" : hasPhoto) && (
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => setPhoto(hasPhoto ? "default" : null)}>
                 Use default picture
               </button>
             )}
             {photoBusy && <span className="hint">Preparing photo…</span>}
+            {credit?.author && <span className="hint">Photo: {credit.author} / Pexels</span>}
           </div>
         </div>
+        {searching && (
+          <PhotoSearch
+            name={f.name}
+            category={f.category}
+            onClose={() => setSearching(false)}
+            onPick={(p) => {
+              setPhoto({ link: p });
+              setSearching(false);
+            }}
+          />
+        )}
         <Field label="Name">
           <input required maxLength={60} autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
         </Field>
@@ -225,6 +262,73 @@ function ItemEditor({ item, categories, onClose }) {
           <button className="btn btn-primary" disabled={busy || photoBusy}>{busy ? "Saving…" : "Save"}</button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// Suggests a real photo for each item that still has a drawn picture; nothing is saved until "Apply".
+function AutoPick({ items, onClose }) {
+  const { loadMenu } = useApp();
+  const toast = useToast();
+  const [list, setList] = useState(null); // [{ itemId, name, photo, more, on }]
+  const [skipped, setSkipped] = useState(0);
+  const { busy, error, run } = useAction();
+
+  useEffect(() => {
+    run(async () => {
+      const r = await post("/images/bulk-suggest", { itemIds: items.slice(0, 100).map((m) => m.id) });
+      setList(r.suggestions.map((s) => ({ ...s, on: true })));
+      setSkipped(r.skipped + Math.max(0, items.length - 100));
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const chosen = (list || []).filter((s) => s.on);
+  const apply = () =>
+    run(async () => {
+      for (const s of chosen) await put(`/menu/${s.itemId}`, { image: s.photo.url, imageCredit: { author: s.photo.author, url: s.photo.pexelsUrl } });
+      await loadMenu();
+      toast(`Added photos to ${chosen.length} item${chosen.length === 1 ? "" : "s"}`);
+      onClose();
+    });
+  const update = (i, patch) => setList((l) => l.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+
+  return (
+    <Modal title="Auto-pick photos" onClose={onClose} wide>
+      {!list && !error && <div className="empty">Finding photos for {Math.min(items.length, 100)} items…</div>}
+      {error && <div className="error">{error}</div>}
+      {list && (
+        <>
+          <p className="small muted" style={{ marginTop: 0 }}>Untick any that don't match, or tap another photo. Only links are saved, so this uses no storage.</p>
+          <div className="autopick-list">
+            {list.map((s, i) => (
+              <div key={s.itemId} className={"autopick-row" + (s.on ? "" : " off")}>
+                <label className="check">
+                  <input type="checkbox" checked={s.on} onChange={(e) => update(i, { on: e.target.checked })} />
+                  <b>{s.name}</b>
+                </label>
+                <div className="autopick-photos">
+                  {[s.photo, ...s.more.filter((m) => m.id !== s.photo.id)].slice(0, 4).map((p) => (
+                    <button key={p.id} type="button" className={"photo-cell sm" + (p.id === s.photo.id ? " on" : "")} onClick={() => update(i, { photo: p, on: true })}>
+                      <img src={p.thumb} alt={p.alt} loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {list.length === 0 && <div className="empty">No photos found for these items.</div>}
+          </div>
+          {skipped > 0 && <p className="hint">{skipped} more item{skipped === 1 ? "" : "s"} can be done later (the photo library limits searches per hour).</p>}
+          <div className="modal-actions">
+            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy || !chosen.length} onClick={apply}>
+              {busy ? "Saving…" : `Use ${chosen.length} photo${chosen.length === 1 ? "" : "s"}`}
+            </button>
+          </div>
+          <p className="hint" style={{ textAlign: "right", margin: "6px 0 0" }}>
+            <a href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Photos provided by Pexels</a>
+          </p>
+        </>
+      )}
     </Modal>
   );
 }

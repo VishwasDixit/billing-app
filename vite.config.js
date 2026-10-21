@@ -37,6 +37,16 @@ export default defineConfig({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
+          // Menu photos picked from the Pexels library (links never change).
+          {
+            urlPattern: ({ url }) => url.origin === "https://images.pexels.com",
+            handler: "CacheFirst",
+            options: {
+              cacheName: "library-photos",
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
         ],
       },
     }),

@@ -4,6 +4,7 @@ import { HttpError, respondRaw } from "../http.js";
 import { subscriptionStatus } from "../subscription.js";
 import { defaultMenu } from "../seed/grillhive-menu.js";
 import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
+import { PEXELS_PHOTO_URL } from "./images.js";
 import { LANGUAGE_CODES } from "../../shared/messages.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
@@ -70,10 +71,16 @@ const MenuItem = z.object({
   variants: z.array(Variant).min(1).max(6),
   active: z.boolean().default(true),
   sort: z.number().optional(),
-  // Only our own pictures: a default illustration or an uploaded photo.
+  // Our own pictures (a default illustration or an uploaded photo), or a Pexels library link.
   image: z
     .string()
-    .refine((u) => u === "" || isDefaultImage(u) || PHOTO_URL.test(u), "image must be a menu picture")
+    .max(300)
+    .refine((u) => u === "" || isDefaultImage(u) || PHOTO_URL.test(u) || PEXELS_PHOTO_URL.test(u), "image must be a menu picture")
+    .optional(),
+  // Credit for a library photo ("Photo by X on Pexels").
+  imageCredit: z
+    .object({ author: z.string().trim().max(80), url: z.string().trim().max(200).refine((u) => u === "" || /^https:\/\/(www\.)?pexels\.com\//.test(u)) })
+    .nullable()
     .optional(),
 });
 
@@ -149,11 +156,16 @@ export default [
     "/menu/:id",
     async ({ db, shop, params, body }) => {
       const item = MenuItem.partial().parse(body);
-      const updated = await db
+      // A picture that isn't a library photo drops the old photo credit.
+      if (item.image !== undefined && !PEXELS_PHOTO_URL.test(item.image) && item.imageCredit === undefined) item.imageCredit = null;
+      const before = await db
         .collection("menuItems")
-        .findOneAndUpdate({ _id: oid(params.id), shopId: shop._id }, { $set: { ...item, updatedAt: new Date() } }, { returnDocument: "after" });
-      if (!updated) throw new HttpError(404, "Menu item not found.");
-      return publicItem(updated);
+        .findOneAndUpdate({ _id: oid(params.id), shopId: shop._id }, { $set: { ...item, updatedAt: new Date() } }, { returnDocument: "before" });
+      if (!before) throw new HttpError(404, "Menu item not found.");
+      // Swapping an uploaded photo for something else frees its space.
+      const old = photoId(before.image);
+      if (old && item.image !== undefined && item.image !== before.image) await db.collection("menuImages").deleteOne({ _id: old, shopId: shop._id });
+      return publicItem({ ...before, ...item });
     },
   ],
   [
@@ -190,7 +202,7 @@ export default [
       const { insertedId } = await db.collection("menuImages").insertOne({ shopId: shop._id, itemId: _id, type, data, createdAt: new Date() });
       const updated = await db
         .collection("menuItems")
-        .findOneAndUpdate({ _id }, { $set: { image: `/api/menu-images/${insertedId}`, updatedAt: new Date() } }, { returnDocument: "after" });
+        .findOneAndUpdate({ _id }, { $set: { image: `/api/menu-images/${insertedId}`, imageCredit: null, updatedAt: new Date() } }, { returnDocument: "after" });
       const old = photoId(item.image);
       if (old) await db.collection("menuImages").deleteOne({ _id: old, shopId: shop._id });
       return publicItem(updated);
@@ -207,7 +219,7 @@ export default [
       if (old) await db.collection("menuImages").deleteOne({ _id: old, shopId: shop._id });
       const updated = await db
         .collection("menuItems")
-        .findOneAndUpdate({ _id }, { $set: { image: defaultImageFor(item.name, item.category), updatedAt: new Date() } }, { returnDocument: "after" });
+        .findOneAndUpdate({ _id }, { $set: { image: defaultImageFor(item.name, item.category), imageCredit: null, updatedAt: new Date() } }, { returnDocument: "after" });
       return publicItem(updated);
     },
   ],

@@ -14,6 +14,7 @@ import payRoutes from "./routes/pay.js";
 import adminRoutes from "./routes/admin.js";
 import customerRoutes from "./routes/customers.js";
 import cronRoutes from "./routes/cron.js";
+import imageRoutes, { pexelsReady } from "./routes/images.js";
 
 // Each route: [method, "/path/:param", handler, { auth = true, admin = false }]
 const ROUTES = [
@@ -26,6 +27,7 @@ const ROUTES = [
   ...adminRoutes,
   ...customerRoutes,
   ...cronRoutes,
+  ...imageRoutes,
 ].map(([method, path, handler, opts = {}]) => {
   const keys = [];
   const re = new RegExp(
@@ -117,6 +119,7 @@ async function health() {
     RAZORPAY_WEBHOOK_SECRET: !!process.env.RAZORPAY_WEBHOOK_SECRET,
     GOOGLE_CLIENT_ID: !!googleClientId(),
     CRON_SECRET: !!process.env.CRON_SECRET,
+    PEXELS_API_KEY: pexelsReady(),
   };
   try {
     const db = await getDb();
