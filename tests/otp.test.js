@@ -165,10 +165,10 @@ describe("plan reminder emails", () => {
     await registerVerified("blocked@x.test");
     const shopOf = async (email) => (await db.collection("users").findOne({ email })).shopId;
     const DAY = 864e5;
-    await db.collection("shops").updateOne({ _id: await shopOf("ending@x.test") }, { $set: { trialEndsAt: new Date(Date.now() + 2 * DAY) } });
+    await db.collection("shops").updateOne({ _id: await shopOf("ending@x.test") }, { $set: { trialEndsAt: new Date(Date.now() + 0.5 * DAY) } });
     await db.collection("shops").updateOne({ _id: await shopOf("expired@x.test") }, { $set: { trialEndsAt: new Date(Date.now() - DAY), prices: { monthly: 29 } } });
     await db.collection("shops").updateOne({ _id: await shopOf("blocked@x.test") }, { $set: { trialEndsAt: new Date(Date.now() - DAY), blocked: { at: new Date() } } });
-    // Leftover shops from other tests in this file are on a 7-day trial: not due.
+    // Leftover shops from other tests in this file are on a fresh trial: not due.
     const due = (await dueReminders(db)).map((d) => d.owner.email);
     expect(due.sort()).toEqual(["ending@x.test", "expired@x.test"]);
 

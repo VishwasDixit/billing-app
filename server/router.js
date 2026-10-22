@@ -15,6 +15,7 @@ import adminRoutes from "./routes/admin.js";
 import customerRoutes from "./routes/customers.js";
 import cronRoutes from "./routes/cron.js";
 import imageRoutes, { pexelsReady } from "./routes/images.js";
+import helpRoutes from "./routes/help.js";
 
 // Each route: [method, "/path/:param", handler, { auth = true, admin = false }]
 const ROUTES = [
@@ -28,6 +29,7 @@ const ROUTES = [
   ...customerRoutes,
   ...cronRoutes,
   ...imageRoutes,
+  ...helpRoutes,
 ].map(([method, path, handler, opts = {}]) => {
   const keys = [];
   const re = new RegExp(
@@ -120,6 +122,7 @@ async function health() {
     GOOGLE_CLIENT_ID: !!googleClientId(),
     CRON_SECRET: !!process.env.CRON_SECRET,
     PEXELS_API_KEY: pexelsReady(),
+    SUPPORT_WHATSAPP: !!process.env.SUPPORT_WHATSAPP,
   };
   try {
     const db = await getDb();

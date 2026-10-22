@@ -9,7 +9,8 @@ import { LANGUAGE_CODES } from "../../shared/messages.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
 const MAX_QR_IMAGE = 200 * 1024;
-const MAX_PHOTO = 90 * 1024; // decoded bytes; the phone resizes photos to ~20–60 KB
+const MAX_PHOTO = 50 * 1024; // decoded bytes; the phone resizes photos to ~15–35 KB
+export const MAX_PHOTOS_PER_SHOP = 150;
 const PHOTO_URL = /^\/api\/menu-images\/[a-f0-9]{24}$/;
 
 export function publicShop(shop, isAdmin = false) {
@@ -199,6 +200,11 @@ export default [
       const item = await db.collection("menuItems").findOne({ _id, shopId: shop._id });
       if (!item) throw new HttpError(404, "Menu item not found.");
       const { type, data } = decodePhoto(z.object({ dataUrl: z.string() }).parse(body).dataUrl);
+      // Replacing this item's own photo doesn't count against the limit.
+      const replacing = photoId(item.image) ? 1 : 0;
+      if ((await db.collection("menuImages").countDocuments({ shopId: shop._id })) - replacing >= MAX_PHOTOS_PER_SHOP) {
+        throw new HttpError(400, `Photo limit reached (${MAX_PHOTOS_PER_SHOP}). Remove some photos, or use Find photo (it uses no storage).`);
+      }
       const { insertedId } = await db.collection("menuImages").insertOne({ shopId: shop._id, itemId: _id, type, data, createdAt: new Date() });
       const updated = await db
         .collection("menuItems")

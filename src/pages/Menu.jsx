@@ -3,7 +3,7 @@ import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Field, Modal, useAction, useToast } from "../components/ui.jsx";
 import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
-import { menuPhoto } from "../lib/image.js";
+import { menuPhoto, sizeOf, fmtBytes } from "../lib/image.js";
 import { ItemPicture } from "../components/ItemPicture.jsx";
 import { PhotoSearch } from "../components/PhotoSearch.jsx";
 import { post, put } from "../lib/api.js";
@@ -137,7 +137,9 @@ function ItemEditor({ item, categories, onClose }) {
     if (!file) return;
     setPhotoBusy(true);
     try {
-      setPhoto(await menuPhoto(file));
+      const data = await menuPhoto(file);
+      setPhoto(data);
+      toast(`Photo optimized: ${fmtBytes(file.size)} → ${fmtBytes(sizeOf(data))}`);
     } catch (err) {
       setError(err.message);
     } finally {

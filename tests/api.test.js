@@ -43,6 +43,15 @@ function client() {
   };
 }
 
+// Puts a shop on a paid plan (the dashboard is a paid feature).
+async function makePaid(shop) {
+  const { ObjectId } = await import("mongodb");
+  await (await getDb()).collection("shops").updateOne(
+    { _id: new ObjectId(shop.id) },
+    { $set: { subscription: { plan: "monthly", status: "active", currentPeriodEnd: new Date(Date.now() + 30 * 864e5) } } }
+  );
+}
+
 async function registered(email, shopName = "Shop " + email) {
   const c = client();
   const r = await c("POST", "/auth/register", { shopName, name: "Owner", phone: "9876543210", email, password: "secret12" });
@@ -66,10 +75,10 @@ const bill = (over = {}) => ({
 });
 
 describe("auth and shops", () => {
-  it("register seeds the GrillHive menu and starts a 7-day trial", async () => {
+  it("register seeds the GrillHive menu and starts a 3-day trial", async () => {
     const { c, shop } = await registered("a@shop.test");
     expect(shop.status.state).toBe("trial");
-    expect(shop.status.daysLeft).toBe(7);
+    expect(shop.status.daysLeft).toBe(3);
     const menu = (await c("GET", "/menu")).body;
     expect(menu.length).toBe(80);
     expect(new Set(menu.map((m) => m.category)).size).toBe(12);
@@ -161,7 +170,8 @@ describe("bills", () => {
   });
 
   it("voids a bill and leaves it out of sales", async () => {
-    const { c } = await registered("void@shop.test");
+    const { c, shop } = await registered("void@shop.test");
+    await makePaid(shop);
     await c("POST", "/bills", { bills: [bill(), bill({ billNo: "A-2" })] });
     const [first] = (await c("GET", "/bills")).body.bills;
     expect((await c("POST", `/bills/${first.id}/void`, { reason: "wrong order" })).status).toBe(200);
@@ -170,8 +180,18 @@ describe("bills", () => {
 });
 
 describe("analytics", () => {
+  it("keeps the dashboard for paid plans", async () => {
+    const { c, shop } = await registered("trialdash@shop.test");
+    const r = await c("GET", "/analytics");
+    expect(r.status).toBe(402);
+    expect(r.body.code).toBe("PAID_FEATURE");
+    await makePaid(shop);
+    expect((await c("GET", "/analytics")).status).toBe(200);
+  });
+
   it("sums sales, expenses, profit and growth for a seeded week", async () => {
-    const { c } = await registered("week@shop.test");
+    const { c, shop } = await registered("week@shop.test");
+    await makePaid(shop);
     // 10:30 IST on 3, 4 and 5 Jan 2026, plus one bill in the previous week.
     const at = (d) => new Date(`2026-01-0${d}T10:30:00+05:30`).toISOString();
     const items = [{ name: "Tea", qty: 10, rate: 15, category: "Tea & Beverages" }]; // 150
@@ -221,7 +241,7 @@ describe("subscriptions", () => {
     expect((await admin("POST", `/admin/payments/${p.id}/approve`)).status).toBe(404); // only once
     const s = (await c("GET", "/auth/me")).body.shop.status;
     expect(s.state).toBe("paid");
-    expect(s.daysLeft).toBe(37); // 7 trial days + 30
+    expect(s.daysLeft).toBe(33); // 3 trial days + 30
     expect((await admin("GET", "/admin/shops")).body.shops.some((x) => x.id === shop.id)).toBe(true);
   });
 
@@ -256,7 +276,7 @@ describe("subscriptions", () => {
     expect((await client()("POST", "/pay/razorpay/webhook", raw, { "x-razorpay-signature": "bad" })).status).toBe(400);
 
     const s = (await c("GET", "/auth/me")).body.shop.status;
-    expect(s.daysLeft).toBe(7 + 365);
+    expect(s.daysLeft).toBe(3 + 365);
     const bad = await c("POST", "/pay/razorpay/verify", { razorpay_order_id: "order_T1", razorpay_payment_id: "pay_X", razorpay_signature: signature });
     expect(bad.status).toBe(400);
   });
@@ -365,7 +385,7 @@ describe("payment link", () => {
     const r = await c("POST", "/pay/upi", { plan: "monthly", via: "link", utr: "pay_AutoOk49xxxxxx" });
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ autoApproved: true, status: "approved", approvedBy: "razorpay-auto" });
-    expect((await c("GET", "/auth/me")).body.shop.status).toMatchObject({ state: "paid", daysLeft: 37 });
+    expect((await c("GET", "/auth/me")).body.shop.status).toMatchObject({ state: "paid", daysLeft: 33 });
     // The same payment can't buy a second plan, even from another shop.
     const other = await registered("auto-other@shop.test");
     expect((await other.c("POST", "/pay/upi", { plan: "monthly", via: "link", utr: "pay_AutoOk49xxxxxx" })).status).toBe(409);
@@ -506,7 +526,8 @@ describe("udhar (credit) accounts", () => {
   });
 
   it("reports udhar given, collected and outstanding on the dashboard", async () => {
-    const { c } = await registered("udhar-dash@shop.test");
+    const { c, shop } = await registered("udhar-dash@shop.test");
+    await makePaid(shop);
     await c("POST", "/bills", { bills: [creditBill(cust("Mohan"), 400, 100), creditBill(cust("Geeta"), 250)] });
     const m = await customerByName(c, "Mohan");
     await c("POST", `/customers/${m.id}/payments`, { amount: 50 });

@@ -1,4 +1,4 @@
-export const TRIAL_DAYS = 7;
+export const TRIAL_DAYS = 3;
 
 export const PLANS = {
   monthly: { id: "monthly", name: "Monthly", amount: 49, days: 30 },
@@ -14,6 +14,9 @@ export function plansFor(shop) {
     Object.values(PLANS).map((p) => [p.id, { ...p, amount: custom[p.id] ?? p.amount, ...(custom[p.id] != null && custom[p.id] !== p.amount && { standardAmount: p.amount }) }])
   );
 }
+
+// Dashboard, profit & loss and report downloads are for paid plans (and the admin).
+export const hasPaidFeatures = (status) => status?.state === "paid" || status?.state === "admin";
 
 export const blockedMessage = (shop) =>
   `This shop has been blocked by the admin${shop.blocked?.reason ? `: ${shop.blocked.reason}` : ""}. Please contact support.`;

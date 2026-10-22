@@ -28,7 +28,9 @@ export async function dueReminders(db, now = new Date()) {
     const owner = owners.get(String(shop._id));
     if (!owner || isAdminEmail(owner.email)) continue;
     const status = subscriptionStatus(shop, { now });
-    const stage = !status.active ? "expired" : status.daysLeft <= REMIND_DAYS ? "ending" : null;
+    // A short trial is only reminded on its last day; paid plans get REMIND_DAYS' notice.
+    const notice = status.state === "trial" ? 1 : REMIND_DAYS;
+    const stage = !status.active ? "expired" : status.daysLeft <= notice ? "ending" : null;
     if (!stage) continue;
     const key = new Date(status.endsAt).toISOString().slice(0, 10);
     due.push({

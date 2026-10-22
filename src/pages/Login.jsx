@@ -76,7 +76,7 @@ export default function Login() {
         </p>
 
         <p className="small muted" style={{ textAlign: "center", margin: 0 }}>
-          New shop? <Link to="/register">Start your 7-day free trial</Link>
+          New shop? <Link to="/register">Start your 3-day free trial</Link>
         </p>
       </div>
     </div>

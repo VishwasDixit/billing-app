@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { get, post, put } from "../lib/api.js";
+import { get, post, put, api } from "../lib/api.js";
 import { fmtDate, fmtDateTime, money } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
-import { downloadExcel, downloadPdf } from "../lib/adminExport.js";
+import { downloadExcel, downloadPdf, downloadShopData } from "../lib/adminExport.js";
+import { Conversation } from "./Help.jsx";
 
 const STATUS = [
   ["all", "All"],
@@ -67,6 +68,7 @@ export default function Admin() {
   const [shops, setShops] = useState([]);
   const [payments, setPayments] = useState([]);
   const [storage, setStorage] = useState(null);
+  const [helpUnread, setHelpUnread] = useState(0);
   const [manageId, setManageId] = useState(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
@@ -81,6 +83,7 @@ export default function Admin() {
       setShops(s.shops);
       setPayments(p.payments);
       get("/admin/storage").then(setStorage).catch(() => {});
+      get("/admin/help?status=all").then((h) => setHelpUnread(h.unread)).catch(() => {});
     });
   useEffect(() => {
     load();
@@ -114,7 +117,7 @@ export default function Admin() {
         <Seg
           value={tab}
           onChange={setTab}
-          options={[["shops", `Shops (${shops.length})`], ["payments", `Payments${pending.length ? ` (${pending.length} new)` : ""}`], ["reminders", "Reminders"]]}
+          options={[["shops", `Shops (${shops.length})`], ["payments", `Payments${pending.length ? ` (${pending.length} new)` : ""}`], ["reminders", "Reminders"], ["help", `Help${helpUnread ? ` (${helpUnread} new)` : ""}`]]}
         />
       </div>
 
@@ -253,9 +256,11 @@ export default function Admin() {
         </>
       )}
 
+      {tab === "help" && <AdminHelp onUnread={setHelpUnread} onOpenShop={(id) => (setTab("shops"), setManageId(id))} />}
+
       {tab === "reminders" && <Reminders onOpenShop={(id) => (setTab("shops"), setManageId(id))} />}
 
-      {manage && <ManageShop shop={manage} onClose={() => setManageId(null)} onDone={load} />}
+      {manage && <ManageShop shop={manage} onClose={() => setManageId(null)} onDone={load} onDeleted={() => (setManageId(null), load())} />}
     </div>
   );
 }
@@ -282,6 +287,97 @@ function StorageMeter({ s }) {
         </div>
       )}
     </div>
+  );
+}
+
+function AdminHelp({ onUnread, onOpenShop }) {
+  const toast = useToast();
+  const [status, setStatus] = useState("open");
+  const [q, setQ] = useState("");
+  const [list, setList] = useState(null);
+  const [thread, setThread] = useState(null);
+  const [text, setText] = useState("");
+  const { busy, error, run } = useAction();
+
+  const load = () =>
+    run(async () => {
+      const r = await get(`/admin/help?status=${status}`);
+      setList(r.threads);
+      onUnread(r.unread);
+    });
+  useEffect(() => {
+    load();
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openThread = (id) => run(async () => (setThread(await get(`/admin/help/${id}`)), setText(""), load()));
+  const reply = (close) =>
+    run(async () => {
+      setThread(await post(`/admin/help/${thread.id}/reply`, { text, close }));
+      setText("");
+      toast(close ? "Replied and closed" : "Reply sent (the shop gets an email too)");
+      load();
+    });
+  const setThreadStatus = (st) => run(async () => (setThread(await post(`/admin/help/${thread.id}/status`, { status: st })), load()));
+
+  const shown = (list || []).filter((t) => {
+    const x = q.toLowerCase().trim();
+    return !x || [t.shopName, t.ownerName, t.ownerEmail, t.ownerPhone, t.subject].join(" ").toLowerCase().includes(x);
+  });
+
+  if (thread) {
+    return (
+      <div className="card stack">
+        <div className="shop-title">
+          <button className="btn btn-sm btn-ghost" onClick={() => setThread(null)}>← All messages</button>
+          <b>{thread.subject}</b>
+          <span className={"tag " + (thread.status === "answered" ? "good" : thread.status === "closed" ? "" : "warn")}>{thread.status}</span>
+        </div>
+        <div className="small">
+          <button className="link-btn" onClick={() => onOpenShop(thread.shopId)}>{thread.shopName}</button> · {thread.ownerName} · {thread.ownerEmail} · {thread.ownerPhone}
+        </div>
+        <Conversation messages={thread.messages} mine="admin" names={{ shop: thread.ownerName || thread.shopName, admin: "You" }} />
+        <textarea className="input" rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="Write your reply… (the shop owner also gets it by email)" />
+        {error && <div className="error">{error}</div>}
+        <div className="btn-row">
+          <button className="btn btn-primary" disabled={busy || text.trim().length < 2} onClick={() => reply(false)}>Send reply</button>
+          <button className="btn" disabled={busy || text.trim().length < 2} onClick={() => reply(true)}>Reply &amp; close</button>
+          {thread.status !== "closed" ? (
+            <button className="btn btn-ghost" disabled={busy} onClick={() => setThreadStatus("closed")}>Close without reply</button>
+          ) : (
+            <button className="btn btn-ghost" disabled={busy} onClick={() => setThreadStatus("open")}>Reopen</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="admin-filters">
+        <input className="input" type="search" placeholder="Search shop, owner, phone or subject" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="chips" style={{ marginBottom: 12 }}>
+        {[["open", "Waiting"], ["answered", "Replied"], ["closed", "Closed"], ["all", "All"]].map(([k, l]) => (
+          <button key={k} className={"chip" + (status === k ? " on" : "")} onClick={() => setStatus(k)}>{l}</button>
+        ))}
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="shop-list">
+        {shown.map((t) => (
+          <button key={t.id} className={"card help-row" + (t.unreadByAdmin ? " unread" : "")} onClick={() => openThread(t.id)}>
+            <div className="shop-title">
+              <b>{t.subject}</b>
+              {t.unreadByAdmin && <span className="tag accent">new</span>}
+              <span className="small muted">{t.shopName} · {t.ownerName}</span>
+            </div>
+            <div className="small muted">{t.last}</div>
+            <div className="small muted">{fmtDateTime(t.updatedAt)} · {t.count} message{t.count === 1 ? "" : "s"}</div>
+          </button>
+        ))}
+        {list && shown.length === 0 && <div className="empty">No messages here.</div>}
+        {!list && <div className="empty">Loading…</div>}
+      </div>
+    </>
   );
 }
 
@@ -371,13 +467,15 @@ function Reminders({ onOpenShop }) {
   );
 }
 
-function ManageShop({ shop, onClose, onDone }) {
+function ManageShop({ shop, onClose, onDone, onDeleted }) {
   const toast = useToast();
   const [days, setDays] = useState(30);
   const [monthly, setMonthly] = useState(shop.prices.monthly);
   const [yearly, setYearly] = useState(shop.prices.yearly);
   const [reason, setReason] = useState(shop.blocked?.reason || "");
   const [password, setPassword] = useState("");
+  const [confirmName, setConfirmName] = useState("");
+  const [downloaded, setDownloaded] = useState(false);
   const { busy, error, run } = useAction();
   const isAdminShop = shop.status.state === "admin";
 
@@ -483,6 +581,46 @@ function ManageShop({ shop, onClose, onDone }) {
             ) : (
               <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => setBlocked(true)}>Block shop</button>
             )}
+          </section>
+        )}
+
+        {!isAdminShop && (
+          <section className="danger-zone">
+            <h4>Danger zone · Delete shop</h4>
+            <p className="small muted" style={{ margin: 0 }}>
+              Permanently deletes the shop, its owner login, menu, photos, {shop.bills} bills, udhar, expenses and payments. This can't be undone.
+            </p>
+            <button
+              className="btn btn-sm"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  await downloadShopData(await get(`/admin/shops/${shop.id}/export`));
+                  setDownloaded(true);
+                  toast("Shop data downloaded");
+                })
+              }
+            >
+              ⬇️ 1. Download data (Excel)
+            </button>
+            <Field label={`2. Type "${shop.name}" to confirm`}>
+              <input value={confirmName} onChange={(e) => setConfirmName(e.target.value)} placeholder={shop.name} autoComplete="off" />
+            </Field>
+            <button
+              className="btn btn-danger btn-sm"
+              disabled={busy || confirmName.trim().toLowerCase() !== shop.name.trim().toLowerCase()}
+              onClick={() =>
+                run(async () => {
+                  if (!downloaded && !confirm("You haven't downloaded this shop's data. Delete anyway?")) return;
+                  if (!confirm(`Delete ${shop.name} and all its data permanently?`)) return;
+                  const r = await api(`/admin/shops/${shop.id}`, { method: "DELETE", body: { confirmName } });
+                  toast(`${shop.name} deleted (${r.counts.bills} bills, ${r.counts.menuItems} menu items)`);
+                  onDeleted();
+                })
+              }
+            >
+              🗑️ Delete permanently
+            </button>
           </section>
         )}
 

@@ -193,6 +193,54 @@ export default [
     },
     admin,
   ],
+  // Everything a shop has, for download before deleting it (no passwords or images).
+  [
+    "GET",
+    "/admin/shops/:id/export",
+    async ({ db, params }) => {
+      const shopId = oid(params.id);
+      const shop = await db.collection("shops").findOne({ _id: shopId }, { projection: { logo: 0, qrImage: 0 } });
+      if (!shop) throw new HttpError(404, "Shop not found.");
+      const all = (name, sort = { createdAt: 1 }) => db.collection(name).find({ shopId }).sort(sort).toArray();
+      const [users, menu, bills, customers, customerPayments, expenses, payments, help] = await Promise.all([
+        db.collection("users").find({ shopId }, { projection: { passwordHash: 0, sessionVersion: 0 } }).toArray(),
+        all("menuItems", { sort: 1 }),
+        all("bills"),
+        all("customers"),
+        all("customerPayments"),
+        all("expenses", { date: 1 }),
+        all("payments"),
+        all("helpThreads"),
+      ]);
+      return { exportedAt: new Date(), shop, users, menu, bills, customers, customerPayments, expenses, payments, help };
+    },
+    admin,
+  ],
+  // Permanently deletes a shop and all its data. The admin must type the shop's name.
+  [
+    "DELETE",
+    "/admin/shops/:id",
+    async ({ db, params, body, user }) => {
+      const { confirmName } = z.object({ confirmName: z.string().trim().min(1, "type the shop name to confirm") }).parse(body || {});
+      const shopId = oid(params.id);
+      if (String(shopId) === String(user.shopId)) throw new HttpError(400, "You can't delete your own admin shop.");
+      const shop = await db.collection("shops").findOne({ _id: shopId }, { projection: { name: 1 } });
+      if (!shop) throw new HttpError(404, "Shop not found.");
+      if (confirmName.toLowerCase() !== String(shop.name).trim().toLowerCase()) throw new HttpError(400, "The name doesn't match. Type the shop name exactly to delete it.");
+      const owners = await db.collection("users").find({ shopId }, { projection: { email: 1 } }).toArray();
+      const counts = {};
+      for (const name of ["menuItems", "menuImages", "bills", "customers", "customerPayments", "expenses", "payments", "helpThreads", "users"]) {
+        counts[name] = (await db.collection(name).deleteMany({ shopId })).deletedCount;
+      }
+      const emails = owners.map((o) => o.email);
+      await db.collection("otpCodes").deleteMany({ key: { $in: emails } });
+      await db.collection("rateLimits").deleteMany({ _id: { $in: emails.flatMap((e) => [`login:email:${e}`]) } });
+      await db.collection("shops").deleteOne({ _id: shopId });
+      await db.collection("adminLog").insertOne({ at: new Date(), by: user.email, action: "delete-shop", shopName: shop.name, emails, counts });
+      return { ok: true, counts };
+    },
+    admin,
+  ],
   // Block or unblock a shop. Blocked shops are logged out everywhere and can't log in.
   [
     "POST",

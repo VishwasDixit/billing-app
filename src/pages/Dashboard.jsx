@@ -3,7 +3,9 @@ import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler,
 } from "chart.js";
 import { Line, Bar } from "react-chartjs-2";
-import { useApp } from "../lib/store.jsx";
+import { Link } from "react-router-dom";
+import { useApp, accessState } from "../lib/store.jsx";
+import { downloadReportPdf, downloadReportExcel } from "../lib/reportExport.js";
 import { get } from "../lib/api.js";
 import { money, monthStartYmd, todayYmd } from "../lib/format.js";
 import { useAction } from "../components/ui.jsx";
@@ -31,10 +33,12 @@ export default function Dashboard() {
   const [range, setRange] = useState(() => PRESETS[2][2]());
   const [data, setData] = useState(null);
   const { busy, error, run } = useAction();
+  const access = accessState(shop);
+  const paid = access.state === "paid" || access.state === "admin";
 
   useEffect(() => {
-    run(async () => setData(await get(`/analytics?from=${range[0]}&to=${range[1]}`)));
-  }, [range, sync.pending, run]);
+    if (paid) run(async () => setData(await get(`/analytics?from=${range[0]}&to=${range[1]}`)));
+  }, [range, sync.pending, run, paid]);
 
   const choose = (id) => {
     setPreset(id);
@@ -49,6 +53,8 @@ export default function Dashboard() {
     callbacks: { label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y ?? ctx.parsed.x, cur)}` },
   };
 
+  if (!paid) return <LockedDashboard expired={access.state === "expired"} />;
+
   return (
     <div className="page">
       <div className="page-head">
@@ -61,7 +67,12 @@ export default function Dashboard() {
           </div>
           <input type="date" value={range[0]} max={range[1]} onChange={(e) => (setPreset(""), setRange([e.target.value, range[1]]))} aria-label="From" />
           <input type="date" value={range[1]} min={range[0]} max={todayYmd()} onChange={(e) => (setPreset(""), setRange([range[0], e.target.value]))} aria-label="To" />
-          {data && <button className="btn btn-sm" onClick={() => exportCsv(range, cur)}>Export CSV</button>}
+          {data && (
+            <>
+              <button className="btn btn-sm" disabled={busy} onClick={() => run(() => downloadReportPdf(shop, data, range))} title="Profit & Loss report">📄 PDF</button>
+              <button className="btn btn-sm" disabled={busy} onClick={() => run(() => downloadReportExcel(shop, data, range))} title="Report with every bill">📊 Excel</button>
+            </>
+          )}
         </div>
       </div>
 
@@ -236,21 +247,32 @@ function Stat({ label, value, delta, prev, invert, tone }) {
   );
 }
 
-async function exportCsv([from, to], cur) {
-  const [{ bills }, { expenses }] = await Promise.all([
-    get(`/bills?from=${from}&to=${to}&limit=5000`),
-    get(`/expenses?from=${from}&to=${to}`),
-  ]);
-  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const rows = [["Type", "Date", "Bill no / Category", "Items / Note", "Payment", "Status", `Amount (${cur})`]];
-  for (const b of bills) {
-    rows.push(["Bill", new Date(b.createdAt).toLocaleString("en-IN"), b.billNo, b.items.map((i) => `${i.qty}x ${i.name}${i.variant ? ` (${i.variant})` : ""}`).join("; "), b.paymentMode, b.status, b.total]);
-  }
-  for (const e of expenses) rows.push(["Expense", e.date, e.category, e.note, e.paymentMode, "", -e.amount]);
-  const blob = new Blob(["﻿" + rows.map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `sales-${from}-to-${to}.csv`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+// Trial and expired shops: what the paid plan unlocks.
+function LockedDashboard({ expired }) {
+  return (
+    <div className="page">
+      <div className="page-head"><h1>Dashboard</h1></div>
+      <div className="locked">
+        <div className="locked-preview" aria-hidden="true">
+          <div className="stats">
+            {["Sales", "Bills", "Expenses", "Profit"].map((l, i) => (
+              <div key={l} className="stat"><div className="label">{l}</div><div className="value">{["₹48,250", "312", "₹12,900", "₹35,350"][i]}</div></div>
+            ))}
+          </div>
+          <div className="card" style={{ height: 160 }} />
+        </div>
+        <div className="card locked-card">
+          <div style={{ fontSize: 34 }}>📊</div>
+          <h2 style={{ margin: 0 }}>Sales dashboard &amp; Profit / Loss</h2>
+          <p className="muted" style={{ margin: 0 }}>
+            Daily sales, profit and loss, top items, payment modes, udhar summary, and downloadable PDF and Excel reports are part of the paid plan, from ₹49/month.
+          </p>
+          <p className="small muted" style={{ margin: 0 }}>
+            {expired ? "Your plan has ended." : "You're on the free trial."} Billing, bills and expenses keep working{expired ? " after you renew" : ""}.
+          </p>
+          <Link className="btn btn-primary btn-lg" to="/plans">See plans</Link>
+        </div>
+      </div>
+    </div>
+  );
 }

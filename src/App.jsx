@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, Link } from "react-router-dom";
 import { useApp, accessState } from "./lib/store.jsx";
 import { ToastProvider } from "./components/ui.jsx";
@@ -15,6 +15,8 @@ import Plans from "./pages/Plans.jsx";
 import Admin from "./pages/Admin.jsx";
 import Customers from "./pages/Customers.jsx";
 import CustomerDetail from "./pages/CustomerDetail.jsx";
+import Help from "./pages/Help.jsx";
+import { get } from "./lib/api.js";
 
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx")); // charts load on first visit
 
@@ -43,6 +45,7 @@ export default function App() {
             <Route path="/menu" element={<Menu />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/plans" element={<Plans />} />
+            <Route path="/help" element={<Help />} />
             {session.user.role === "admin" && <Route path="/admin" element={<Admin />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -52,17 +55,33 @@ export default function App() {
   );
 }
 
+// True when support has replied to a help message the owner hasn't read yet.
+function useHelpUnread(enabled) {
+  const [unread, setUnread] = useState(false);
+  useEffect(() => {
+    if (!enabled) return;
+    const check = () => get("/help/threads").then((r) => setUnread(r.threads.some((t) => t.unreadByShop))).catch(() => {});
+    check();
+    const t = setInterval(check, 10 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [enabled]);
+  return unread;
+}
+
 function Shell({ children }) {
   const { shop, user, online, sync, syncNow } = useApp();
   const access = accessState(shop);
+  const isAdmin = user.role === "admin";
+  const helpUnread = useHelpUnread(!isAdmin);
+  const paid = access.state === "paid" || isAdmin;
   const links = [
     ["/", "🧾", "Billing"],
     ["/bills", "📄", "Bills"],
     ["/customers", "📒", "Udhar"],
-    ["/dashboard", "📊", "Dashboard"],
+    ["/dashboard", paid ? "📊" : "🔒", "Dashboard"],
     ["/expenses", "💸", "Expenses"],
     ["/settings", "⚙️", "Settings"],
-    ...(user.role === "admin" ? [["/admin", "🛡️", "Admin"]] : []),
+    ...(isAdmin ? [["/admin", "🛡️", "Admin"]] : [["/help", helpUnread ? "🔴" : "❓", "Help"]]),
   ];
 
   return (

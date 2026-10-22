@@ -64,7 +64,7 @@ export default function Register() {
           <form className="stack" onSubmit={submit}>
             <div>
               <h1>Register your shop</h1>
-              <p className="muted small" style={{ margin: 0 }}>7 days free. Then ₹49/month or ₹400/year. Your menu starts with a ready-made dhaba menu you can edit.</p>
+              <p className="muted small" style={{ margin: 0 }}>3 days free. Then ₹49/month or ₹400/year. Your menu starts with a ready-made dhaba menu you can edit.</p>
             </div>
             {googleClientId && !google && (
               <>

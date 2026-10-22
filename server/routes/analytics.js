@@ -2,6 +2,7 @@ import { z } from "zod";
 import { round2 } from "../../shared/totals.js";
 import { HttpError } from "../http.js";
 import { totalOutstanding } from "./customers.js";
+import { hasPaidFeatures } from "../subscription.js";
 
 // Shops are in India: days and hours are counted in IST.
 export const TZ = "Asia/Kolkata";
@@ -95,7 +96,10 @@ export default [
   [
     "GET",
     "/analytics",
-    async ({ db, shop, query }) => {
+    async ({ db, shop, query, status }) => {
+      if (!hasPaidFeatures(status)) {
+        throw new HttpError(402, "The sales dashboard and reports are part of the paid plan.", { code: "PAID_FEATURE" });
+      }
       const { start, end, from, to } = dayRange(query.from, query.to);
       const len = end - start;
       const prevStart = new Date(start.getTime() - len);
