@@ -2,8 +2,18 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import { HttpError } from "../http.js";
 import { PLANS, plansFor, grantPlan } from "../subscription.js";
+import { findPromo, applyPromo, describePromo } from "../promo.js";
 
 const PlanId = z.enum(["monthly", "yearly"]);
+const PromoField = z.string().trim().max(30).optional();
+
+// The shop's price for a plan, with a promo code applied when one is given.
+async function priceFor(db, shop, planId, promoCode) {
+  const plan = plansFor(shop)[planId];
+  if (!promoCode) return plan;
+  return applyPromo(plan, await findPromo(db, shop, promoCode, planId));
+}
+const promoFields = (plan) => (plan.promo ? { promoCode: plan.promo.code, promoOff: plan.promo.off, priceBeforePromo: plan.beforePromo } : {});
 
 function razorpayKeys() {
   const id = process.env.RAZORPAY_KEY_ID;
@@ -177,13 +187,23 @@ export default [
     },
   ],
 
+  // Checks a promo code and returns the plans with it applied.
+  [
+    "POST",
+    "/pay/promo",
+    async ({ db, shop, body }) => {
+      const { code } = z.object({ code: z.string().max(30) }).parse(body);
+      const promo = await findPromo(db, shop, code);
+      return { code: promo._id, label: describePromo(promo), plans: Object.values(plansFor(shop)).map((p) => applyPromo(p, promo)) };
+    },
+  ],
   [
     "POST",
     "/pay/razorpay/order",
     async ({ db, shop, user, body }) => {
       const keys = razorpayKeys();
       if (!keys) throw new HttpError(503, "Online payment isn't set up yet. Please pay by UPI.");
-      const plan = plansFor(shop)[PlanId.parse(body.plan)];
+      const plan = await priceFor(db, shop, PlanId.parse(body.plan), PromoField.parse(body.promo));
       const receipt = `s${String(shop._id).slice(-8)}-${Date.now()}`;
       const r = await fetch("https://api.razorpay.com/v1/orders", {
         method: "POST",
@@ -191,7 +211,7 @@ export default [
           "Content-Type": "application/json",
           Authorization: "Basic " + Buffer.from(`${keys.id}:${keys.secret}`).toString("base64"),
         },
-        body: JSON.stringify({ amount: plan.amount * 100, currency: "INR", receipt, notes: { shopId: String(shop._id), plan: plan.id } }),
+        body: JSON.stringify({ amount: plan.amount * 100, currency: "INR", receipt, notes: { shopId: String(shop._id), plan: plan.id, ...(plan.promo && { promo: plan.promo.code }) } }),
       });
       const order = await r.json();
       if (!r.ok) {
@@ -202,6 +222,7 @@ export default [
         shopId: shop._id,
         plan: plan.id,
         amount: plan.amount,
+        ...promoFields(plan),
         method: "razorpay",
         razorpayOrderId: order.id,
         status: "created",
@@ -266,6 +287,7 @@ export default [
           plan: PlanId,
           via: z.enum(["upi", "link"]).default("upi"),
           utr: z.string().trim().min(1, "enter the payment reference"),
+          promo: PromoField,
         })
         .parse(body);
       let utr;
@@ -279,7 +301,7 @@ export default [
         utr = input.utr.toUpperCase();
       }
       const method = input.via === "link" ? "link" : "upi";
-      const plan = plansFor(shop)[input.plan];
+      const plan = await priceFor(db, shop, input.plan, input.promo);
       const existing = await db.collection("payments").findOne({ method, utr, status: { $in: ["pending", "approved"] } });
       // With keys, resubmitting your own pending ID asks Razorpay again instead of failing.
       const retryOwnPending =
@@ -298,7 +320,7 @@ export default [
 
       const doc = retryOwnPending
         ? existing
-        : { shopId: shop._id, plan: plan.id, amount: plan.amount, method, utr, status: "pending", createdAt: new Date() };
+        : { shopId: shop._id, plan: plan.id, amount: plan.amount, ...promoFields(plan), method, utr, status: "pending", createdAt: new Date() };
       if (!retryOwnPending) doc._id = (await db.collection("payments").insertOne(doc)).insertedId;
       if (check?.ok && (await autoApprove(db, doc, { ...PLANS[doc.plan], amount: doc.amount }))) {
         return { ...publicPayment(await db.collection("payments").findOne({ _id: doc._id })), autoApproved: true };

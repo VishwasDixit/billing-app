@@ -481,3 +481,13 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .locked-card { position: static; margin: 0; }
   .locked-preview .stats { grid-template-columns: 1fr 1fr; }
 }
+.promo-box { display: grid; gap: 6px; margin-bottom: 16px; padding: 12px 14px; }
+.promo-row { display: flex; gap: 8px; }
+.promo-row input { flex: 1; min-width: 0; text-transform: uppercase; letter-spacing: .05em; }
+.promo-applied { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--good); }
+.shop-row.is-off { opacity: .6; }
+.promo-code { font-family: ui-monospace, Menlo, monospace; letter-spacing: .05em; }
+.admin-tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.admin-tabs::-webkit-scrollbar { display: none; }
+.admin-tabs .seg button { white-space: nowrap; }
+@media (max-width: 560px) { .admin-tabs { width: 100%; } }

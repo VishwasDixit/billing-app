@@ -6,6 +6,7 @@ import { grantPlan, subscriptionStatus, plansFor, PLANS } from "../subscription.
 import { recheckPendingLinks } from "./pay.js";
 import { dueReminders, runReminders, lastRuns, REMIND_DAYS, reminderCooldownHours } from "../reminders.js";
 import { emailOtpReady } from "../otp/mailer.js";
+import { normalizeCode, describePromo } from "../promo.js";
 
 const oid = (id) => {
   if (!ObjectId.isValid(id)) throw new HttpError(404, "Not found.");
@@ -17,7 +18,76 @@ const admin = { admin: true };
 // The free MongoDB Atlas tier holds 512 MB (data + indexes). DB_LIMIT_MB overrides after an upgrade.
 export const DB_LIMIT_MB = () => Number(process.env.DB_LIMIT_MB) || 512;
 
+const PromoIn = z
+  .object({
+    code: z
+      .string()
+      .transform(normalizeCode)
+      .pipe(z.string().regex(/^[A-Z0-9_-]{3,20}$/, "use 3–20 letters or numbers, e.g. DIWALI20")),
+    type: z.enum(["percent", "flat"]),
+    value: z.number().positive("enter the discount"),
+    plans: z.array(z.enum(["monthly", "yearly"])).min(1, "choose at least one plan"),
+    maxUses: z.number().int().min(1).max(100000).nullable().default(null),
+    onePerShop: z.boolean().default(true),
+    validUntil: z.coerce.date().nullable().default(null),
+    note: z.string().trim().max(120).default(""),
+    active: z.boolean().default(true),
+  })
+  .refine((p) => p.type !== "percent" || p.value <= 99, { message: "percent off must be 99 or less", path: ["value"] });
+
+async function promoList(db) {
+  const [codes, uses] = await Promise.all([
+    db.collection("promoCodes").find({}).sort({ createdAt: -1 }).toArray(),
+    db
+      .collection("payments")
+      .aggregate([
+        { $match: { promoCode: { $type: "string" }, status: { $in: ["pending", "approved"] } } },
+        { $group: { _id: "$promoCode", uses: { $sum: 1 }, approved: { $sum: { $cond: [{ $eq: ["$status", "approved"] }, 1, 0] } }, off: { $sum: { $cond: [{ $eq: ["$status", "approved"] }, "$promoOff", 0] } } } },
+      ])
+      .toArray(),
+  ]);
+  const byCode = new Map(uses.map((u) => [u._id, u]));
+  return codes.map(({ _id, ...p }) => ({ ...p, code: _id, label: describePromo(p), uses: byCode.get(_id)?.uses || 0, paid: byCode.get(_id)?.approved || 0, discountGiven: byCode.get(_id)?.off || 0 }));
+}
+
 export default [
+  ["GET", "/admin/promos", async ({ db }) => ({ promos: await promoList(db) }), admin],
+  [
+    "POST",
+    "/admin/promos",
+    async ({ db, body, user }) => {
+      const { code, ...p } = PromoIn.parse(body);
+      try {
+        await db.collection("promoCodes").insertOne({ _id: code, ...p, createdAt: new Date(), createdBy: user.email });
+      } catch (err) {
+        if (err.code === 11000) throw new HttpError(409, `${code} already exists.`);
+        throw err;
+      }
+      return { promos: await promoList(db) };
+    },
+    admin,
+  ],
+  [
+    "PUT",
+    "/admin/promos/:code",
+    async ({ db, params, body }) => {
+      const { code: _ignored, ...p } = PromoIn.parse({ ...body, code: params.code });
+      const { matchedCount } = await db.collection("promoCodes").updateOne({ _id: normalizeCode(params.code) }, { $set: { ...p, updatedAt: new Date() } });
+      if (!matchedCount) throw new HttpError(404, "Promo code not found.");
+      return { promos: await promoList(db) };
+    },
+    admin,
+  ],
+  [
+    "DELETE",
+    "/admin/promos/:code",
+    async ({ db, params }) => {
+      const { deletedCount } = await db.collection("promoCodes").deleteOne({ _id: normalizeCode(params.code) });
+      if (!deletedCount) throw new HttpError(404, "Promo code not found.");
+      return { promos: await promoList(db) }; // past payments keep the code they used
+    },
+    admin,
+  ],
   [
     "GET",
     "/admin/storage",

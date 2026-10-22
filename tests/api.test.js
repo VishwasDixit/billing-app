@@ -710,3 +710,64 @@ describe("security hardening", () => {
     expect((await c("GET", "/auth/me")).body.shop.logo).toMatch(/^data:image/);
   });
 });
+
+describe("promo codes", () => {
+  async function adminC() {
+    const c = client();
+    if ((await c("POST", "/auth/login", { email: "admin@shop.test", password: "secret12" })).status !== 200) return (await registered("admin@shop.test")).c;
+    return c;
+  }
+
+  it("lets the admin create, edit, turn off and delete codes", async () => {
+    const admin = await adminC();
+    const { c: shopC } = await registered("promo-shop@shop.test");
+    expect((await shopC("POST", "/admin/promos", { code: "X1", type: "percent", value: 10, plans: ["monthly"] })).status).toBe(403);
+    expect((await admin("POST", "/admin/promos", { code: "ab", type: "percent", value: 10, plans: ["monthly"] })).status).toBe(400);
+    expect((await admin("POST", "/admin/promos", { code: "TOO", type: "percent", value: 100, plans: ["monthly"] })).status).toBe(400);
+    const r = await admin("POST", "/admin/promos", { code: "diwali20", type: "percent", value: 20, plans: ["monthly", "yearly"] });
+    expect(r.status).toBe(200);
+    expect(r.body.promos.find((p) => p.code === "DIWALI20")).toMatchObject({ label: "20% off", uses: 0, active: true });
+    expect((await admin("POST", "/admin/promos", { code: "DIWALI20", type: "flat", value: 5, plans: ["monthly"] })).status).toBe(409);
+    const off = await admin("PUT", "/admin/promos/DIWALI20", { type: "percent", value: 20, plans: ["monthly", "yearly"], active: false });
+    expect(off.body.promos.find((p) => p.code === "DIWALI20").active).toBe(false);
+    expect((await shopC("POST", "/pay/promo", { code: "diwali20" })).body.error).toMatch(/isn't valid/);
+    await admin("PUT", "/admin/promos/DIWALI20", { type: "percent", value: 20, plans: ["monthly", "yearly"], active: true });
+    expect((await shopC("POST", "/pay/promo", { code: "diwali20" })).body.plans.map((p) => p.amount)).toEqual([39, 320]);
+    expect((await admin("DELETE", "/admin/promos/DIWALI20")).status).toBe(200);
+    expect((await shopC("POST", "/pay/promo", { code: "DIWALI20" })).status).toBe(400);
+  });
+
+  it("applies the discount to payments, on top of a special price, once per shop", async () => {
+    const admin = await adminC();
+    await admin("POST", "/admin/promos", { code: "FLAT10", type: "flat", value: 10, plans: ["monthly"], maxUses: 2 });
+    const { c, shop } = await registered("promo-pay@shop.test");
+    await admin("PUT", `/admin/shops/${shop.id}/prices`, { monthly: 29 });
+
+    const check = (await c("POST", "/pay/promo", { code: "flat10" })).body;
+    expect(check.plans.find((p) => p.id === "monthly")).toMatchObject({ amount: 19, beforePromo: 29, promo: { code: "FLAT10", off: 10 } });
+    expect(check.plans.find((p) => p.id === "yearly").promo).toBeUndefined(); // monthly only
+    expect((await c("POST", "/pay/upi", { plan: "yearly", utr: "YEARPROMO1", promo: "FLAT10" })).body.error).toMatch(/only for the monthly/);
+
+    const pay = await c("POST", "/pay/upi", { plan: "monthly", utr: "PROMOUTR01", promo: "FLAT10" });
+    expect(pay.status).toBe(200);
+    expect(pay.body).toMatchObject({ amount: 19, promoCode: "FLAT10", promoOff: 10 });
+    // Once per shop, even while the first payment is pending.
+    expect((await c("POST", "/pay/promo", { code: "FLAT10" })).body.error).toMatch(/already used/);
+
+    // A second shop uses the last one; a third finds it used up.
+    const second = (await registered("promo-pay2@shop.test")).c;
+    expect((await second("POST", "/pay/upi", { plan: "monthly", utr: "PROMOUTR02", promo: "FLAT10" })).body.amount).toBe(39);
+    const third = (await registered("promo-pay3@shop.test")).c;
+    expect((await third("POST", "/pay/promo", { code: "FLAT10" })).body.error).toMatch(/fully used/);
+
+    const listed = (await admin("GET", "/admin/promos")).body.promos.find((p) => p.code === "FLAT10");
+    expect(listed).toMatchObject({ uses: 2, paid: 0 });
+  });
+
+  it("refuses expired codes", async () => {
+    const admin = await adminC();
+    await admin("POST", "/admin/promos", { code: "OLDCODE", type: "percent", value: 10, plans: ["monthly"], validUntil: "2020-01-01T00:00:00Z" });
+    const { c } = await registered("promo-old@shop.test");
+    expect((await c("POST", "/pay/promo", { code: "OLDCODE" })).body.error).toMatch(/expired/);
+  });
+});

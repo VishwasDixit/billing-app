@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { get, post, put, api } from "../lib/api.js";
 import { fmtDate, fmtDateTime, money } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
@@ -70,6 +70,7 @@ export default function Admin() {
   const [storage, setStorage] = useState(null);
   const [helpUnread, setHelpUnread] = useState(0);
   const [manageId, setManageId] = useState(null);
+  const [focusDelete, setFocusDelete] = useState(false);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("new");
@@ -114,11 +115,13 @@ export default function Admin() {
     <div className="page">
       <div className="page-head">
         <h1>Admin</h1>
+        <div className="admin-tabs">
         <Seg
           value={tab}
           onChange={setTab}
-          options={[["shops", `Shops (${shops.length})`], ["payments", `Payments${pending.length ? ` (${pending.length} new)` : ""}`], ["reminders", "Reminders"], ["help", `Help${helpUnread ? ` (${helpUnread} new)` : ""}`]]}
+          options={[["shops", `Shops (${shops.length})`], ["payments", `Payments${pending.length ? ` (${pending.length} new)` : ""}`], ["promos", "Promo codes"], ["reminders", "Reminders"], ["help", `Help${helpUnread ? ` (${helpUnread} new)` : ""}`]]}
         />
+        </div>
       </div>
 
       <div className="stats admin-stats">
@@ -172,7 +175,7 @@ export default function Admin() {
           <div className="shop-list">
             {visible.map((s) => (
               <div key={s.id} className={"card shop-row" + (s.blocked ? " is-blocked" : "")}>
-                <button className="shop-main" onClick={() => setManageId(s.id)}>
+                <button className="shop-main" onClick={() => (setFocusDelete(false), setManageId(s.id))}>
                   <div className="shop-title">
                     <b>{s.name}</b> <StatusTag shop={s} />
                     {s.prices.custom && <span className="tag warn">₹{s.prices.monthly}/m · ₹{s.prices.yearly}/y</span>}
@@ -186,7 +189,12 @@ export default function Admin() {
                 <div className="shop-actions">
                   {s.owner?.phone && <a className="btn btn-sm" href={`tel:${digits(s.owner.phone)}`} title="Call">📞</a>}
                   {waLink(s.owner?.phone) && <a className="btn btn-sm" href={waLink(s.owner.phone)} target="_blank" rel="noopener noreferrer" title="WhatsApp">💬</a>}
-                  <button className="btn btn-sm btn-primary" onClick={() => setManageId(s.id)}>Manage</button>
+                  <button className="btn btn-sm btn-primary" onClick={() => (setFocusDelete(false), setManageId(s.id))}>Manage</button>
+                  {s.status.state !== "admin" && (
+                    <button className="btn btn-sm btn-danger" title="Delete shop" aria-label={`Delete ${s.name}`} onClick={() => (setFocusDelete(true), setManageId(s.id))}>
+                      🗑️
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -215,7 +223,7 @@ export default function Admin() {
                   <tr key={p.id}>
                     <td>{fmtDateTime(p.createdAt)}</td>
                     <td><button className="link-btn" onClick={() => (setTab("shops"), setManageId(p.shopId))}>{p.shopName}</button></td>
-                    <td>{p.plan} · ₹{p.amount}</td>
+                    <td>{p.plan} · ₹{p.amount}{p.promoCode && <span className="tag good" style={{ marginLeft: 6 }} title={`₹${p.promoOff} off`}>{p.promoCode}</span>}</td>
                     <td>{p.method === "upi" ? <>UPI <code>{p.utr}</code></> : p.method === "link" ? <>Razorpay link <code>{p.utr}</code></> : "Razorpay online"}</td>
                     <td>
                       <span className={"tag " + (p.status === "approved" ? "good" : p.status === "pending" ? "warn" : "bad")}>{p.approvedBy === "razorpay-auto" ? "auto-approved" : p.status}</span>
@@ -256,11 +264,13 @@ export default function Admin() {
         </>
       )}
 
+      {tab === "promos" && <Promos />}
+
       {tab === "help" && <AdminHelp onUnread={setHelpUnread} onOpenShop={(id) => (setTab("shops"), setManageId(id))} />}
 
       {tab === "reminders" && <Reminders onOpenShop={(id) => (setTab("shops"), setManageId(id))} />}
 
-      {manage && <ManageShop shop={manage} onClose={() => setManageId(null)} onDone={load} onDeleted={() => (setManageId(null), load())} />}
+      {manage && <ManageShop shop={manage} focusDelete={focusDelete} onClose={() => setManageId(null)} onDone={load} onDeleted={() => (setManageId(null), load())} />}
     </div>
   );
 }
@@ -286,6 +296,131 @@ function StorageMeter({ s }) {
           Upgrade the database in MongoDB Atlas (then set DB_LIMIT_MB in Vercel to the new size).
         </div>
       )}
+    </div>
+  );
+}
+
+const EMPTY_PROMO = { code: "", type: "percent", value: 20, plans: ["monthly", "yearly"], maxUses: "", onePerShop: true, validUntil: "", note: "", active: true };
+
+// Promo codes shops can enter on the Plans page.
+function Promos() {
+  const toast = useToast();
+  const [list, setList] = useState(null);
+  const [form, setForm] = useState(null); // { ...promo, editing }
+  const { busy, error, run } = useAction();
+  useEffect(() => {
+    run(async () => setList((await get("/admin/promos")).promos));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const body = (f) => ({
+    code: f.code,
+    type: f.type,
+    value: Number(f.value),
+    plans: f.plans,
+    maxUses: f.maxUses ? Number(f.maxUses) : null,
+    onePerShop: f.onePerShop,
+    validUntil: f.validUntil ? new Date(f.validUntil + "T23:59:59").toISOString() : null,
+    note: f.note,
+    active: f.active,
+  });
+  const save = (e) => {
+    e.preventDefault();
+    run(async () => {
+      const r = form.editing ? await put(`/admin/promos/${form.code}`, body(form)) : await post("/admin/promos", body(form));
+      setList(r.promos);
+      toast(form.editing ? `${form.code} updated` : `${form.code.toUpperCase()} created`);
+      setForm(null);
+    });
+  };
+  const toggle = (p) => run(async () => setList((await put(`/admin/promos/${p.code}`, { ...p, active: !p.active, validUntil: p.validUntil || null })).promos));
+  const remove = (p) =>
+    run(async () => {
+      if (!confirm(`Delete ${p.code}? Shops can't use it any more (past payments keep it).`)) return;
+      setList((await api(`/admin/promos/${p.code}`, { method: "DELETE" })).promos);
+    });
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const togglePlan = (id) => set("plans", form.plans.includes(id) ? form.plans.filter((x) => x !== id) : [...form.plans, id]);
+  const preview = form ? (form.type === "percent" ? [49, 400].map((a) => a - Math.round((a * (Number(form.value) || 0)) / 100)) : [49, 400].map((a) => Math.max(1, a - (Number(form.value) || 0)))) : [];
+
+  return (
+    <div className="stack">
+      <div className="btn-row">
+        <button className="btn btn-primary" onClick={() => setForm({ ...EMPTY_PROMO })}>+ New promo code</button>
+      </div>
+      {error && !form && <div className="error">{error}</div>}
+      {form && (
+        <form className="card stack" onSubmit={save}>
+          <h2 style={{ margin: 0 }}>{form.editing ? `Edit ${form.code}` : "New promo code"}</h2>
+          <div className="grid2">
+            <Field label="Code" hint="Shops type this on the Plans page.">
+              <input required disabled={form.editing} value={form.code} onChange={(e) => set("code", e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ""))} placeholder="DIWALI20" maxLength={20} />
+            </Field>
+            <Field label="Discount">
+              <div style={{ display: "flex", gap: 8 }}>
+                <input className="input" type="number" min="1" max={form.type === "percent" ? 99 : 10000} required value={form.value} onChange={(e) => set("value", e.target.value)} />
+                <Seg value={form.type} onChange={(v) => set("type", v)} options={[["percent", "%"], ["flat", "₹ off"]]} />
+              </div>
+            </Field>
+          </div>
+          <div className="field">
+            Works on
+            <div className="btn-row">
+              <label className="check"><input type="checkbox" checked={form.plans.includes("monthly")} onChange={() => togglePlan("monthly")} /> Monthly</label>
+              <label className="check"><input type="checkbox" checked={form.plans.includes("yearly")} onChange={() => togglePlan("yearly")} /> Yearly</label>
+            </div>
+          </div>
+          <div className="grid2">
+            <Field label="Total uses allowed" hint="Empty = no limit">
+              <input type="number" min="1" value={form.maxUses} onChange={(e) => set("maxUses", e.target.value)} placeholder="No limit" />
+            </Field>
+            <Field label="Valid until" hint="Empty = no end date">
+              <input type="date" value={form.validUntil} onChange={(e) => set("validUntil", e.target.value)} />
+            </Field>
+          </div>
+          <label className="check"><input type="checkbox" checked={form.onePerShop} onChange={(e) => set("onePerShop", e.target.checked)} /> Each shop can use it only once</label>
+          <Field label="Note (only you see this)"><input maxLength={120} value={form.note} onChange={(e) => set("note", e.target.value)} placeholder="e.g. Diwali offer for Lucknow shops" /></Field>
+          <p className="hint" style={{ margin: 0 }}>At standard prices: Monthly ₹49 → <b>₹{preview[0]}</b>, Yearly ₹400 → <b>₹{preview[1]}</b>. Special shop prices get the same discount.</p>
+          {error && <div className="error">{error}</div>}
+          <div className="btn-row">
+            <button type="button" className="btn" onClick={() => setForm(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy || !form.plans.length}>{form.editing ? "Save" : "Create code"}</button>
+          </div>
+        </form>
+      )}
+
+      <div className="shop-list">
+        {list?.map((p) => (
+          <div key={p.code} className={"card shop-row" + (p.active ? "" : " is-off")}>
+            <div className="shop-main" style={{ cursor: "default" }}>
+              <div className="shop-title">
+                <b className="promo-code">{p.code}</b>
+                <span className="tag good">{p.label}</span>
+                {!p.active && <span className="tag">off</span>}
+                {p.validUntil && new Date(p.validUntil) < new Date() && <span className="tag bad">expired</span>}
+              </div>
+              <div className="small">
+                Used {p.uses}{p.maxUses ? ` of ${p.maxUses}` : ""} · {p.paid} paid · ₹{p.discountGiven} discount given
+                {p.onePerShop ? " · once per shop" : ""}
+                {p.validUntil ? ` · till ${fmtDate(p.validUntil)}` : ""}
+              </div>
+              {p.note && <div className="small muted">{p.note}</div>}
+            </div>
+            <div className="shop-actions">
+              <button className="btn btn-sm" disabled={busy} onClick={() => toggle(p)}>{p.active ? "Turn off" : "Turn on"}</button>
+              <button
+                className="btn btn-sm"
+                onClick={() =>
+                  setForm({ ...p, editing: true, maxUses: p.maxUses || "", validUntil: p.validUntil ? new Date(p.validUntil).toISOString().slice(0, 10) : "" })
+                }
+              >
+                Edit
+              </button>
+              <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => remove(p)} aria-label={`Delete ${p.code}`}>🗑️</button>
+            </div>
+          </div>
+        ))}
+        {list?.length === 0 && !form && <div className="empty">No promo codes yet. Create one for a festival offer or a friend's shop.</div>}
+      </div>
     </div>
   );
 }
@@ -467,7 +602,11 @@ function Reminders({ onOpenShop }) {
   );
 }
 
-function ManageShop({ shop, onClose, onDone, onDeleted }) {
+function ManageShop({ shop, focusDelete, onClose, onDone, onDeleted }) {
+  const dangerRef = useRef(null);
+  useEffect(() => {
+    if (focusDelete) setTimeout(() => dangerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+  }, [focusDelete]);
   const toast = useToast();
   const [days, setDays] = useState(30);
   const [monthly, setMonthly] = useState(shop.prices.monthly);
@@ -585,7 +724,7 @@ function ManageShop({ shop, onClose, onDone, onDeleted }) {
         )}
 
         {!isAdminShop && (
-          <section className="danger-zone">
+          <section className="danger-zone on" ref={dangerRef}>
             <h4>Danger zone · Delete shop</h4>
             <p className="small muted" style={{ margin: 0 }}>
               Permanently deletes the shop, its owner login, menu, photos, {shop.bills} bills, udhar, expenses and payments. This can't be undone.

@@ -23,6 +23,18 @@ export default function Plans() {
   const [history, setHistory] = useState([]);
   const [upiPlan, setUpiPlan] = useState(null);
   const [linkPlan, setLinkPlan] = useState(null);
+  const [promoInput, setPromoInput] = useState("");
+  const [promo, setPromo] = useState(null); // { code, label, plans } once applied
+  const promoAction = useAction();
+  const plans = promo?.plans || cfg?.plans || [];
+  const applyPromo = (e) => {
+    e.preventDefault();
+    promoAction.run(async () => {
+      const r = await post("/pay/promo", { code: promoInput });
+      setPromo(r);
+      toast(`${r.code} applied: ${r.label}`);
+    });
+  };
   const { busy, error, run } = useAction();
   const access = accessState(shop);
 
@@ -51,7 +63,7 @@ export default function Plans() {
   const payOnline = (plan) =>
     run(async () => {
       await loadRazorpay();
-      const order = await post("/pay/razorpay/order", { plan: plan.id });
+      const order = await post("/pay/razorpay/order", { plan: plan.id, ...(plan.promo && { promo: plan.promo.code }) });
       await new Promise((resolve, reject) => {
         const rzp = new window.Razorpay({
           key: order.keyId,
@@ -96,21 +108,48 @@ export default function Plans() {
 
       {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
 
+      {cfg && access.state !== "admin" && (
+        <form className="card promo-box" onSubmit={applyPromo}>
+          {promo ? (
+            <div className="promo-applied">
+              <span>🎉 <b>{promo.code}</b> applied: {promo.label}</span>
+              <button type="button" className="link-btn" onClick={() => (setPromo(null), setPromoInput(""))}>Remove</button>
+            </div>
+          ) : (
+            <>
+              <label htmlFor="promo" className="small">Have a promo code?</label>
+              <div className="promo-row">
+                <input id="promo" className="input" value={promoInput} onChange={(e) => setPromoInput(e.target.value.toUpperCase().replace(/\s/g, ""))} placeholder="e.g. DIWALI20" maxLength={20} autoCapitalize="characters" />
+                <button className="btn" disabled={promoAction.busy || promoInput.length < 3}>{promoAction.busy ? "Checking…" : "Apply"}</button>
+              </div>
+              {promoAction.error && <div className="error small">{promoAction.error}</div>}
+            </>
+          )}
+        </form>
+      )}
+
       <div className="plans">
-        {(cfg?.plans || []).map((p) => (
+        {plans.map((p) => (
           <div key={p.id} className={"card plan" + (p.id === "yearly" ? " best" : "")}>
             <h2 style={{ marginBottom: 0 }}>{p.name}</h2>
             <div className="price">
-              {p.standardAmount > p.amount && <s className="muted" style={{ fontSize: "0.55em", marginRight: 6 }}>₹{p.standardAmount}</s>}₹{p.amount}
+              {(p.beforePromo || p.standardAmount) > p.amount && (
+                <s className="muted" style={{ fontSize: "0.55em", marginRight: 6 }}>₹{p.beforePromo || p.standardAmount}</s>
+              )}
+              ₹{p.amount}
             </div>
             <div className="muted small">
               {p.days} days
               {p.id === "yearly" && (() => {
-                const monthly = cfg.plans.find((x) => x.id === "monthly")?.amount;
+                const monthly = plans.find((x) => x.id === "monthly")?.amount;
                 const save = monthly * 12 - p.amount;
                 return save > 0 ? ` · save ₹${save} vs monthly` : "";
               })()}
-              {p.standardAmount > p.amount && <div className="tag good" style={{ display: "inline-block", marginLeft: 6 }}>Special price for you</div>}
+              {p.promo ? (
+                <div className="tag good" style={{ display: "inline-block", marginLeft: 6 }}>{p.promo.code}: you save ₹{p.promo.off}</div>
+              ) : (
+                p.standardAmount > p.amount && <div className="tag good" style={{ display: "inline-block", marginLeft: 6 }}>Special price for you</div>
+              )}
             </div>
             <div className="stack" style={{ marginTop: 14 }}>
               {cfg.razorpayKeyId && (
@@ -143,7 +182,7 @@ export default function Plans() {
                 {history.map((p) => (
                   <tr key={p.id}>
                     <td>{fmtDateTime(p.createdAt)}</td>
-                    <td>{p.plan === "yearly" ? "Yearly" : "Monthly"} · ₹{p.amount}</td>
+                    <td>{p.plan === "yearly" ? "Yearly" : "Monthly"} · ₹{p.amount}{p.promoCode && <span className="tag good" style={{ marginLeft: 6 }}>{p.promoCode}</span>}</td>
                     <td>{p.method === "upi" ? `UPI ${p.utr}` : p.method === "link" ? `Razorpay ${p.utr}` : "Online"}</td>
                     <td>
                       <span className={"tag " + (p.status === "approved" ? "good" : p.status === "pending" ? "warn" : "bad")}>
@@ -189,7 +228,7 @@ function UpiModal({ plan, upi, shopName, onClose, onSubmitted }) {
           onSubmit={(e) => {
             e.preventDefault();
             run(async () => {
-              await post("/pay/upi", { plan: plan.id, utr });
+              await post("/pay/upi", { plan: plan.id, utr, ...(plan.promo && { promo: plan.promo.code }) });
               toast("Submitted. Your plan starts as soon as the payment is confirmed.");
               onSubmitted();
               onClose();
@@ -228,7 +267,7 @@ function LinkModal({ plan, link, autoCheck, onClose, onSubmitted, onPaid }) {
           onSubmit={(e) => {
             e.preventDefault();
             run(async () => {
-              const r = await post("/pay/upi", { plan: plan.id, via: "link", utr: payId });
+              const r = await post("/pay/upi", { plan: plan.id, via: "link", utr: payId, ...(plan.promo && { promo: plan.promo.code }) });
               if (r.autoApproved) {
                 toast("Payment confirmed by Razorpay. Your plan is active ✅");
                 await onPaid();
