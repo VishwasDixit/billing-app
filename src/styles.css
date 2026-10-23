@@ -825,3 +825,15 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .salary-grid b { text-align: right; }
 .adv-chip { display: inline-flex; gap: 4px; align-items: center; margin-right: 8px; }
 .kot-recipe { margin-left: 6px; font-size: 18px; text-decoration: none; }
+
+/* ---------- Kitchen Brain ---------- */
+.brain-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.brain-sugg { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.brain-sugg:first-of-type { border-top: 0; padding-top: 0; }
+.brain-insight { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; background: var(--bg); }
+.brain-insight.warn { border-left: 3px solid var(--warn); }
+.brain-insight.good { border-left: 3px solid var(--good); }
+.brain-dishes { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 4px 12px; }
+.brain-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; }
+.brain-day { display: grid; justify-items: center; gap: 2px; }
+.brain-bar { width: 70%; max-width: 36px; border-radius: 6px 6px 2px 2px; background: var(--accent); opacity: .85; }

@@ -5,6 +5,7 @@ import { StaffBar } from "../components/StaffPin.jsx";
 import Stock from "./kitchen/Stock.jsx";
 import Recipes from "./kitchen/Recipes.jsx";
 import { Alerts, Shopping, Report } from "./kitchen/Panels.jsx";
+import Brain from "./kitchen/Brain.jsx";
 
 // Kitchen management: stock, recipes, alerts, shopping list and (owner) the kitchen report.
 export default function KitchenManage() {
@@ -16,6 +17,7 @@ export default function KitchenManage() {
     ["recipes", "📖 Recipes"],
     ["alerts", "🔔 Alerts"],
     ["shopping", "🛒 Shopping list"],
+    ["smart", "🧠 Smart"],
     ...(owner ? [["report", "📊 Report"]] : []),
   ];
   const tab = tabs.some(([k]) => k === params.get("tab")) ? params.get("tab") : "stock";
@@ -42,6 +44,7 @@ export default function KitchenManage() {
       {tab === "recipes" && <Recipes />}
       {tab === "alerts" && <Alerts onCount={setAlertCount} />}
       {tab === "shopping" && <Shopping />}
+      {tab === "smart" && <Brain owner={owner} />}
       {tab === "report" && owner && <Report />}
     </div>
   );

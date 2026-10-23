@@ -51,6 +51,8 @@ async function ensureIndexes(db) {
     db.collection("stockMoves").createIndex({ shopId: 1, at: -1 }),
     db.collection("stockMoves").createIndex({ shopId: 1, type: 1, ingredientId: 1, at: -1 }),
     db.collection("kitchenAlerts").createIndex({ shopId: 1, key: 1, resolvedAt: 1 }),
+    db.collection("brainModels").createIndex({ shopId: 1, kind: 1 }),
+    db.collection("brainSuggestions").createIndex({ shopId: 1, key: 1 }, { unique: true }),
     db.collection("staff").createIndex({ shopId: 1, active: 1 }),
     db.collection("attendance").createIndex({ shopId: 1, staffId: 1, date: 1 }, { unique: true }),
     db.collection("attendance").createIndex({ shopId: 1, date: 1 }),

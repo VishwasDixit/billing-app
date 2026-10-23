@@ -9,6 +9,7 @@ import {
   publicIngredient, applyMove, checkExpiry, checkLowStock, shoppingList, kitchenReport, plateCost, dailyUse, now,
 } from "../kitchen/inventory.js";
 import { dayRange } from "./analytics.js";
+import { brainSummary, applySuggestion } from "../brain/index.js";
 
 const K = { kitchen: true };
 const oid = (id, what = "Item") => {
@@ -387,6 +388,39 @@ export default [
       ownerOnly(ctx);
       const { start, end, from, to } = dayRange(ctx.query.from, ctx.query.to);
       return { from, to, ...(await kitchenReport(ctx.db, ctx.shop._id, start, end)) };
+    },
+    K,
+  ],
+
+  // ---------- Kitchen Brain (learned forecast, reorder levels, recipe fixes, insights) ----------
+  [
+    "GET",
+    "/kitchen/brain",
+    async ({ db, shop, user, query }) => {
+      const owner = user.role !== "kitchen";
+      const b = await brainSummary(db, shop._id, { fresh: owner && query.fresh === "1" });
+      if (owner) return b;
+      // The kitchen phone gets the cooking plan, not money.
+      const { insights, suggestions, ...rest } = b;
+      return { ...rest, specials: b.specials.map(({ value, ...x }) => x), insights: [], suggestions: [] };
+    },
+    K,
+  ],
+  [
+    "POST",
+    "/kitchen/brain/suggestions/:id/:action",
+    async (ctx) => {
+      ownerOnly(ctx);
+      const { db, shop, params } = ctx;
+      if (!ObjectId.isValid(params.id)) throw new HttpError(404, "Suggestion not found.");
+      if (params.action === "apply") {
+        const r = await applySuggestion(db, shop._id, params.id);
+        if (!r.ok) throw new HttpError(404, "This suggestion was already answered.");
+        return r;
+      }
+      if (params.action !== "dismiss") throw new HttpError(404, "Not found.");
+      await db.collection("brainSuggestions").updateOne({ _id: new ObjectId(params.id), shopId: shop._id }, { $set: { status: "dismissed", updatedAt: now() } });
+      return { ok: true };
     },
     K,
   ],

@@ -192,15 +192,23 @@ export async function dailyUse(db, shopId, ids, days = 14) {
   );
 }
 
-// Low / out of stock: below the minimum, or less than ~1.5 days left at the usual pace.
+// The Kitchen Brain's daily pace (from tomorrow's forecast) when it's fresh; else the recent average.
+function paceOf(ing, recent) {
+  const b = ing.brain;
+  return b && b.perDay > 0 && now() - new Date(b.learnedAt) < 2 * DAY ? b.perDay : recent;
+}
+// Learned reorder level (supplier delay + busy-day margin) once there are ~2 weeks of data.
+const reorderAt = (ing) => Math.max(ing.minStock || 0, ing.brain?.reorderAt || 0);
+
+// Low / out of stock: below the minimum (or learned reorder level), or less than ~1.5 days left.
 export async function checkLowStock(db, shopId, ids) {
   const ings = await db.collection("ingredients").find({ shopId, _id: { $in: ids }, tracked: true }).toArray();
   const use = await dailyUse(db, shopId, ings.map((i) => i._id));
   for (const ing of ings) {
-    const perDay = use.get(String(ing._id)) || 0;
+    const perDay = paceOf(ing, use.get(String(ing._id)) || 0);
     const daysLeft = perDay > 0 ? ing.stock / perDay : Infinity;
     const out = ing.stock <= 0;
-    const low = out || (ing.minStock > 0 && ing.stock <= ing.minStock) || daysLeft < 1.5;
+    const low = out || (reorderAt(ing) > 0 && ing.stock <= reorderAt(ing)) || daysLeft < Math.max(1.5, ing.brain?.leadDays || 0);
     const key = `stock:${String(ing._id)}`;
     if (!low) {
       await db.collection("kitchenAlerts").updateMany({ shopId, key, resolvedAt: null }, { $set: { resolvedAt: now() } });
@@ -221,9 +229,10 @@ export async function checkLowStock(db, shopId, ids) {
 
 // How much to buy: enough for `coverDays` at the usual pace plus the minimum, rounded nicely.
 export function suggestQty(ing, perDay, coverDays = 3) {
-  const target = perDay * coverDays + (ing.minStock || 0);
-  let need = Math.max(target - Math.max(ing.stock, 0), ing.minStock || 0, 0);
-  if (!(need > 0)) need = perDay > 0 ? perDay * coverDays : ing.minStock || 1;
+  const min = reorderAt(ing);
+  const target = perDay * coverDays + min;
+  let need = Math.max(target - Math.max(ing.stock, 0), min, 0);
+  if (!(need > 0)) need = perDay > 0 ? perDay * coverDays : min || 1;
   const step = ["g", "ml"].includes(ing.unit) ? 100 : ["pcs", "packet"].includes(ing.unit) ? 1 : need < 2 ? 0.25 : need < 10 ? 0.5 : 1;
   return Math.ceil(need / step) * step;
 }
@@ -260,9 +269,9 @@ export async function shoppingList(db, shopId, { coverDays = 3 } = {}) {
   const use = await dailyUse(db, shopId, null);
   const list = [];
   for (const ing of ings) {
-    const perDay = use.get(String(ing._id)) || 0;
+    const perDay = paceOf(ing, use.get(String(ing._id)) || 0);
     const daysLeft = perDay > 0 ? ing.stock / perDay : Infinity;
-    const below = ing.stock <= 0 || (ing.minStock > 0 && ing.stock <= ing.minStock) || daysLeft < coverDays;
+    const below = ing.stock <= 0 || (reorderAt(ing) > 0 && ing.stock <= reorderAt(ing)) || daysLeft < coverDays;
     if (!below) continue;
     const qty = suggestQty(ing, perDay, coverDays);
     list.push({
