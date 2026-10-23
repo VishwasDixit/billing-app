@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { useOrders, allOrders, setOrderStatus, beep } from "../lib/orders.js";
 import { useToast } from "../components/ui.jsx";
 import { useOrderPolling, useKotPrinter, ago } from "./Orders.jsx";
+import { RecipeView } from "./kitchen/Recipes.jsx";
+import { useApp } from "../lib/store.jsx";
 
 // Kitchen display: accepted orders move To cook → Cooking → Ready. Big text for a tablet on the wall.
 const COLUMNS = [
@@ -15,6 +17,8 @@ export default function Kitchen() {
   const st = useOrders();
   const toast = useToast();
   const kot = useKotPrinter();
+  const { user } = useApp();
+  const [recipe, setRecipe] = useState(null);
   const [, tick] = useState(0);
   useOrderPolling(5000);
   // Re-render every 30 s so the "minutes ago" counters move.
@@ -47,7 +51,9 @@ export default function Kitchen() {
         <div className="btn-row">
           {!st.online && <span className="tag warn">Offline · showing saved orders</span>}
           <button className="btn btn-sm" onClick={() => document.documentElement.requestFullscreen?.().catch(() => {})}>Full screen</button>
+          <Link className="btn btn-sm" to="/kitchen-manage">🥫 Stock</Link>
           <Link className="btn btn-sm" to="/orders">Tables</Link>
+          {user.role !== "kitchen" && <Link className="btn btn-sm" to="/">✕ Close</Link>}
         </div>
       </div>
       <div className="kitchen-cols">
@@ -70,6 +76,7 @@ export default function Kitchen() {
                       {o.items.map((i, k) => (
                         <li key={k}>
                           <b>{i.qty}×</b> {i.name}{i.variant ? ` (${i.variant})` : ""}
+                          {i.itemId && <button className="link-btn kot-recipe" onClick={() => setRecipe(i)} aria-label={`Recipe for ${i.name}`}>📖</button>}
                           {i.note && <div className="kot-note">↳ {i.note}</div>}
                         </li>
                       ))}
@@ -86,6 +93,7 @@ export default function Kitchen() {
           );
         })}
       </div>
+      {recipe && <RecipeView itemId={recipe.itemId} variant={recipe.variant} qty={recipe.qty} onClose={() => setRecipe(null)} />}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { HttpError } from "../http.js";
 import { runReminders } from "../reminders.js";
+import { dailyKitchenCheck } from "../kitchen/daily.js";
 
 // Vercel Cron calls these with "Authorization: Bearer <CRON_SECRET>".
 function assertCron(req) {
@@ -17,7 +18,8 @@ export default [
     async ({ db, req }) => {
       assertCron(req);
       const run = await runReminders(db, { trigger: "auto" });
-      return { sent: run.sent, failed: run.failed, skipped: run.skipped };
+      const kitchen = await dailyKitchenCheck(db).catch((err) => ({ error: String(err?.message || err) }));
+      return { sent: run.sent, failed: run.failed, skipped: run.skipped, kitchen };
     },
     { auth: false },
   ],

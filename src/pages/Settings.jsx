@@ -177,6 +177,8 @@ export default function Settings() {
         <div className="cards">
           <TablesCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} access={access} />
 
+          {user.role !== "admin" && <KitchenStaffCard />}
+
           <section className="card stack">
             <h2>Appearance</h2>
             <div className="field">
@@ -463,6 +465,46 @@ function IPhonePrintHelp() {
       </div>
       <p className="hint" style={{ margin: "8px 0 0" }}>Until then, use <b>PDF</b> on the bill to share it on WhatsApp.</p>
     </div>
+  );
+}
+
+// Staff, kitchen stock, and turning a phone into a kitchen-only phone.
+function KitchenStaffCard() {
+  const { completeLogin } = useApp();
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const { busy, error, run } = useAction();
+  return (
+    <section className="card stack">
+      <h2>Kitchen &amp; staff</h2>
+      <div className="btn-row">
+        <Link className="btn btn-sm" to="/staff">👥 Staff, attendance &amp; salary</Link>
+        <Link className="btn btn-sm" to="/kitchen-manage">🥫 Kitchen stock &amp; recipes</Link>
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>
+        Make this phone a <b>kitchen phone</b>: cooks see only the order board, kitchen stock, recipes and alerts, never sales, bills or money. Each cook signs in with their PIN.
+      </p>
+      {!open ? (
+        <button className="btn btn-sm" style={{ justifySelf: "start" }} onClick={() => setOpen(true)}>🍳 Make this a kitchen phone</button>
+      ) : (
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(async () => completeLogin(await post("/auth/kitchen-mode", { password })));
+          }}
+        >
+          <Field label="Your password (to confirm)" hint="To leave kitchen mode later, you'll log in again with your email and password.">
+            <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+          {error && <div className="error">{error}</div>}
+          <div className="btn-row">
+            <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn btn-sm btn-primary" disabled={busy}>Switch to kitchen phone</button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 

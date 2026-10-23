@@ -110,7 +110,7 @@ export default [
           await db.collection("bills").insertOne(doc);
           await markOrdersBilled(db, shop._id, b.orderIds, b.clientId);
           // Counter bills take stock now; table bills already did when their orders went to the kitchen.
-          if (!b.orderIds?.length && b.status !== "void") await takeStock(db, shop._id, b.items);
+          if (!b.orderIds?.length && b.status !== "void") await takeStock(db, shop._id, b.items, { billId: b.clientId });
           results.push({ clientId: b.clientId, ok: true });
         } catch (err) {
           if (err.code === 11000) results.push({ clientId: b.clientId, ok: true, duplicate: true });

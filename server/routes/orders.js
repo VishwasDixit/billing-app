@@ -282,9 +282,10 @@ export default [
         serverTime: new Date(),
       };
     },
+    { kitchen: true },
   ],
   // Just the count of QR orders waiting, for the badge and sound on every screen.
-  ["GET", "/orders/summary", async ({ db, shop }) => ({ waiting: await db.collection("orders").countDocuments({ shopId: shop._id, status: "new" }) })],
+  ["GET", "/orders/summary", async ({ db, shop }) => ({ waiting: await db.collection("orders").countDocuments({ shopId: shop._id, status: "new" }) }), { kitchen: true }],
   // Staff orders from the device queue (idempotent by clientId).
   [
     "POST",
@@ -311,7 +312,7 @@ export default [
             acceptedAt: o.createdAt,
             updatedAt: now,
           });
-          await takeStock(db, shop._id, o.items);
+          await takeStock(db, shop._id, o.items, { orderId: o.clientId });
           results.push({ clientId: o.clientId, ok: true });
         } catch (err) {
           if (err.code === 11000) results.push({ clientId: o.clientId, ok: true, duplicate: true });
@@ -320,6 +321,7 @@ export default [
       }
       return { results };
     },
+    { kitchen: true },
   ],
   [
     "POST",
@@ -341,7 +343,7 @@ export default [
         { $set: { status, updatedAt: now, [`${status}At`]: now, [`${status}By`]: user.name, ...(status === "rejected" && { rejectReason: reason }) } },
         { returnDocument: "after" }
       );
-      if (o && status === "accepted") await takeStock(db, shop._id, o.items);
+      if (o && status === "accepted") await takeStock(db, shop._id, o.items, { orderId: o.clientId });
       if (!o) {
         const cur = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id }, { projection: { status: 1 } });
         if (!cur) throw new HttpError(404, "Order not found.");
@@ -349,6 +351,7 @@ export default [
       }
       return publicOrder(o);
     },
+    { kitchen: true },
   ],
 ];
 

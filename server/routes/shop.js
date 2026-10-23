@@ -161,6 +161,7 @@ export default [
       await refreshDailyStock(db, shop._id);
       return (await db.collection("menuItems").find({ shopId: shop._id }).sort({ sort: 1 }).toArray()).map(publicItem);
     },
+    { kitchen: true },
   ],
   // Quick stock change: Sold out switch, quantity left, daily amount.
   [
@@ -187,6 +188,7 @@ export default [
       if (!updated) throw new HttpError(404, "Menu item not found.");
       return publicItem(updated);
     },
+    { kitchen: true },
   ],
   [
     "POST",
@@ -323,5 +325,6 @@ export default [
         .findOneAndUpdate({ _id: shop._id }, { $inc: { deviceSeq: 1 } }, { returnDocument: "after" });
       return { code: deviceCode(updated.deviceSeq) };
     },
+    { kitchen: true },
   ],
 ];

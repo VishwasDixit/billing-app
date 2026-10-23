@@ -3,7 +3,7 @@ import { razorpayKeyStatus } from "./routes/pay.js";
 import { emailOtpEnabled, verifyGmail } from "./otp/mailer.js";
 import { googleClientId } from "./google.js";
 import { HttpError, readBody, send, sendError } from "./http.js";
-import { requireUser, jwtSecretOk, clearCookie } from "./auth.js";
+import { requireUser, jwtSecretOk, clearCookie, readStaffToken } from "./auth.js";
 import { subscriptionStatus, blockedMessage, loadPlanSettings } from "./subscription.js";
 import authRoutes from "./routes/auth.js";
 import shopRoutes from "./routes/shop.js";
@@ -17,6 +17,8 @@ import cronRoutes from "./routes/cron.js";
 import imageRoutes, { pexelsReady } from "./routes/images.js";
 import helpRoutes from "./routes/help.js";
 import orderRoutes from "./routes/orders.js";
+import kitchenRoutes from "./routes/kitchen.js";
+import staffRoutes from "./routes/staff.js";
 
 // Each route: [method, "/path/:param", handler, { auth = true, admin = false }]
 const ROUTES = [
@@ -32,12 +34,14 @@ const ROUTES = [
   ...imageRoutes,
   ...helpRoutes,
   ...orderRoutes,
+  ...kitchenRoutes,
+  ...staffRoutes,
 ].map(([method, path, handler, opts = {}]) => {
   const keys = [];
   const re = new RegExp(
     "^" + path.replace(/:(\w+)/g, (_, k) => (keys.push(k), "([^/]+)")) + "/?$"
   );
-  return { method, re, keys, handler, auth: opts.auth !== false, admin: !!opts.admin };
+  return { method, re, keys, handler, auth: opts.auth !== false, admin: !!opts.admin, kitchen: !!opts.kitchen };
 });
 
 export async function handle(req, res) {
@@ -87,6 +91,7 @@ export async function handle(req, res) {
     if (match.route.auth) {
       ctx.user = await requireUser(req, db);
       if (match.route.admin && ctx.user.role !== "admin") throw new HttpError(403, "Admins only.");
+      if (ctx.user.role === "kitchen" && !match.route.kitchen) throw new HttpError(403, "This isn't available on the kitchen phone. Ask the owner.", { code: "KITCHEN_ONLY" });
       // Without the big pictures (logo, QR): most requests don't need them.
       ctx.shop = await db.collection("shops").findOne({ _id: ctx.user.shopId }, { projection: { logo: 0, qrImage: 0 } });
       if (!ctx.shop) throw new HttpError(401, "Shop not found. Please log in again.");
@@ -95,6 +100,7 @@ export async function handle(req, res) {
         throw new HttpError(401, blockedMessage(ctx.shop), { code: "BLOCKED" });
       }
       ctx.status = subscriptionStatus(ctx.shop, { isAdmin: ctx.user.role === "admin" });
+      ctx.staff = readStaffToken(req, ctx.shop._id); // who on the shared phone (PIN), if anyone
     }
 
     const out = await match.route.handler(ctx);

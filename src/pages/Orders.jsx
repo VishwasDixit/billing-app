@@ -50,7 +50,8 @@ export function useKotPrinter() {
 }
 
 export default function Orders() {
-  const { shop } = useApp();
+  const { shop, user } = useApp();
+  const isKitchen = user.role === "kitchen";
   const st = useOrders();
   const toast = useToast();
   const nav = useNavigate();
@@ -101,7 +102,7 @@ export default function Orders() {
             <li>Open the <b>Kitchen screen</b> on a tablet, and bill each table at the end.</li>
           </ol>
           <div className="btn-row">
-            <Link className="btn btn-primary" to="/settings#tables">Set up tables</Link>
+            {!isKitchen && <Link className="btn btn-primary" to="/settings#tables">Set up tables</Link>}
             <Link className="btn" to="/kitchen">🍳 Kitchen screen</Link>
           </div>
         </div>
@@ -209,7 +210,7 @@ export default function Orders() {
           onClose={() => setTableId(null)}
           onAdd={() => (setAdding(openTable), setTableId(null))}
           onReprint={(o) => kot(o, { force: true, reprint: true })}
-          onBill={(list) => {
+          onBill={isKitchen ? null : (list) => {
             const lines = new Map();
             for (const o of list)
               for (const i of o.items) {
@@ -285,9 +286,11 @@ function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
         ))}
         <div className="btn-row" style={{ justifyContent: "space-between" }}>
           <button className="btn" onClick={onAdd}>+ Add order</button>
-          <button className="btn btn-primary" disabled={!orders.length} onClick={() => onBill(orders)}>
-            Bill {table.name} · {money(total, cur)}
-          </button>
+          {onBill && (
+            <button className="btn btn-primary" disabled={!orders.length} onClick={() => onBill(orders)}>
+              Bill {table.name} · {money(total, cur)}
+            </button>
+          )}
         </div>
       </div>
     </Modal>

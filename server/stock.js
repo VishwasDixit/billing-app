@@ -2,6 +2,7 @@
 // that goes down as dishes are ordered (Sold out at 0) and resets to a daily amount each day.
 // Table orders count when they reach the kitchen; counter bills count when they upload.
 import { z } from "zod";
+import { useIngredients } from "./kitchen/inventory.js";
 
 let clock = () => new Date();
 export function setStockClock(fn) {
@@ -25,7 +26,9 @@ export async function refreshDailyStock(db, shopId) {
 }
 
 // Takes ordered quantities off counted items; an item that reaches 0 becomes Sold out.
-export async function takeStock(db, shopId, items) {
+// Also uses up kitchen ingredients by each dish's recipe.
+export async function takeStock(db, shopId, items, ref = {}) {
+  await useIngredients(db, shopId, items, ref);
   const byItem = new Map();
   for (const i of items || []) {
     if (!i.itemId || !/^[a-f0-9]{24}$/.test(String(i.itemId))) continue;

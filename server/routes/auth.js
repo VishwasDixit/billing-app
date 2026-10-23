@@ -272,8 +272,21 @@ export default [
     },
     { auth: false },
   ],
-  ["POST", "/auth/logout", async () => respond(200, { ok: true }, { "Set-Cookie": clearCookie() }), { auth: false }],
-  ["GET", "/auth/me", async ({ db, user }) => sessionPayload(db, user)],
+  ["POST", "/auth/logout", async () => respond(200, { ok: true }, { "Set-Cookie": clearCookie() }), { auth: false, kitchen: true }],
+  ["GET", "/auth/me", async ({ db, user }) => sessionPayload(db, user), { kitchen: true }],
+  // Turns this device into a kitchen phone: kitchen screens only, no sales, money or settings.
+  // Leaving it needs the owner's normal log in.
+  [
+    "POST",
+    "/auth/kitchen-mode",
+    async ({ db, user, body }) => {
+      if (user.role === "kitchen") throw new HttpError(400, "This phone is already a kitchen phone.");
+      const { password } = z.object({ password: z.string().min(1, "enter your password") }).parse(body);
+      if (!(await checkPassword(password, user.passwordHash))) throw new HttpError(400, "Wrong password.");
+      const payload = await sessionPayload(db, user);
+      return respond(200, { ...payload, user: { ...payload.user, role: "kitchen" } }, { "Set-Cookie": sessionCookie(user, { kitchen: true }) });
+    },
+  ],
   [
     "POST",
     "/auth/password",

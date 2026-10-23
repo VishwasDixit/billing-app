@@ -9,13 +9,18 @@ export class ApiError extends Error {
   }
 }
 
+// On a shared kitchen phone, the worker who entered their PIN (sent with every request).
+let staffToken = null;
+export const setStaffToken = (t) => (staffToken = t || null);
+
 export async function api(path, { method = "GET", body, signal } = {}) {
   let res;
+  const headers = { ...(body !== undefined && { "Content-Type": "application/json" }), ...(staffToken && { "x-staff-token": staffToken }) };
   try {
     res = await fetch("/api" + path, {
       method,
       credentials: "same-origin",
-      headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal,
     });

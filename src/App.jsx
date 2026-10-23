@@ -21,9 +21,13 @@ import Orders from "./pages/Orders.jsx";
 import Kitchen from "./pages/Kitchen.jsx";
 import { initOrders, refreshOrders, useOrders, beep } from "./lib/orders.js";
 import { useToast } from "./components/ui.jsx";
+import { signOutStaff } from "./lib/kitchen.js";
 import { get } from "./lib/api.js";
+import { StaffGate } from "./components/StaffPin.jsx";
 
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx")); // charts load on first visit
+const KitchenManage = lazy(() => import("./pages/KitchenManage.jsx"));
+const Staff = lazy(() => import("./pages/Staff.jsx"));
 
 export default function App() {
   const { session, booting } = useApp();
@@ -49,6 +53,15 @@ export default function App() {
         </Routes>
       ) : (
         <Shell>
+          {session.user.role === "kitchen" ? (
+            // A kitchen phone: only the kitchen screens, never sales or money.
+            <Routes>
+              <Route path="/kitchen" element={<Kitchen />} />
+              <Route path="/kitchen-manage" element={<KitchenManage />} />
+              <Route path="/orders" element={<Orders />} />
+              <Route path="*" element={<Navigate to="/kitchen" replace />} />
+            </Routes>
+          ) : (
           <Routes>
             <Route path="/" element={<Billing />} />
             <Route path="/bills" element={<Bills />} />
@@ -62,9 +75,12 @@ export default function App() {
             <Route path="/help" element={<Help />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/kitchen" element={<Kitchen />} />
+            <Route path="/kitchen-manage" element={<KitchenManage />} />
+            <Route path="/staff" element={<Staff />} />
             {session.user.role === "admin" && <Route path="/admin" element={<Admin />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          )}
         </Shell>
       )}
     </ToastProvider>
@@ -82,6 +98,17 @@ function useHelpUnread(enabled) {
     return () => clearInterval(t);
   }, [enabled]);
   return unread;
+}
+
+// Number of open kitchen alerts (low stock, expiring, waste) for the More menu.
+function useKitchenAlerts(enabled) {
+  const loc = useLocation();
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    get("/kitchen/alerts/count").then((r) => setN(r.count), () => {});
+  }, [enabled, loc.pathname]);
+  return n;
 }
 
 // Keeps table orders fresh on every screen and rings when a QR order is waiting.
@@ -111,7 +138,17 @@ function useOrderAlerts(shop) {
 
 // Page links. `bottom` ones sit in the phone's bottom bar; the rest live in the ☰ More sheet
 // (on wide screens all `top` ones show in the top bar).
-function useNavLinks({ isAdmin, paid, waiting, helpUnread }) {
+function useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAlerts }) {
+  if (isKitchen) {
+    return [
+      { to: "/kitchen", ico: "🍳", label: "Board", bottom: true, top: true },
+      { to: "/kitchen-manage", ico: kitchenAlerts ? "🔔" : "🥫", label: kitchenAlerts ? `Kitchen (${kitchenAlerts})` : "Kitchen", bottom: true, top: true, alert: kitchenAlerts > 0 },
+      { to: "/orders", ico: waiting ? "🔔" : "🍽️", label: waiting ? `Orders (${waiting})` : "Orders", short: waiting ? `${waiting} new` : "Orders", bottom: true, top: true, alert: waiting > 0 },
+      { to: "/kitchen-manage?tab=shopping", ico: "🛒", label: "Shopping list" },
+      { to: "/kitchen-manage?tab=alerts", ico: "🔔", label: kitchenAlerts ? `Alerts (${kitchenAlerts})` : "Alerts" },
+      { to: "/kitchen-manage?tab=recipes", ico: "📖", label: "Recipes" },
+    ];
+  }
   return [
     ...(isAdmin ? [{ to: "/admin", ico: "🛡️", label: "Admin", bottom: true, top: true }] : []),
     { to: "/", ico: "🧾", label: "Billing", bottom: true, top: true },
@@ -121,6 +158,8 @@ function useNavLinks({ isAdmin, paid, waiting, helpUnread }) {
     { to: "/dashboard", ico: paid ? "📊" : "🔒", label: "Dashboard", top: true },
     { to: "/expenses", ico: "💸", label: "Expenses", top: true },
     { to: "/kitchen", ico: "🍳", label: "Kitchen screen" },
+    { to: "/kitchen-manage", ico: kitchenAlerts ? "🔔" : "🥫", label: kitchenAlerts ? `Kitchen stock (${kitchenAlerts})` : "Kitchen stock", alert: kitchenAlerts > 0 },
+    ...(isAdmin ? [] : [{ to: "/staff", ico: "👥", label: "Staff & salary" }]),
     { to: "/menu", ico: "🍔", label: "Menu & stock" },
     { to: "/plans", ico: "💳", label: "Plans" },
     { to: "/settings", ico: "⚙️", label: "Settings", short: "Setup", bottom: true, top: true },
@@ -134,8 +173,10 @@ function Shell({ children }) {
   const { shop, user, online, sync, syncNow, logout } = useApp();
   const access = accessState(shop);
   const isAdmin = user.role === "admin";
-  const helpUnread = useHelpUnread(!isAdmin);
+  const isKitchen = user.role === "kitchen";
+  const helpUnread = useHelpUnread(!isAdmin && !isKitchen);
   const paid = access.state === "paid" || isAdmin;
+  const kitchenAlerts = useKitchenAlerts(true);
   const { waiting } = useOrderAlerts(shop);
   const loc = useLocation();
   const nav = useNavigate();
@@ -147,9 +188,9 @@ function Shell({ children }) {
     }
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => setMoreOpen(false), [loc.pathname]);
-  const links = useNavLinks({ isAdmin, paid, waiting, helpUnread });
-  if (loc.pathname === "/kitchen") return <ToastFree>{children}</ToastFree>;
-  const inMore = !links.some((l) => l.bottom && (l.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(l.to)));
+  const links = useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAlerts });
+  if (loc.pathname === "/kitchen") return <ToastFree>{children}<StaffGate /></ToastFree>;
+  const inMore = !links.some((l) => l.bottom && (l.to === "/" ? loc.pathname === "/" : loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
 
   return (
     <div className="shell">
@@ -180,14 +221,15 @@ function Shell({ children }) {
           <button type="button" className={"more-btn" + (inMore || moreOpen ? " active" : "")} onClick={() => setMoreOpen(true)} aria-label="More pages">
             <span className="ico" aria-hidden="true">☰</span>
             <span className="lbl">More</span>
-            {helpUnread && <span className="dot" aria-hidden="true" />}
+            {(helpUnread || (kitchenAlerts > 0 && !isKitchen)) && <span className="dot" aria-hidden="true" />}
           </button>
         </nav>
       </header>
-      <AccessBanner access={access} blocked={sync.blocked} />
+      {!isKitchen && <AccessBanner access={access} blocked={sync.blocked} />}
       <main className="main">
         <Suspense fallback={<div className="empty">Loading…</div>}>{children}</Suspense>
       </main>
+      <StaffGate />
       {moreOpen && <MoreSheet links={links.filter((l) => !l.bottom)} shop={shop} user={user} access={access} onClose={() => setMoreOpen(false)} onLogout={logout} />}
     </div>
   );
@@ -202,14 +244,14 @@ function MoreSheet({ links, shop, user, access, onClose, onLogout }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   const planLine =
-    access.state === "admin" ? "Admin account" : access.state === "paid" ? `Plan active · ${access.daysLeft} days left` : access.state === "trial" ? `Free trial · ${access.daysLeft} days left` : "Plan ended";
+    user.role === "kitchen" ? "Kitchen phone (no sales or money)" : access.state === "admin" ? "Admin account" : access.state === "paid" ? `Plan active · ${access.daysLeft} days left` : access.state === "trial" ? `Free trial · ${access.daysLeft} days left` : "Plan ended";
   return (
     <div className="more-back" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="more-sheet" role="dialog" aria-label="More pages">
         <div className="more-grab" aria-hidden="true" />
         <div className="more-grid">
           {links.map((l) => (
-            <Link key={l.to} to={l.to} className={"more-tile" + (loc.pathname.startsWith(l.to) ? " active" : "")} onClick={onClose}>
+            <Link key={l.to} to={l.to} className={"more-tile" + (loc.pathname === l.to || loc.pathname.startsWith(l.to + "/") ? " active" : "")} onClick={onClose}>
               <span className="more-ico" aria-hidden="true">{l.ico}</span>
               <span>{l.label}</span>
             </Link>
@@ -220,7 +262,12 @@ function MoreSheet({ links, shop, user, access, onClose, onLogout }) {
             <b>{shop.name}</b> · {user.name}
             <div className="muted">{planLine}</div>
           </div>
-          <button className="btn btn-sm btn-danger" onClick={() => confirm("Log out of this device?") && onLogout()}>Log out</button>
+          <div className="btn-row">
+            {user.role === "kitchen" && <button className="btn btn-sm" onClick={() => (signOutStaff(), onClose())}>Switch user</button>}
+            <button className="btn btn-sm btn-danger" onClick={() => confirm(user.role === "kitchen" ? "Exit kitchen mode? The owner will need to log in again on this phone." : "Log out of this device?") && onLogout()}>
+              {user.role === "kitchen" ? "Exit kitchen mode" : "Log out"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

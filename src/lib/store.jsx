@@ -4,6 +4,7 @@ import { kvGet, kvSet, clearDeviceData, outboxAll, outboxPut, syncOutbox, unbloc
 import { computeTotals } from "../../shared/totals.js";
 import { uuid } from "./format.js";
 import { warmLogo } from "../printer/index.js";
+import { setKitchenShop, flushMoves, signOutStaff } from "./kitchen.js";
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -31,6 +32,7 @@ export function AppProvider({ children }) {
   const shopId = session?.shop?.id;
   const shopIdRef = useRef(shopId);
   shopIdRef.current = shopId;
+  setKitchenShop(shopId || "");
 
   const applySession = useCallback(async (s) => {
     setSession(s);
@@ -66,6 +68,7 @@ export function AppProvider({ children }) {
   const syncNow = useCallback(async () => {
     if (!shopIdRef.current) return;
     await flushStock().catch(() => {});
+    flushMoves().catch(() => {}); // kitchen entries made offline
     const r = await syncOutbox(shopIdRef.current);
     setOnline(!r.error?.offline);
     await refreshCounts();
@@ -216,6 +219,7 @@ export function AppProvider({ children }) {
           /* offline: still log out locally */
         }
         await clearDeviceData();
+        signOutStaff();
         setSession(null);
         setMenu([]);
       },

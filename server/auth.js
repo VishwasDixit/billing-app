@@ -30,9 +30,10 @@ export function isAdminEmail(email) {
   return admins.includes(String(email).toLowerCase());
 }
 
-export function sessionCookie(user) {
+// kitchen: a kitchen-phone login (kitchen screens only; no sales, money or settings).
+export function sessionCookie(user, { kitchen = false } = {}) {
   // sv: bumped on password change / "log out other devices", which invalidates older cookies.
-  const token = jwt.sign({ uid: String(user._id), sid: String(user.shopId), sv: user.sessionVersion || 0 }, secret(), { expiresIn: MAX_AGE });
+  const token = jwt.sign({ uid: String(user._id), sid: String(user.shopId), sv: user.sessionVersion || 0, ...(kitchen && { k: 1 }) }, secret(), { expiresIn: MAX_AGE });
   return cookie(COOKIE, token, { maxAge: MAX_AGE, secure: process.env.NODE_ENV === "production" });
 }
 
@@ -58,10 +59,23 @@ export async function requireUser(req, db) {
     if (shop?.blocked) throw new HttpError(401, blockedMessage(shop), { code: "BLOCKED" });
     throw new HttpError(401, "You were logged out of this device. Please log in again.");
   }
-  user.role = isAdminEmail(user.email) ? "admin" : "owner";
+  user.role = payload.k ? "kitchen" : isAdminEmail(user.email) ? "admin" : "owner";
   return user;
 }
 
+// Short-lived proof that a staff member entered their PIN on this device (sent as x-staff-token).
+export const staffToken = (staff) => jwt.sign({ st: String(staff._id), sid: String(staff.shopId), n: staff.name }, secret(), { expiresIn: 12 * 3600 });
+export function readStaffToken(req, shopId) {
+  const t = req.headers["x-staff-token"];
+  if (!t) return null;
+  try {
+    const p = jwt.verify(String(t), secret());
+    return p.sid === String(shopId) ? { id: p.st, name: p.n } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function publicUser(u) {
-  return { id: String(u._id), name: u.name, email: u.email, phone: u.phone, role: isAdminEmail(u.email) ? "admin" : "owner", canSetPassword: u.passwordResetUntil > new Date() };
+  return { id: String(u._id), name: u.name, email: u.email, phone: u.phone, role: u.role === "kitchen" ? "kitchen" : isAdminEmail(u.email) ? "admin" : "owner", canSetPassword: u.passwordResetUntil > new Date() };
 }
