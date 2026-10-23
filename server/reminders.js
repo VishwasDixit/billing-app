@@ -48,7 +48,7 @@ export async function dueReminders(db, now = new Date()) {
 
 export function reminderEmail({ shop, owner, status, stage }, url = appUrl()) {
   const plans = plansFor(shop);
-  const price = `₹${plans.monthly.amount}/month or ₹${plans.yearly.amount}/year`;
+  const price = `₹${plans.monthly.amount}/month, ₹${plans.halfyearly.amount} for 6 months or ₹${plans.yearly.amount}/year`;
   const date = new Date(status.endsAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" });
   const days = status.daysLeft;
   const app = senderName();

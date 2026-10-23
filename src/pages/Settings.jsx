@@ -9,7 +9,9 @@ import { printTest, warmLogo } from "../printer/index.js";
 import { prepareLogo, prepareQrImage } from "../printer/escpos.js";
 import { resizeLogo, resizeQr } from "../lib/image.js";
 import { billQr, qrSvg } from "../../shared/billQr.js";
+import { planName } from "../../shared/plans.js";
 import { useShowPictures } from "../lib/prefs.js";
+import { useTheme } from "../lib/theme.js";
 import { LANGUAGE_OPTIONS, DEFAULT_LANGUAGE, DEFAULT_TEMPLATE, reminderText } from "../../shared/messages.js";
 import {
   printer, bleConnect, bleWrite, shortUuid, saveChannel, savedChannelFor, onPrinterChange, explainPrintError, isIOS, BLUEFY_URL,
@@ -41,6 +43,7 @@ export default function Settings() {
   const [diag, setDiag] = useState(false);
   const [pw, setPw] = useState(false);
   const [showPictures, setShowPictures] = useShowPictures();
+  const [theme, setTheme] = useTheme();
   const { busy, error, run } = useAction();
   const access = accessState(shop);
 
@@ -165,6 +168,15 @@ export default function Settings() {
 
         <div className="cards">
           <section className="card stack">
+            <h2>Appearance</h2>
+            <div className="field">
+              Theme (this device)
+              <Seg value={theme} onChange={setTheme} options={[["light", "☀️ Light"], ["dark", "🌙 Dark"], ["auto", "📱 Auto"]]} />
+              <span className="hint">Dark is easier on the eyes at night and saves battery on many phones. Auto follows your phone's setting.</span>
+            </div>
+          </section>
+
+          <section className="card stack">
             <h2>Printer</h2>
             {isIOS() && !navigator.bluetooth && <IPhonePrintHelp />}
             <div className="field">
@@ -204,7 +216,7 @@ export default function Settings() {
               <div className="muted">
                 {access.state === "admin" && "Admin account"}
                 {access.state === "trial" && `Free trial until ${fmtDate(access.endsAt)}`}
-                {access.state === "paid" && `${access.plan === "yearly" ? "Yearly" : "Monthly"} plan until ${fmtDate(access.endsAt)}`}
+                {access.state === "paid" && `${planName(access.plan)} plan until ${fmtDate(access.endsAt)}`}
                 {access.state === "expired" && "Plan ended"}
               </div>
             </div>

@@ -4,6 +4,7 @@ import { useApp, accessState } from "../lib/store.jsx";
 import { get, post } from "../lib/api.js";
 import { fmtDate, fmtDateTime } from "../lib/format.js";
 import { Field, Modal, useAction, useToast } from "../components/ui.jsx";
+import { planName, planPer } from "../../shared/plans.js";
 
 function loadRazorpay() {
   if (window.Razorpay) return Promise.resolve();
@@ -107,7 +108,7 @@ export default function Plans() {
           <h1>
             {access.state === "admin" && "No plan needed"}
             {access.state === "trial" && `${access.daysLeft} day${access.daysLeft === 1 ? "" : "s"} left in your trial`}
-            {access.state === "paid" && `${access.plan === "yearly" ? "Yearly" : "Monthly"} plan · ${access.daysLeft} days left`}
+            {access.state === "paid" && `${planName(access.plan)} plan · ${access.daysLeft} days left`}
             {access.state === "expired" && "Renew to keep billing"}
           </h1>
           <p>
@@ -131,7 +132,7 @@ export default function Plans() {
           const yearly = p.id === "yearly";
           const was = p.beforePromo || p.standardAmount;
           const perMonth = Math.round((p.amount / p.days) * 30);
-          const vsMonthly = monthly && yearly ? Math.round((1 - p.amount / (monthly.amount * (p.days / monthly.days))) * 100) : 0;
+          const vsMonthly = monthly && p.id !== "monthly" ? Math.round((1 - p.amount / (monthly.amount * (p.days / monthly.days))) * 100) : 0;
           return (
             <div key={p.id} className={"plan-card" + (yearly ? " featured" : "")}>
               {yearly && (cfg?.yearlyBadge || vsMonthly > 0) && (
@@ -141,11 +142,12 @@ export default function Plans() {
               <div className="plan-price">
                 {was > p.amount && <s>₹{was}</s>}
                 <span className="amt">₹{p.amount}</span>
-                <span className="per">/ {yearly ? "year" : "month"}</span>
+                <span className="per">/ {planPer(p.id)}</span>
               </div>
               <div className="plan-sub">
-                {yearly ? `Just ₹${perMonth} a month · ${p.days} days` : `${p.days} days · renew any time`}
+                {p.id === "monthly" ? `${p.days} days · renew any time` : `Just ₹${perMonth} a month · ${p.days} days`}
               </div>
+              {!yearly && vsMonthly > 0 && <div className="tag accent">Save {vsMonthly}% vs monthly</div>}
               {p.promo ? (
                 <div className="tag good">{p.promo.code}: you save ₹{p.promo.off}</div>
               ) : (
@@ -198,7 +200,7 @@ export default function Plans() {
       <details className="card plan-faq">
         <summary>Questions about plans</summary>
         <p className="small"><b>What happens when the trial ends?</b> Billing pauses until you choose a plan. Your menu, bills and udhar are kept safe.</p>
-        <p className="small"><b>Can I switch from monthly to yearly?</b> Yes. Buy the yearly plan any time; its days are added on top of the days you have left.</p>
+        <p className="small"><b>Can I switch plans?</b> Yes. Buy a 6-month or yearly plan any time; its days are added on top of the days you have left.</p>
         <p className="small"><b>Is my data safe?</b> Your data is stored securely and only your shop can see it. You can download your reports any time.</p>
       </details>
 
@@ -209,7 +211,7 @@ export default function Plans() {
             {history.map((p) => (
               <div key={p.id} className="pay-row">
                 <div>
-                  <b>{p.plan === "yearly" ? "Yearly" : "Monthly"} · ₹{p.amount}</b>
+                  <b>{planName(p.plan)} · ₹{p.amount}</b>
                   {p.promoCode && <span className="tag good" style={{ marginLeft: 6 }}>{p.promoCode}</span>}
                   <div className="small muted">{fmtDateTime(p.createdAt)} · {p.method === "upi" ? `UPI ${p.utr}` : p.method === "link" ? `Razorpay ${p.utr}` : "Online"}</div>
                   {p.status === "pending" && p.autoCheck && <div className="hint">{p.autoCheck}</div>}

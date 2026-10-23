@@ -3,8 +3,9 @@ import { z } from "zod";
 import { HttpError } from "../http.js";
 import { PLANS, plansFor, grantPlan, planSettings } from "../subscription.js";
 import { findPromo, applyPromo, describePromo } from "../promo.js";
+import { PLAN_IDS } from "../../shared/plans.js";
 
-const PlanId = z.enum(["monthly", "yearly"]);
+const PlanId = z.enum(PLAN_IDS);
 const PromoField = z.string().trim().max(30).optional();
 
 // The shop's price for a plan, with a promo code applied when one is given.

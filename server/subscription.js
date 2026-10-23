@@ -1,7 +1,10 @@
 // Standard prices, plan lengths and the free trial. The admin changes them in Admin › Pricing;
 // they live in settings { _id: "plans" } and are loaded (cached briefly) on every request.
+import { PLAN_IDS } from "../shared/plans.js";
+
 export const DEFAULT_PLAN_SETTINGS = Object.freeze({
   monthly: { amount: 49, days: 30 },
+  halfyearly: { amount: 249, days: 180 },
   yearly: { amount: 400, days: 365 },
   trialDays: 3,
   yearlyBadge: "Best value",
@@ -9,6 +12,7 @@ export const DEFAULT_PLAN_SETTINGS = Object.freeze({
 
 export const PLANS = {
   monthly: { id: "monthly", name: "Monthly", amount: 49, days: 30 },
+  halfyearly: { id: "halfyearly", name: "6 months", amount: 249, days: 180 },
   yearly: { id: "yearly", name: "Yearly", amount: 400, days: 365 },
 };
 
@@ -20,11 +24,12 @@ function applySettings(doc) {
   const d = DEFAULT_PLAN_SETTINGS;
   current = {
     monthly: { ...d.monthly, ...(doc?.monthly || {}) },
+    halfyearly: { ...d.halfyearly, ...(doc?.halfyearly || {}) },
     yearly: { ...d.yearly, ...(doc?.yearly || {}) },
     trialDays: doc?.trialDays ?? d.trialDays,
     yearlyBadge: doc?.yearlyBadge ?? d.yearlyBadge,
   };
-  for (const id of ["monthly", "yearly"]) Object.assign(PLANS[id], current[id]);
+  for (const id of PLAN_IDS) Object.assign(PLANS[id], current[id]);
 }
 
 export async function loadPlanSettings(db, { force = false } = {}) {

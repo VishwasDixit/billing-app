@@ -595,7 +595,7 @@ describe("admin controls", () => {
     const other = (await registered("normalprice@shop.test")).c;
 
     const r = await admin("PUT", `/admin/shops/${shop.id}/prices`, { monthly: 29, yearly: 250 });
-    expect(r.body).toEqual({ monthly: 29, yearly: 250 });
+    expect(r.body).toEqual({ monthly: 29, halfyearly: 249, yearly: 250 });
     const plans = (await c("GET", "/pay/config")).body.plans;
     expect(plans.find((p) => p.id === "monthly")).toMatchObject({ amount: 29, standardAmount: 49 });
     expect((await other("GET", "/pay/config")).body.plans.find((p) => p.id === "monthly").amount).toBe(49);
@@ -603,10 +603,10 @@ describe("admin controls", () => {
     const upi = await c("POST", "/pay/upi", { plan: "monthly", via: "upi", utr: "CHEAP12345" });
     expect(upi.body.amount).toBe(29);
     const listed = (await admin("GET", "/admin/shops")).body.shops.find((s) => s.id === shop.id);
-    expect(listed.prices).toEqual({ monthly: 29, yearly: 250, custom: true });
+    expect(listed.prices).toEqual({ monthly: 29, halfyearly: 249, yearly: 250, custom: true });
 
     expect((await admin("PUT", `/admin/shops/${shop.id}/prices`, { monthly: 0 })).status).toBe(400);
-    expect((await admin("PUT", `/admin/shops/${shop.id}/prices`, { monthly: null, yearly: 400 })).body).toEqual({ monthly: 49, yearly: 400 });
+    expect((await admin("PUT", `/admin/shops/${shop.id}/prices`, { monthly: null, yearly: 400 })).body).toEqual({ monthly: 49, halfyearly: 249, yearly: 400 });
     expect((await admin("GET", "/admin/shops")).body.shops.find((s) => s.id === shop.id).prices.custom).toBe(false);
   });
 });
@@ -732,7 +732,7 @@ describe("promo codes", () => {
     expect(off.body.promos.find((p) => p.code === "DIWALI20").active).toBe(false);
     expect((await shopC("POST", "/pay/promo", { code: "diwali20" })).body.error).toMatch(/isn't valid/);
     await admin("PUT", "/admin/promos/DIWALI20", { type: "percent", value: 20, plans: ["monthly", "yearly"], active: true });
-    expect((await shopC("POST", "/pay/promo", { code: "diwali20" })).body.plans.map((p) => p.amount)).toEqual([39, 320]);
+    expect((await shopC("POST", "/pay/promo", { code: "diwali20" })).body.plans.map((p) => p.amount)).toEqual([39, 249, 320]); // not for 6 months
     expect((await admin("DELETE", "/admin/promos/DIWALI20")).status).toBe(200);
     expect((await shopC("POST", "/pay/promo", { code: "DIWALI20" })).status).toBe(400);
   });
@@ -777,11 +777,11 @@ describe("plan prices from Admin › Pricing", () => {
     const admin = client();
     if ((await admin("POST", "/auth/login", { email: "admin@shop.test", password: "secret12" })).status !== 200) await registered("admin@shop.test");
     const { c: shopC } = await registered("pricing-shop@shop.test");
-    const body = { monthly: { amount: 59, days: 30 }, yearly: { amount: 499, days: 365 }, trialDays: 5, yearlyBadge: "Most popular" };
+    const body = { monthly: { amount: 59, days: 30 }, halfyearly: { amount: 299, days: 180 }, yearly: { amount: 499, days: 365 }, trialDays: 5, yearlyBadge: "Most popular" };
     expect((await shopC("PUT", "/admin/plan-settings", body)).status).toBe(403);
     expect((await admin("GET", "/admin/plan-settings")).body).toMatchObject({ monthly: { amount: 49 }, trialDays: 3 });
     expect((await admin("PUT", "/admin/plan-settings", { ...body, trialDays: 31 })).status).toBe(400);
-    expect((await admin("PUT", "/admin/plan-settings", { ...body, yearly: { amount: 499, days: 20 } })).status).toBe(400);
+    expect((await admin("PUT", "/admin/plan-settings", { ...body, yearly: { amount: 499, days: 120 } })).status).toBe(400);
 
     const saved = await admin("PUT", "/admin/plan-settings", body);
     expect(saved.status).toBe(200);
@@ -789,14 +789,15 @@ describe("plan prices from Admin › Pricing", () => {
 
     const cfg = (await client()("GET", "/auth/config")).body;
     expect(cfg).toMatchObject({ trialDays: 5, yearlyBadge: "Most popular" });
-    expect(cfg.plans.map((p) => p.amount)).toEqual([59, 499]);
-    expect((await shopC("GET", "/pay/config")).body.plans.map((p) => p.amount)).toEqual([59, 499]);
+    expect(cfg.plans.map((p) => p.amount)).toEqual([59, 299, 499]);
+    expect((await shopC("GET", "/pay/config")).body.plans.map((p) => p.amount)).toEqual([59, 299, 499]);
+    expect((await shopC("POST", "/pay/upi", { plan: "halfyearly", utr: "HALFUTR001" })).body).toMatchObject({ plan: "halfyearly", amount: 299 });
     expect((await shopC("POST", "/pay/upi", { plan: "monthly", utr: "PRICEUTR01" })).body.amount).toBe(59);
     const fresh = await registered("pricing-new@shop.test");
     expect(fresh.shop.status.daysLeft).toBe(5);
 
     // Back to the original prices for the other tests.
-    await admin("PUT", "/admin/plan-settings", { monthly: { amount: 49, days: 30 }, yearly: { amount: 400, days: 365 }, trialDays: 3, yearlyBadge: "Best value" });
-    expect((await client()("GET", "/auth/config")).body.plans.map((p) => p.amount)).toEqual([49, 400]);
+    await admin("PUT", "/admin/plan-settings", { monthly: { amount: 49, days: 30 }, halfyearly: { amount: 249, days: 180 }, yearly: { amount: 400, days: 365 }, trialDays: 3, yearlyBadge: "Best value" });
+    expect((await client()("GET", "/auth/config")).body.plans.map((p) => p.amount)).toEqual([49, 249, 400]);
   });
 });

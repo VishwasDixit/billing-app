@@ -1,3 +1,4 @@
+import { planName } from "../../shared/plans.js";
 // Downloads the admin's shop list (as filtered on screen) as Excel or PDF.
 // Both libraries load only when the admin asks for a file.
 
@@ -11,10 +12,11 @@ export const COLUMNS = [
   { header: "Email", width: 28, value: (s) => s.owner?.email || "" },
   { header: "Phone", width: 14, value: (s) => s.owner?.phone || "" },
   { header: "Status", width: 10, value: statusText },
-  { header: "Plan", width: 9, value: (s) => (s.status.plan === "yearly" ? "Yearly" : s.status.plan === "monthly" ? "Monthly" : "") },
+  { header: "Plan", width: 9, value: (s) => planName(s.status.plan) },
   { header: "Access till", width: 13, date: true, value: (s) => day(s.status.endsAt) },
   { header: "Days left", width: 9, value: (s) => s.status.daysLeft },
   { header: "Price /month", width: 12, value: (s) => s.prices.monthly },
+  { header: "Price /6 months", width: 13, value: (s) => s.prices.halfyearly },
   { header: "Price /year", width: 11, value: (s) => s.prices.yearly },
   { header: "Bills", width: 8, value: (s) => s.bills },
   { header: "Sales (₹)", width: 12, value: (s) => Math.round(s.sales * 100) / 100 },
@@ -42,7 +44,7 @@ export async function downloadPdf(shops, { title = "Shopkeepers" } = {}) {
   const [{ jsPDF }, { autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   // The built-in PDF fonts have no ₹ sign, so amounts say "Rs".
-  const cols = COLUMNS.filter((c) => !["Plan", "Price /year", "Joined", "Blocked reason"].includes(c.header));
+  const cols = COLUMNS.filter((c) => !["Plan", "Price /6 months", "Price /year", "Joined", "Blocked reason"].includes(c.header));
   doc.setFontSize(14);
   doc.text(title, 14, 14);
   doc.setFontSize(9);

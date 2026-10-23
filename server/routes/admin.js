@@ -7,6 +7,7 @@ import { recheckPendingLinks } from "./pay.js";
 import { dueReminders, runReminders, lastRuns, REMIND_DAYS, reminderCooldownHours } from "../reminders.js";
 import { emailOtpReady } from "../otp/mailer.js";
 import { normalizeCode, describePromo } from "../promo.js";
+import { PLAN_IDS } from "../../shared/plans.js";
 
 const oid = (id) => {
   if (!ObjectId.isValid(id)) throw new HttpError(404, "Not found.");
@@ -26,7 +27,7 @@ const PromoIn = z
       .pipe(z.string().regex(/^[A-Z0-9_-]{3,20}$/, "use 3–20 letters or numbers, e.g. DIWALI20")),
     type: z.enum(["percent", "flat"]),
     value: z.number().positive("enter the discount"),
-    plans: z.array(z.enum(["monthly", "yearly"])).min(1, "choose at least one plan"),
+    plans: z.array(z.enum(PLAN_IDS)).min(1, "choose at least one plan"),
     maxUses: z.number().int().min(1).max(100000).nullable().default(null),
     onePerShop: z.boolean().default(true),
     validUntil: z.coerce.date().nullable().default(null),
@@ -54,11 +55,13 @@ const PlanIn = z.object({ amount: z.number().int().min(1, "price must be at leas
 const PlanSettingsIn = z
   .object({
     monthly: PlanIn,
+    halfyearly: PlanIn.default(DEFAULT_PLAN_SETTINGS.halfyearly),
     yearly: PlanIn,
     trialDays: z.number().int().min(0).max(30),
     yearlyBadge: z.string().trim().max(24).default(""),
   })
-  .refine((s) => s.yearly.days > s.monthly.days, { message: "the yearly plan should be longer than the monthly one", path: ["yearly", "days"] });
+  .refine((s) => s.halfyearly.days > s.monthly.days, { message: "the 6-month plan should be longer than the monthly one", path: ["halfyearly", "days"] })
+  .refine((s) => s.yearly.days > s.halfyearly.days, { message: "the yearly plan should be longer than the 6-month one", path: ["yearly", "days"] });
 
 export default [
   ["GET", "/admin/plan-settings", async ({ db }) => ({ ...(await loadPlanSettings(db, { force: true })), defaults: DEFAULT_PLAN_SETTINGS }), admin],
@@ -202,7 +205,7 @@ export default [
             bills: st?.bills || 0,
             lastBillAt: st?.lastBillAt || null,
             blocked: s.blocked || null,
-            prices: { monthly: plansFor(s).monthly.amount, yearly: plansFor(s).yearly.amount, custom: !!(s.prices?.monthly != null || s.prices?.yearly != null) },
+            prices: { ...Object.fromEntries(PLAN_IDS.map((id) => [id, plansFor(s)[id].amount])), custom: PLAN_IDS.some((id) => s.prices?.[id] != null) },
           };
         }),
       };
@@ -275,7 +278,7 @@ export default [
     "/admin/shops/:id/extend",
     async ({ db, params, body }) => {
       const { plan, days } = z
-        .object({ plan: z.enum(["monthly", "yearly"]).default("monthly"), days: z.number().int().min(1).max(3650).optional() })
+        .object({ plan: z.enum(PLAN_IDS).default("monthly"), days: z.number().int().min(1).max(3650).optional() })
         .parse(body);
       const shopId = oid(params.id);
       if (!(await db.collection("shops").findOne({ _id: shopId }))) throw new HttpError(404, "Shop not found.");
@@ -355,7 +358,7 @@ export default [
     "/admin/shops/:id/prices",
     async ({ db, params, body }) => {
       const Price = z.number().int().min(1, "price must be at least ₹1").max(100000).nullable().optional();
-      const input = z.object({ monthly: Price, yearly: Price }).parse(body);
+      const input = z.object(Object.fromEntries(PLAN_IDS.map((id) => [id, Price]))).parse(body);
       const $set = {};
       const $unset = {};
       for (const id of Object.keys(PLANS)) {
@@ -372,7 +375,7 @@ export default [
       const shop = await db.collection("shops").findOne({ _id: shopId }, { projection: { prices: 1 } });
       if (!shop) throw new HttpError(404, "Shop not found.");
       const plans = plansFor(shop);
-      return { monthly: plans.monthly.amount, yearly: plans.yearly.amount };
+      return Object.fromEntries(PLAN_IDS.map((id) => [id, plans[id].amount]));
     },
     admin,
   ],

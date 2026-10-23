@@ -68,7 +68,7 @@ export default function Register() {
               <h1>Register your shop</h1>
               <p className="muted small" style={{ margin: 0 }}>
                 {pricing?.plans
-                  ? `${pricing.trialDays ? `${pricing.trialDays} days free. Then ` : ""}₹${pricing.plans.find((p) => p.id === "monthly")?.amount}/month or ₹${pricing.plans.find((p) => p.id === "yearly")?.amount}/year. `
+                  ? `${pricing.trialDays ? `${pricing.trialDays} days free. Then ` : ""}from ₹${pricing.plans.find((p) => p.id === "monthly")?.amount}/month (6-month and yearly plans save more). `
                   : ""}
                 Your menu starts with a ready-made dhaba menu you can edit.
               </p>

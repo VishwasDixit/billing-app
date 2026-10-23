@@ -4,6 +4,7 @@ import { fmtDate, fmtDateTime, money } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { downloadExcel, downloadPdf, downloadShopData } from "../lib/adminExport.js";
 import { Conversation } from "./Help.jsx";
+import { PLAN_IDS, planName } from "../../shared/plans.js";
 
 const STATUS = [
   ["all", "All"],
@@ -180,7 +181,7 @@ export default function Admin() {
                 <button className="shop-main" onClick={() => (setFocusDelete(false), setManageId(s.id))}>
                   <div className="shop-title">
                     <b>{s.name}</b> <StatusTag shop={s} />
-                    {s.prices.custom && <span className="tag warn">₹{s.prices.monthly}/m · ₹{s.prices.yearly}/y</span>}
+                    {s.prices.custom && <span className="tag warn">₹{s.prices.monthly}/m · ₹{s.prices.halfyearly}/6m · ₹{s.prices.yearly}/y</span>}
                   </div>
                   <div className="small">{s.owner?.name} · {s.owner?.email}</div>
                   <div className="small muted">
@@ -308,26 +309,26 @@ function Pricing({ value, onSaved }) {
   const toast = useToast();
   const [f, setF] = useState(null);
   const { busy, error, run } = useAction();
+  const fromValue = (v) => ({ ...Object.fromEntries(PLAN_IDS.map((id) => [id, { ...v[id] }])), trialDays: v.trialDays, yearlyBadge: v.yearlyBadge || "" });
   useEffect(() => {
-    if (value && !f) setF({ monthly: { ...value.monthly }, yearly: { ...value.yearly }, trialDays: value.trialDays, yearlyBadge: value.yearlyBadge || "" });
+    if (value && !f) setF(fromValue(value));
   }, [value, f]);
   if (!f) return <div className="empty">Loading…</div>;
   const setPlan = (id, k, v) => setF((x) => ({ ...x, [id]: { ...x[id], [k]: v } }));
   const num = (v) => Math.round(Number(v) || 0);
-  const m = num(f.monthly.amount);
-  const y = num(f.yearly.amount);
-  const perMonth = Math.round((y / Math.max(1, num(f.yearly.days))) * 30);
-  const save = Math.round((1 - y / (m * (num(f.yearly.days) / Math.max(1, num(f.monthly.days))))) * 100);
-  const changed = JSON.stringify(f) !== JSON.stringify({ monthly: value.monthly, yearly: value.yearly, trialDays: value.trialDays, yearlyBadge: value.yearlyBadge || "" });
+  const per30 = (id) => Math.round((num(f[id].amount) / Math.max(1, num(f[id].days))) * 30);
+  const saving = (id) => Math.round((1 - per30(id) / Math.max(1, per30("monthly"))) * 100);
+  const changed = JSON.stringify(f) !== JSON.stringify(fromValue(value));
+  const body = () => ({ ...Object.fromEntries(PLAN_IDS.map((id) => [id, { amount: num(f[id].amount), days: num(f[id].days) }])), trialDays: num(f.trialDays), yearlyBadge: f.yearlyBadge });
 
   const submit = (e) => {
     e.preventDefault();
-    if (!confirm(`Save new prices? Monthly ₹${m} / ${num(f.monthly.days)} days, Yearly ₹${y} / ${num(f.yearly.days)} days, ${num(f.trialDays)}-day free trial.`)) return;
+    const b = body();
+    if (!confirm(`Save new prices?\n${PLAN_IDS.map((id) => `${planName(id)}: ₹${b[id].amount} / ${b[id].days} days`).join("\n")}\nFree trial: ${b.trialDays} days`)) return;
     run(async () => {
-      const body = { monthly: { amount: m, days: num(f.monthly.days) }, yearly: { amount: y, days: num(f.yearly.days) }, trialDays: num(f.trialDays), yearlyBadge: f.yearlyBadge };
-      const r = await put("/admin/plan-settings", body);
+      const r = await put("/admin/plan-settings", b);
       onSaved(r);
-      setF({ monthly: { ...r.monthly }, yearly: { ...r.yearly }, trialDays: r.trialDays, yearlyBadge: r.yearlyBadge || "" });
+      setF(fromValue(r));
       toast("Prices saved. New payments and sign-ups use them now.");
     });
   };
@@ -341,13 +342,14 @@ function Pricing({ value, onSaved }) {
         </p>
       </div>
       <div className="pricing-grid">
-        {[["monthly", "Monthly plan"], ["yearly", "Yearly plan"]].map(([id, label]) => (
+        {PLAN_IDS.map((id) => (
           <fieldset key={id} className="pricing-box">
-            <legend>{label}</legend>
+            <legend>{planName(id)} plan</legend>
             <div className="grid2">
               <Field label="Price (₹)"><input type="number" min="1" max="100000" required inputMode="numeric" value={f[id].amount} onChange={(e) => setPlan(id, "amount", e.target.value)} /></Field>
               <Field label="Days"><input type="number" min="1" max="3650" required inputMode="numeric" value={f[id].days} onChange={(e) => setPlan(id, "days", e.target.value)} /></Field>
             </div>
+            {id !== "monthly" && <div className="hint">≈ ₹{per30(id)}/month{saving(id) > 0 ? ` · save ${saving(id)}%` : ""}</div>}
           </fieldset>
         ))}
       </div>
@@ -360,26 +362,19 @@ function Pricing({ value, onSaved }) {
         </Field>
       </div>
       <div className="pricing-preview small">
-        Shops will see: <b>₹{m}</b> for {num(f.monthly.days)} days · <b>₹{y}</b> for {num(f.yearly.days)} days (≈ ₹{perMonth}/month{save > 0 ? `, save ${save}%` : ""}) ·{" "}
-        {num(f.trialDays) ? `${num(f.trialDays)}-day free trial` : "no free trial"}
+        Shops will see: {PLAN_IDS.map((id) => `₹${num(f[id].amount)} for ${num(f[id].days)} days`).join(" · ")} · {num(f.trialDays) ? `${num(f.trialDays)}-day free trial` : "no free trial"}
       </div>
       {error && <div className="error">{error}</div>}
       <div className="btn-row">
         <button className="btn btn-primary" disabled={busy || !changed}>{busy ? "Saving…" : "Save prices"}</button>
         {changed && <button type="button" className="btn" onClick={() => setF(null)}>Undo</button>}
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => setF({ monthly: { ...value.defaults.monthly }, yearly: { ...value.defaults.yearly }, trialDays: value.defaults.trialDays, yearlyBadge: value.defaults.yearlyBadge })}
-        >
-          Fill original prices
-        </button>
+        <button type="button" className="btn btn-ghost" onClick={() => setF(fromValue(value.defaults))}>Fill original prices</button>
       </div>
     </form>
   );
 }
 
-const EMPTY_PROMO = { code: "", type: "percent", value: 20, plans: ["monthly", "yearly"], maxUses: "", onePerShop: true, validUntil: "", note: "", active: true };
+const EMPTY_PROMO = { code: "", type: "percent", value: 20, plans: [...PLAN_IDS], maxUses: "", onePerShop: true, validUntil: "", note: "", active: true };
 
 // Promo codes shops can enter on the Plans page.
 function Promos({ pricing }) {
@@ -419,7 +414,7 @@ function Promos({ pricing }) {
     });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const togglePlan = (id) => set("plans", form.plans.includes(id) ? form.plans.filter((x) => x !== id) : [...form.plans, id]);
-  const std = [pricing?.monthly.amount ?? 49, pricing?.yearly.amount ?? 400];
+  const std = PLAN_IDS.map((id) => pricing?.[id]?.amount ?? { monthly: 49, halfyearly: 249, yearly: 400 }[id]);
   const preview = form ? (form.type === "percent" ? std.map((a) => a - Math.round((a * (Number(form.value) || 0)) / 100)) : std.map((a) => Math.max(1, a - (Number(form.value) || 0)))) : [];
 
   return (
@@ -445,8 +440,9 @@ function Promos({ pricing }) {
           <div className="field">
             Works on
             <div className="btn-row">
-              <label className="check"><input type="checkbox" checked={form.plans.includes("monthly")} onChange={() => togglePlan("monthly")} /> Monthly</label>
-              <label className="check"><input type="checkbox" checked={form.plans.includes("yearly")} onChange={() => togglePlan("yearly")} /> Yearly</label>
+              {PLAN_IDS.map((id) => (
+                <label key={id} className="check"><input type="checkbox" checked={form.plans.includes(id)} onChange={() => togglePlan(id)} /> {planName(id)}</label>
+              ))}
             </div>
           </div>
           <div className="grid2">
@@ -459,7 +455,9 @@ function Promos({ pricing }) {
           </div>
           <label className="check"><input type="checkbox" checked={form.onePerShop} onChange={(e) => set("onePerShop", e.target.checked)} /> Each shop can use it only once</label>
           <Field label="Note (only you see this)"><input maxLength={120} value={form.note} onChange={(e) => set("note", e.target.value)} placeholder="e.g. Diwali offer for Lucknow shops" /></Field>
-          <p className="hint" style={{ margin: 0 }}>At standard prices: Monthly ₹{std[0]} → <b>₹{preview[0]}</b>, Yearly ₹{std[1]} → <b>₹{preview[1]}</b>. Special shop prices get the same discount.</p>
+          <p className="hint" style={{ margin: 0 }}>
+            At standard prices: {PLAN_IDS.map((id, i) => (form.plans.includes(id) ? `${planName(id)} ₹${std[i]} → ₹${preview[i]}` : null)).filter(Boolean).join(" · ")}. Special shop prices get the same discount.
+          </p>
           {error && <div className="error">{error}</div>}
           <div className="btn-row">
             <button type="button" className="btn" onClick={() => setForm(null)}>Cancel</button>
@@ -689,8 +687,7 @@ function ManageShop({ shop, pricing, focusDelete, onClose, onDone, onDeleted }) 
   }, [focusDelete]);
   const toast = useToast();
   const [days, setDays] = useState(30);
-  const [monthly, setMonthly] = useState(shop.prices.monthly);
-  const [yearly, setYearly] = useState(shop.prices.yearly);
+  const [prices, setPrices] = useState(() => Object.fromEntries(PLAN_IDS.map((id) => [id, shop.prices[id]])));
   const [reason, setReason] = useState(shop.blocked?.reason || "");
   const [password, setPassword] = useState("");
   const [confirmName, setConfirmName] = useState("");
@@ -701,9 +698,8 @@ function ManageShop({ shop, pricing, focusDelete, onClose, onDone, onDeleted }) 
   const savePrices = (body) =>
     run(async () => {
       const r = await put(`/admin/shops/${shop.id}/prices`, body);
-      setMonthly(r.monthly);
-      setYearly(r.yearly);
-      toast(`Prices for ${shop.name}: ₹${r.monthly}/month, ₹${r.yearly}/year`);
+      setPrices(r);
+      toast(`Prices for ${shop.name}: ${PLAN_IDS.map((id) => `₹${r[id]} ${planName(id).toLowerCase()}`).join(", ")}`);
       onDone();
     });
 
@@ -753,7 +749,7 @@ function ManageShop({ shop, pricing, focusDelete, onClose, onDone, onDeleted }) 
                   disabled={busy}
                   onClick={() =>
                     run(async () => {
-                      const r = await post(`/admin/shops/${shop.id}/extend`, { plan: days >= 365 ? "yearly" : "monthly", days });
+                      const r = await post(`/admin/shops/${shop.id}/extend`, { plan: days >= 365 ? "yearly" : days >= 180 ? "halfyearly" : "monthly", days });
                       toast(`Extended till ${fmtDate(r.currentPeriodEnd)}`);
                       onDone();
                     })
@@ -769,20 +765,21 @@ function ManageShop({ shop, pricing, focusDelete, onClose, onDone, onDeleted }) 
         {!isAdminShop && (
           <section>
             <h4>Subscription price for this shop</h4>
-            <div className="grid2">
-              <Field label="Monthly (₹)">
-                <input type="number" min="1" inputMode="numeric" value={monthly} onChange={(e) => setMonthly(e.target.value)} />
-              </Field>
-              <Field label="Yearly (₹)">
-                <input type="number" min="1" inputMode="numeric" value={yearly} onChange={(e) => setYearly(e.target.value)} />
-              </Field>
+            <div className="grid3 price-inputs">
+              {PLAN_IDS.map((id) => (
+                <Field key={id} label={`${planName(id)} (₹)`}>
+                  <input type="number" min="1" inputMode="numeric" value={prices[id]} onChange={(e) => setPrices((p) => ({ ...p, [id]: e.target.value }))} />
+                </Field>
+              ))}
             </div>
             <div className="btn-row" style={{ marginTop: 6 }}>
-              <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => savePrices({ monthly: Number(monthly), yearly: Number(yearly) })}>
+              <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => savePrices(Object.fromEntries(PLAN_IDS.map((id) => [id, Number(prices[id])])))}>
                 Save prices
               </button>
               {shop.prices.custom && (
-                <button className="btn btn-sm" disabled={busy} onClick={() => savePrices({ monthly: null, yearly: null })}>Back to standard (₹{pricing?.monthly.amount ?? 49} / ₹{pricing?.yearly.amount ?? 400})</button>
+                <button className="btn btn-sm" disabled={busy} onClick={() => savePrices(Object.fromEntries(PLAN_IDS.map((id) => [id, null])))}>
+                  Back to standard ({PLAN_IDS.map((id) => `₹${pricing?.[id]?.amount ?? ""}`).join(" / ")})
+                </button>
               )}
             </div>
             <p className="hint" style={{ margin: "6px 0 0" }}>The shop sees these prices on its Plans page. Payments already made aren't changed.</p>

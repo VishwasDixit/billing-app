@@ -7,14 +7,17 @@ import { Link } from "react-router-dom";
 import { useApp, accessState } from "../lib/store.jsx";
 import { downloadReportPdf, downloadReportExcel } from "../lib/reportExport.js";
 import { useAuthConfig } from "./Login.jsx";
+import { isDark } from "../lib/theme.js";
 import { get } from "../lib/api.js";
 import { money, monthStartYmd, todayYmd } from "../lib/format.js";
 import { useAction } from "../components/ui.jsx";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler);
 
-// Reference palette (categorical slots 1–2) and recessive chart ink.
-const C = { sales: "#2a78d6", expenses: "#eb6834", grid: "#eceef1", axis: "#6b7280", text: "#1d2025" };
+// Reference palette (categorical slots 1–2) and recessive chart ink, per theme.
+const LIGHT = { sales: "#2a78d6", expenses: "#eb6834", grid: "#eceef1", axis: "#6b7280", text: "#1d2025" };
+const DARK = { sales: "#5b9cf0", expenses: "#f08a5d", grid: "#262b33", axis: "#9aa3ae", text: "#e6e8ec" };
+let C = LIGHT;
 
 const PRESETS = [
   ["today", "Today", () => [todayYmd(), todayYmd()]],
@@ -28,6 +31,7 @@ const shortDate = (ymd) => new Date(ymd + "T00:00:00+05:30").toLocaleDateString(
 const hourLabel = (h) => `${h % 12 || 12}${h < 12 ? "am" : "pm"}`;
 
 export default function Dashboard() {
+  C = isDark() ? DARK : LIGHT;
   const { shop, sync } = useApp();
   const cur = shop.currency || "₹";
   const [preset, setPreset] = useState("7d");
