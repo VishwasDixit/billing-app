@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useReducer, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { markBilledLocally } from "../lib/orders.js";
 import { useApp, accessState } from "../lib/store.jsx";
 import { computeTotals } from "../../shared/totals.js";
 import { money, todayYmd } from "../lib/format.js";
@@ -31,6 +32,17 @@ export default function Billing() {
   const [cartOpen, setCartOpen] = useState(false);
   // "" = today. A past date bills a missed day; it stays until changed back.
   const [billDate, setBillDate] = useState("");
+  // Billing a table: its orders' items fill the cart, and the bill closes those orders.
+  const location = useLocation();
+  const [tableBill, setTableBill] = useState(null);
+  useEffect(() => {
+    const tb = location.state?.tableBill;
+    if (!tb) return;
+    setTableBill(tb);
+    setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant), { ...l }])));
+    setCartOpen(true);
+    nav(".", { replace: true, state: null });
+  }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
   // Stop the menu behind the full-screen bill sheet from scrolling on phones.
   useEffect(() => {
     document.body.classList.toggle("sheet-open", cartOpen);
@@ -98,7 +110,11 @@ export default function Billing() {
     setBusy(kind);
     setPrintError(null);
     try {
-      const bill = await recordBill({ items: lines.map(([, l]) => l), discount, gstPercent, paymentMode, customer, paidNow: paidNowClamped, billDate: pastDate });
+      const bill = await recordBill({ items: lines.map(([, l]) => l), discount, gstPercent, paymentMode, customer, paidNow: paidNowClamped, billDate: pastDate, table: tableBill?.tableName, orderIds: tableBill?.orderIds });
+      if (tableBill) {
+        await markBilledLocally(tableBill.orderIds);
+        setTableBill(null);
+      }
       setCart(new Map());
       setDiscount(shop.defaultDiscount || { type: "percent", value: 0 });
       setGstPercent(shop.gstPercent || 0);
@@ -181,7 +197,7 @@ export default function Billing() {
           <h2>Current bill</h2>
           <div className="btn-row">
             {cart.size > 0 && (
-              <button className="btn btn-ghost btn-sm" onClick={() => confirm("Clear all items?") && setCart(new Map())}>
+              <button className="btn btn-ghost btn-sm" onClick={() => confirm("Clear all items?") && (setCart(new Map()), setTableBill(null))}>
                 Clear
               </button>
             )}
@@ -190,6 +206,12 @@ export default function Billing() {
             </button>
           </div>
         </div>
+        {tableBill && (
+          <div className="table-bill-bar">
+            <span>🍽️ <b>{tableBill.tableName}</b> · orders {tableBill.orderNos.map((n) => `#${n}`).join(", ")}</span>
+            <button className="link-btn" onClick={() => (setTableBill(null), setCart(new Map()))}>Cancel</button>
+          </div>
+        )}
         <div className={"bill-date" + (pastDate ? " past" : "")}>
           <label htmlFor="bill-date">📅 Bill date</label>
           <input

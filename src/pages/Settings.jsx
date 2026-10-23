@@ -12,12 +12,16 @@ import { billQr, qrSvg } from "../../shared/billQr.js";
 import { planName } from "../../shared/plans.js";
 import { useShowPictures } from "../lib/prefs.js";
 import { useTheme } from "../lib/theme.js";
+import { usePref } from "../lib/prefs.js";
+import { downloadTableQrs, orderUrl } from "../lib/tableQr.js";
 import { LANGUAGE_OPTIONS, DEFAULT_LANGUAGE, DEFAULT_TEMPLATE, reminderText } from "../../shared/messages.js";
 import {
   printer, bleConnect, bleWrite, shortUuid, saveChannel, savedChannelFor, onPrinterChange, explainPrintError, isIOS, BLUEFY_URL,
 } from "../printer/transports.js";
 
 const pick = (s) => ({
+  tables: (s.tables || []).map((t) => ({ ...t })),
+  qrOrdering: !!s.qrOrdering,
   name: s.name || "",
   logo: s.logo || "",
   address: s.address || "",
@@ -167,6 +171,8 @@ export default function Settings() {
         </div>
 
         <div className="cards">
+          <TablesCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} access={access} />
+
           <section className="card stack">
             <h2>Appearance</h2>
             <div className="field">
@@ -244,6 +250,111 @@ export default function Settings() {
       {diag && <Diagnostics slowMode={f.printer.slowMode} onClose={() => setDiag(false)} />}
       {pw && <PasswordModal onClose={() => setPw(false)} />}
     </div>
+  );
+}
+
+// Tables for table orders, the customer QR codes, and KOT printing on this device.
+function TablesCard({ f, set, shop, saveShop, dirty, access }) {
+  const toast = useToast();
+  const [kotAuto, setKotAuto] = usePref("kotAuto", true);
+  const [kotCopies, setKotCopies] = usePref("kotCopies", 1);
+  const { busy, error, run } = useAction();
+  const tables = f.tables;
+  const nextId = () => `T${Math.max(0, ...tables.map((t) => Number(String(t.id).replace(/\D/g, "")) || 0)) + 1}`;
+  const setCount = (n) => {
+    n = Math.max(0, Math.min(100, Math.floor(Number(n) || 0)));
+    const next = tables.slice(0, n);
+    while (next.length < n) {
+      const id = `T${Math.max(0, ...next.map((t) => Number(String(t.id).replace(/\D/g, "")) || 0)) + 1}`;
+      next.push({ id, name: `Table ${id.slice(1)}` });
+    }
+    set("tables", next);
+  };
+  const rename = (i, name) => set("tables", tables.map((t, j) => (j === i ? { ...t, name } : t)));
+  const remove = (i) => set("tables", tables.filter((_, j) => j !== i));
+  const paid = access.state === "paid" || access.state === "admin";
+  const saved = (shop.tables || []).length > 0;
+
+  return (
+    <section className="card stack" id="tables">
+      <h2>Tables &amp; QR ordering</h2>
+      <p className="small muted" style={{ margin: 0 }}>Take orders by table, print KOTs for the kitchen, and bill each table at the end. Works offline too.</p>
+      <div className="grid2">
+        <Field label="Number of tables">
+          <input type="number" min="0" max="100" inputMode="numeric" value={tables.length} onChange={(e) => setCount(e.target.value)} />
+        </Field>
+      </div>
+      {tables.length > 0 && (
+        <div className="table-names">
+          {tables.map((t, i) => (
+            <div key={t.id} className="table-name">
+              <input className="input" maxLength={30} value={t.name} onChange={(e) => rename(i, e.target.value)} aria-label={`Name of ${t.id}`} />
+              <button className="btn btn-sm btn-ghost" onClick={() => remove(i)} aria-label={`Remove ${t.name}`}>✕</button>
+            </div>
+          ))}
+          <button className="btn btn-sm" onClick={() => set("tables", [...tables, { id: nextId(), name: `Table ${nextId().slice(1)}` }])}>+ Add table</button>
+        </div>
+      )}
+      {tables.length > 0 && (
+        <label className="check">
+          <input type="checkbox" checked={f.qrOrdering} onChange={(e) => set("qrOrdering", e.target.checked)} />
+          Let customers order by scanning the table QR code {!paid && <span className="tag warn">paid plan</span>}
+        </label>
+      )}
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save your tables.</p>}
+
+      {saved && f.qrOrdering && !dirty && (
+        <div className="stack">
+          {!paid && <div className="banner warn" style={{ borderRadius: 8 }}>Customers can order once you're on a paid plan. You can set up and print the QR codes now.</div>}
+          {shop.orderToken ? (
+            <>
+              <div className="btn-row">
+                <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => run(() => downloadTableQrs(shop, shop.tables))}>⬇️ Download table QR codes (PDF)</button>
+                <a className="btn btn-sm" href={orderUrl(shop, shop.tables[0].id)} target="_blank" rel="noopener noreferrer">👀 See customer page</a>
+              </div>
+              <div className="order-link">
+                <code>{orderUrl(shop, shop.tables[0].id)}</code>
+              </div>
+              <button
+                className="link-btn"
+                style={{ justifySelf: "start" }}
+                onClick={() =>
+                  confirm("Make new QR codes? The old printed QR codes will stop working, so you'll need to print and stick the new ones.") &&
+                  run(async () => {
+                    const updated = await post("/shop/order-token");
+                    await saveShop({});
+                    toast("New QR link made. Download and print the new QR codes.");
+                    return updated;
+                  })
+                }
+              >
+                Make new QR codes (stop the old ones)
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => run(async () => (await post("/shop/order-token"), await saveShop({})))}>
+              Create table QR codes
+            </button>
+          )}
+        </div>
+      )}
+
+      {saved && (
+        <div className="stack" style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+          <b className="small">Kitchen tickets (KOT) on this device</b>
+          <label className="check">
+            <input type="checkbox" checked={kotAuto} onChange={(e) => setKotAuto(e.target.checked)} />
+            Print a KOT when an order is accepted or taken on this device
+          </label>
+          <div className="field">
+            Copies
+            <Seg value={String(kotCopies)} onChange={(v) => setKotCopies(Number(v))} options={[["1", "1"], ["2", "2"], ["3", "3"]]} />
+          </div>
+          <span className="hint">KOTs print on the printer set below. Bluetooth and USB printers work without internet.</span>
+        </div>
+      )}
+      {error && <div className="error">{error}</div>}
+    </section>
   );
 }
 

@@ -2,6 +2,7 @@ import { receiptRows, testRows, PAPER } from "./receipt.js";
 import { encode, prepareLogo, prepareQrImage } from "./escpos.js";
 import { qrSvg } from "../../shared/billQr.js";
 import { sendBytes } from "./transports.js";
+import { kotRows } from "./kot.js";
 
 export { receiptRows, PAPER };
 
@@ -12,6 +13,15 @@ export function printBill(shop, bill) {
   if (method === "browser") return browserPrint(shop, receiptRows(shop, bill));
   const bytes = encode(receiptRows(shop, bill), shop);
   return sendBytes(method, bytes, { slowMode: shop.printer?.slowMode });
+}
+
+// Prints a kitchen ticket on this device's printer (Bluetooth/USB work without internet).
+export async function printKot(shop, order, { copies = 1, reprint = false } = {}) {
+  const method = shop.printer?.method || "bluetooth";
+  const layout = kotRows(shop, order, { reprint });
+  if (method === "browser") return browserPrint(shop, layout);
+  const bytes = encode(layout, shop);
+  for (let i = 0; i < Math.max(1, Math.min(3, copies)); i++) await sendBytes(method, bytes, { slowMode: shop.printer?.slowMode });
 }
 
 export function printTest(shop) {

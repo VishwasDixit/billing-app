@@ -22,3 +22,21 @@ export function useShowPictures() {
   }, []);
   return [on, set];
 }
+
+// Any per-device setting, e.g. usePref("kotAuto", true).
+export function usePref(key, fallback) {
+  const [v, setV] = useState(() => read(key, fallback));
+  const save = useCallback(
+    (next) => {
+      setV(next);
+      try {
+        localStorage.setItem(key, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+    },
+    [key]
+  );
+  return [v, save];
+}
+export const readPref = read;

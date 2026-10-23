@@ -102,3 +102,34 @@ describe("GSTIN and payment QR on the bill", () => {
     expect(receiptRows(upiShop({ qrMode: "image", qrImage: "data:image/png;base64,AAAA" }), bill).qr).toMatchObject({ kind: "image" });
   });
 });
+
+describe("kitchen ticket (KOT)", () => {
+  it("shows the order and table big, items with notes, no prices, and fits the paper", async () => {
+    const { kotRows } = await import("../src/printer/kot.js");
+    const order = {
+      orderNo: "Q12",
+      tableName: "Table 4",
+      source: "qr",
+      createdAt: "2026-10-24T13:05:00+05:30",
+      customerName: "Ravi",
+      note: "Birthday table, bring candles",
+      items: [
+        { name: "Paneer Butter Masala", variant: "Full", qty: 2, rate: 270, note: "less spicy" },
+        { name: "Butter Naan", qty: 6, rate: 40 },
+      ],
+    };
+    for (const size of [58, 80]) {
+      const s = shop(size);
+      const { rows, cols } = kotRows(s, order);
+      const text = rows.map((r) => r.text).join("\n");
+      expect(rows.find((r) => r.text.includes("#Q12"))).toMatchObject({ size: 2, bold: true });
+      expect(rows.find((r) => r.text.includes("Table 4"))).toMatchObject({ size: 2 });
+      expect(text).toContain("2 x Paneer Butter Masala");
+      expect(text).toContain("> less spicy");
+      expect(text).toContain("Items: 8");
+      expect(text).not.toMatch(/270|Rs\./);
+      for (const r of rows) expect(r.text.length).toBeLessThanOrEqual(r.size === 2 ? Math.floor(cols / 2) : cols);
+      expect([...encode({ rows, logo: false, qr: null }, s)].length).toBeGreaterThan(50);
+    }
+  });
+});

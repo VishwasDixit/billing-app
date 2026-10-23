@@ -89,6 +89,7 @@ export function receiptRows(shop, bill) {
   const date = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
   const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   pair(`Bill: ${bill.billNo}`, `${date} ${time}`);
+  if (bill.table) line(`Table: ${ascii(bill.table)}`);
   if (bill.status === "void") center("*** VOID ***", { bold: true });
   if (bill.customer?.name) {
     wrap("Customer: " + bill.customer.name, cols).forEach((l) => line(l));

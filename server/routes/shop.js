@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError, respondRaw } from "../http.js";
@@ -51,6 +52,12 @@ const ShopSettings = z
       .max(60)
       .refine((u) => u === "" || /^[\w.\-]{2,}@[\w.\-]{2,}$/.test(u), "enter a UPI ID like name@okbank"),
     gstPercent: z.number().min(0).max(100),
+    // Tables for table orders / QR ordering.
+    tables: z
+      .array(z.object({ id: z.string().trim().regex(/^[A-Za-z0-9_-]{1,20}$/), name: z.string().trim().min(1).max(30) }))
+      .max(100)
+      .refine((t) => new Set(t.map((x) => x.id)).size === t.length, "table ids must be different"),
+    qrOrdering: z.boolean(),
     defaultDiscount: z.object({ type: z.enum(["percent", "flat"]), value: z.number().min(0).max(100000) }),
     printer: z.object({
       paperSize: z.union([z.literal(58), z.literal(80), z.literal(110)]),
@@ -119,6 +126,16 @@ function deviceCode(n) {
 }
 
 export default [
+  // The secret part of the table QR links. A new one makes old printed QR codes stop working.
+  [
+    "POST",
+    "/shop/order-token",
+    async ({ db, shop, user }) => {
+      const token = crypto.randomBytes(16).toString("base64url");
+      const updated = await db.collection("shops").findOneAndUpdate({ _id: shop._id }, { $set: { orderToken: token } }, { returnDocument: "after" });
+      return publicShop(updated, user.role === "admin");
+    },
+  ],
   ["GET", "/shop", async ({ db, shop, user }) => publicShop(await db.collection("shops").findOne({ _id: shop._id }), user.role === "admin")],
   [
     "PUT",

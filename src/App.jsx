@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes, Link } from "react-router-dom";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { NavLink, Navigate, Route, Routes, Link, useLocation } from "react-router-dom";
 import { useApp, accessState } from "./lib/store.jsx";
 import { ToastProvider } from "./components/ui.jsx";
 import Login from "./pages/Login.jsx";
@@ -16,12 +16,26 @@ import Admin from "./pages/Admin.jsx";
 import Customers from "./pages/Customers.jsx";
 import CustomerDetail from "./pages/CustomerDetail.jsx";
 import Help from "./pages/Help.jsx";
+import CustomerOrder from "./pages/CustomerOrder.jsx";
+import Orders from "./pages/Orders.jsx";
+import Kitchen from "./pages/Kitchen.jsx";
+import { initOrders, refreshOrders, useOrders, beep } from "./lib/orders.js";
+import { useToast } from "./components/ui.jsx";
 import { get } from "./lib/api.js";
 
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx")); // charts load on first visit
 
 export default function App() {
   const { session, booting } = useApp();
+  const loc = useLocation();
+  // The customer's QR order page works without logging in.
+  if (loc.pathname.startsWith("/order/")) {
+    return (
+      <Routes>
+        <Route path="/order/:token" element={<CustomerOrder />} />
+      </Routes>
+    );
+  }
   if (booting && !session) return <div className="empty">Loading…</div>;
 
   return (
@@ -46,6 +60,8 @@ export default function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/plans" element={<Plans />} />
             <Route path="/help" element={<Help />} />
+            <Route path="/orders" element={<Orders />} />
+            <Route path="/kitchen" element={<Kitchen />} />
             {session.user.role === "admin" && <Route path="/admin" element={<Admin />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -68,19 +84,48 @@ function useHelpUnread(enabled) {
   return unread;
 }
 
+// Keeps table orders fresh on every screen and rings when a QR order is waiting.
+function useOrderAlerts(shop) {
+  const toast = useToast();
+  const loc = useLocation();
+  const st = useOrders();
+  const hasTables = (shop.tables || []).length > 0;
+  useEffect(() => {
+    initOrders(shop.id).then(() => hasTables && refreshOrders().catch(() => {}));
+  }, [shop.id, hasTables]);
+  useEffect(() => {
+    if (!hasTables) return;
+    const t = setInterval(() => document.visibilityState === "visible" && refreshOrders().catch(() => {}), 15000);
+    return () => clearInterval(t);
+  }, [hasTables]);
+  const prev = useRef(st.waiting);
+  useEffect(() => {
+    if (st.waiting > prev.current) {
+      beep();
+      if (loc.pathname !== "/orders") toast(`🔔 New table order (${st.waiting} waiting). Open Orders to accept.`);
+    }
+    prev.current = st.waiting;
+  }, [st.waiting]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { hasTables, waiting: st.waiting };
+}
+
 function Shell({ children }) {
   const { shop, user, online, sync, syncNow } = useApp();
   const access = accessState(shop);
   const isAdmin = user.role === "admin";
   const helpUnread = useHelpUnread(!isAdmin);
   const paid = access.state === "paid" || isAdmin;
+  const { hasTables, waiting } = useOrderAlerts(shop);
+  const loc = useLocation();
+  if (loc.pathname === "/kitchen") return <ToastFree>{children}</ToastFree>;
   const links = [
     ["/", "🧾", "Billing"],
+    ...(hasTables ? [["/orders", waiting ? "🔔" : "🍽️", waiting ? `Orders (${waiting})` : "Orders", waiting ? `${waiting} new` : "Orders"]] : []),
     ["/bills", "📄", "Bills"],
     ["/customers", "📒", "Udhar"],
     ["/dashboard", paid ? "📊" : "🔒", "Dashboard", "Stats"],
     ["/expenses", "💸", "Expenses", "Costs"],
-    ["/settings", "⚙️", "Settings"],
+    ["/settings", "⚙️", "Settings", "Setup"],
     ...(isAdmin ? [["/admin", "🛡️", "Admin"]] : [["/help", helpUnread ? "🔴" : "❓", "Help"]]),
   ];
 
@@ -149,4 +194,9 @@ function AccessBanner({ access, blocked }) {
     );
   }
   return null;
+}
+
+// The kitchen screen uses the whole window (no top bar or bottom navigation).
+function ToastFree({ children }) {
+  return <main className="main kitchen-main">{children}</main>;
 }

@@ -16,6 +16,7 @@ import customerRoutes from "./routes/customers.js";
 import cronRoutes from "./routes/cron.js";
 import imageRoutes, { pexelsReady } from "./routes/images.js";
 import helpRoutes from "./routes/help.js";
+import orderRoutes from "./routes/orders.js";
 
 // Each route: [method, "/path/:param", handler, { auth = true, admin = false }]
 const ROUTES = [
@@ -30,6 +31,7 @@ const ROUTES = [
   ...cronRoutes,
   ...imageRoutes,
   ...helpRoutes,
+  ...orderRoutes,
 ].map(([method, path, handler, opts = {}]) => {
   const keys = [];
   const re = new RegExp(

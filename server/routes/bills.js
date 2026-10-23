@@ -5,6 +5,7 @@ import { computeTotals, round2 } from "../../shared/totals.js";
 import { CustomerIn, upsertCustomer, udharStatusFor } from "./customers.js";
 import { accessEndsAt } from "../subscription.js";
 import { dayRange } from "./analytics.js";
+import { markOrdersBilled } from "./orders.js";
 
 const BillIn = z.object({
   clientId: z.string().uuid(),
@@ -32,6 +33,9 @@ const BillIn = z.object({
   paidNow: z.number().min(0).optional(),
   // A bill entered later for a past day (e.g. forgot to bill yesterday).
   backdated: z.boolean().optional(),
+  // Billing a table: which table, and the orders this bill pays for.
+  table: z.string().trim().max(30).optional(),
+  orderIds: z.array(z.string().uuid()).max(100).optional(),
 });
 
 export const MAX_BACKDATE_DAYS = 90;
@@ -86,6 +90,8 @@ export default [
           createdAt,
           syncedAt: new Date(),
           ...(b.backdated ? { backdated: true, enteredAt: new Date() } : {}),
+          ...(b.table ? { table: b.table } : {}),
+          ...(b.orderIds?.length ? { orderIds: b.orderIds } : {}),
           items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount }) => ({ itemId, name, variant, category, qty, rate, amount })),
           itemCount: t.itemCount,
           subtotal: t.subtotal,
@@ -101,6 +107,7 @@ export default [
         if (b.customer) await upsertCustomer(db, shop._id, b.customer);
         try {
           await db.collection("bills").insertOne(doc);
+          await markOrdersBilled(db, shop._id, b.orderIds, b.clientId);
           results.push({ clientId: b.clientId, ok: true });
         } catch (err) {
           if (err.code === 11000) results.push({ clientId: b.clientId, ok: true, duplicate: true });
