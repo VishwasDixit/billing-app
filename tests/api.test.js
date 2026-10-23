@@ -771,3 +771,32 @@ describe("promo codes", () => {
     expect((await c("POST", "/pay/promo", { code: "OLDCODE" })).body.error).toMatch(/expired/);
   });
 });
+
+describe("plan prices from Admin › Pricing", () => {
+  it("lets only the admin change standard prices, trial days and badge, used everywhere", async () => {
+    const admin = client();
+    if ((await admin("POST", "/auth/login", { email: "admin@shop.test", password: "secret12" })).status !== 200) await registered("admin@shop.test");
+    const { c: shopC } = await registered("pricing-shop@shop.test");
+    const body = { monthly: { amount: 59, days: 30 }, yearly: { amount: 499, days: 365 }, trialDays: 5, yearlyBadge: "Most popular" };
+    expect((await shopC("PUT", "/admin/plan-settings", body)).status).toBe(403);
+    expect((await admin("GET", "/admin/plan-settings")).body).toMatchObject({ monthly: { amount: 49 }, trialDays: 3 });
+    expect((await admin("PUT", "/admin/plan-settings", { ...body, trialDays: 31 })).status).toBe(400);
+    expect((await admin("PUT", "/admin/plan-settings", { ...body, yearly: { amount: 499, days: 20 } })).status).toBe(400);
+
+    const saved = await admin("PUT", "/admin/plan-settings", body);
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject(body);
+
+    const cfg = (await client()("GET", "/auth/config")).body;
+    expect(cfg).toMatchObject({ trialDays: 5, yearlyBadge: "Most popular" });
+    expect(cfg.plans.map((p) => p.amount)).toEqual([59, 499]);
+    expect((await shopC("GET", "/pay/config")).body.plans.map((p) => p.amount)).toEqual([59, 499]);
+    expect((await shopC("POST", "/pay/upi", { plan: "monthly", utr: "PRICEUTR01" })).body.amount).toBe(59);
+    const fresh = await registered("pricing-new@shop.test");
+    expect(fresh.shop.status.daysLeft).toBe(5);
+
+    // Back to the original prices for the other tests.
+    await admin("PUT", "/admin/plan-settings", { monthly: { amount: 49, days: 30 }, yearly: { amount: 400, days: 365 }, trialDays: 3, yearlyBadge: "Best value" });
+    expect((await client()("GET", "/auth/config")).body.plans.map((p) => p.amount)).toEqual([49, 400]);
+  });
+});

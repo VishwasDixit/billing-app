@@ -4,7 +4,7 @@ import { emailOtpEnabled, verifyGmail } from "./otp/mailer.js";
 import { googleClientId } from "./google.js";
 import { HttpError, readBody, send, sendError } from "./http.js";
 import { requireUser, jwtSecretOk, clearCookie } from "./auth.js";
-import { subscriptionStatus, blockedMessage } from "./subscription.js";
+import { subscriptionStatus, blockedMessage, loadPlanSettings } from "./subscription.js";
 import authRoutes from "./routes/auth.js";
 import shopRoutes from "./routes/shop.js";
 import billRoutes from "./routes/bills.js";
@@ -78,6 +78,7 @@ export async function handle(req, res) {
     if (!match) throw new HttpError(methodMismatch ? 405 : 404, methodMismatch ? "Method not allowed." : "Not found.");
 
     const db = await getDb();
+    await loadPlanSettings(db);
     const { raw, json } = await readBody(req);
     const ctx = { req, res, db, params: match.params, query: Object.fromEntries(url.searchParams), body: json, raw };
 

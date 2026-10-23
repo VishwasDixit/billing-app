@@ -12,6 +12,7 @@ export default function Register() {
   const location = useLocation();
   const [emailOtp, setEmailOtp] = useState(false);
   const [googleClientId, setGoogleClientId] = useState("");
+  const [pricing, setPricing] = useState(null);
   // Signed in with Google (here, or on the login page with no shop yet): the email is already proven.
   const [google, setGoogle] = useState(location.state?.google || null);
   const [f, setF] = useState({ shopName: "", name: google?.name || "", phone: "", email: google?.email || "", password: "" });
@@ -26,6 +27,7 @@ export default function Register() {
       .then((c) => {
         setEmailOtp(c.emailOtp);
         setGoogleClientId(c.googleClientId || "");
+        setPricing(c);
       })
       .catch(() => {});
   }, []);
@@ -64,7 +66,12 @@ export default function Register() {
           <form className="stack" onSubmit={submit}>
             <div>
               <h1>Register your shop</h1>
-              <p className="muted small" style={{ margin: 0 }}>3 days free. Then ₹49/month or ₹400/year. Your menu starts with a ready-made dhaba menu you can edit.</p>
+              <p className="muted small" style={{ margin: 0 }}>
+                {pricing?.plans
+                  ? `${pricing.trialDays ? `${pricing.trialDays} days free. Then ` : ""}₹${pricing.plans.find((p) => p.id === "monthly")?.amount}/month or ₹${pricing.plans.find((p) => p.id === "yearly")?.amount}/year. `
+                  : ""}
+                Your menu starts with a ready-made dhaba menu you can edit.
+              </p>
             </div>
             {googleClientId && !google && (
               <>
@@ -94,7 +101,7 @@ export default function Register() {
             </Field>
             {error && <div className="error">{error}</div>}
             <button className="btn btn-primary btn-lg" disabled={busy}>
-              {busy ? "Please wait…" : emailOtp && !google ? "Send verification code" : "Start free trial"}
+              {busy ? "Please wait…" : emailOtp && !google ? "Send verification code" : pricing?.trialDays === 0 ? "Create my shop" : "Start free trial"}
             </button>
           </form>
         ) : (

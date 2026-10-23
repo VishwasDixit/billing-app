@@ -1,9 +1,42 @@
-export const TRIAL_DAYS = 3;
+// Standard prices, plan lengths and the free trial. The admin changes them in Admin › Pricing;
+// they live in settings { _id: "plans" } and are loaded (cached briefly) on every request.
+export const DEFAULT_PLAN_SETTINGS = Object.freeze({
+  monthly: { amount: 49, days: 30 },
+  yearly: { amount: 400, days: 365 },
+  trialDays: 3,
+  yearlyBadge: "Best value",
+});
 
 export const PLANS = {
   monthly: { id: "monthly", name: "Monthly", amount: 49, days: 30 },
   yearly: { id: "yearly", name: "Yearly", amount: 400, days: 365 },
 };
+
+let current = structuredClone(DEFAULT_PLAN_SETTINGS);
+let loadedAt = 0;
+const CACHE_MS = 30 * 1000;
+
+function applySettings(doc) {
+  const d = DEFAULT_PLAN_SETTINGS;
+  current = {
+    monthly: { ...d.monthly, ...(doc?.monthly || {}) },
+    yearly: { ...d.yearly, ...(doc?.yearly || {}) },
+    trialDays: doc?.trialDays ?? d.trialDays,
+    yearlyBadge: doc?.yearlyBadge ?? d.yearlyBadge,
+  };
+  for (const id of ["monthly", "yearly"]) Object.assign(PLANS[id], current[id]);
+}
+
+export async function loadPlanSettings(db, { force = false } = {}) {
+  if (force || Date.now() - loadedAt > CACHE_MS) {
+    applySettings(await db.collection("settings").findOne({ _id: "plans" }));
+    loadedAt = Date.now();
+  }
+  return current;
+}
+
+export const planSettings = () => current;
+export const trialDays = () => current.trialDays;
 
 const DAY = 24 * 60 * 60 * 1000;
 

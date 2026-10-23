@@ -78,8 +78,8 @@ function Shell({ children }) {
     ["/", "🧾", "Billing"],
     ["/bills", "📄", "Bills"],
     ["/customers", "📒", "Udhar"],
-    ["/dashboard", paid ? "📊" : "🔒", "Dashboard"],
-    ["/expenses", "💸", "Expenses"],
+    ["/dashboard", paid ? "📊" : "🔒", "Dashboard", "Stats"],
+    ["/expenses", "💸", "Expenses", "Costs"],
     ["/settings", "⚙️", "Settings"],
     ...(isAdmin ? [["/admin", "🛡️", "Admin"]] : [["/help", helpUnread ? "🔴" : "❓", "Help"]]),
   ];
@@ -99,10 +99,13 @@ function Shell({ children }) {
           </button>
         )}
         <nav className="nav">
-          {links.map(([to, ico, label]) => (
+          {links.map(([to, ico, label, short]) => (
             <NavLink key={to} to={to} end={to === "/"}>
               <span className="ico" aria-hidden="true">{ico}</span>
-              {label}
+              <span className="lbl">
+                <span className="lbl-long">{label}</span>
+                <span className="lbl-short">{short || label}</span>
+              </span>
             </NavLink>
           ))}
         </nav>

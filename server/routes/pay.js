@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import { HttpError } from "../http.js";
-import { PLANS, plansFor, grantPlan } from "../subscription.js";
+import { PLANS, plansFor, grantPlan, planSettings } from "../subscription.js";
 import { findPromo, applyPromo, describePromo } from "../promo.js";
 
 const PlanId = z.enum(["monthly", "yearly"]);
@@ -168,6 +168,8 @@ export default [
     "/pay/config",
     async ({ status, shop }) => ({
       plans: Object.values(plansFor(shop)),
+      yearlyBadge: planSettings().yearlyBadge,
+      trialDays: planSettings().trialDays,
       razorpayKeyId: razorpayKeys()?.id || null,
       upi: process.env.UPI_ID ? { id: process.env.UPI_ID, name: process.env.UPI_NAME || "Billing App" } : null,
       // A Razorpay.me (or other) payment page; payments are confirmed by the admin.

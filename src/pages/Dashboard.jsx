@@ -6,6 +6,7 @@ import { Line, Bar } from "react-chartjs-2";
 import { Link } from "react-router-dom";
 import { useApp, accessState } from "../lib/store.jsx";
 import { downloadReportPdf, downloadReportExcel } from "../lib/reportExport.js";
+import { useAuthConfig } from "./Login.jsx";
 import { get } from "../lib/api.js";
 import { money, monthStartYmd, todayYmd } from "../lib/format.js";
 import { useAction } from "../components/ui.jsx";
@@ -249,6 +250,8 @@ function Stat({ label, value, delta, prev, invert, tone }) {
 
 // Trial and expired shops: what the paid plan unlocks.
 function LockedDashboard({ expired }) {
+  const { plans } = useAuthConfig();
+  const monthly = plans?.find((p) => p.id === "monthly")?.amount;
   return (
     <div className="page">
       <div className="page-head"><h1>Dashboard</h1></div>
@@ -265,7 +268,7 @@ function LockedDashboard({ expired }) {
           <div style={{ fontSize: 34 }}>📊</div>
           <h2 style={{ margin: 0 }}>Sales dashboard &amp; Profit / Loss</h2>
           <p className="muted" style={{ margin: 0 }}>
-            Daily sales, profit and loss, top items, payment modes, udhar summary, and downloadable PDF and Excel reports are part of the paid plan, from ₹49/month.
+            Daily sales, profit and loss, top items, payment modes, udhar summary, and downloadable PDF and Excel reports are part of the paid plan{monthly ? `, from ₹${monthly}/month` : ""}.
           </p>
           <p className="small muted" style={{ margin: 0 }}>
             {expired ? "Your plan has ended." : "You're on the free trial."} Billing, bills and expenses keep working{expired ? " after you renew" : ""}.

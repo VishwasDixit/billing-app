@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError } from "../http.js";
 import { hashPassword, isAdminEmail } from "../auth.js";
-import { grantPlan, subscriptionStatus, plansFor, PLANS } from "../subscription.js";
+import { grantPlan, subscriptionStatus, plansFor, PLANS, loadPlanSettings, DEFAULT_PLAN_SETTINGS } from "../subscription.js";
 import { recheckPendingLinks } from "./pay.js";
 import { dueReminders, runReminders, lastRuns, REMIND_DAYS, reminderCooldownHours } from "../reminders.js";
 import { emailOtpReady } from "../otp/mailer.js";
@@ -50,7 +50,28 @@ async function promoList(db) {
   return codes.map(({ _id, ...p }) => ({ ...p, code: _id, label: describePromo(p), uses: byCode.get(_id)?.uses || 0, paid: byCode.get(_id)?.approved || 0, discountGiven: byCode.get(_id)?.off || 0 }));
 }
 
+const PlanIn = z.object({ amount: z.number().int().min(1, "price must be at least ₹1").max(100000), days: z.number().int().min(1).max(3650) });
+const PlanSettingsIn = z
+  .object({
+    monthly: PlanIn,
+    yearly: PlanIn,
+    trialDays: z.number().int().min(0).max(30),
+    yearlyBadge: z.string().trim().max(24).default(""),
+  })
+  .refine((s) => s.yearly.days > s.monthly.days, { message: "the yearly plan should be longer than the monthly one", path: ["yearly", "days"] });
+
 export default [
+  ["GET", "/admin/plan-settings", async ({ db }) => ({ ...(await loadPlanSettings(db, { force: true })), defaults: DEFAULT_PLAN_SETTINGS }), admin],
+  [
+    "PUT",
+    "/admin/plan-settings",
+    async ({ db, body, user }) => {
+      const input = PlanSettingsIn.parse(body);
+      await db.collection("settings").replaceOne({ _id: "plans" }, { ...input, updatedAt: new Date(), updatedBy: user.email }, { upsert: true });
+      return { ...(await loadPlanSettings(db, { force: true })), defaults: DEFAULT_PLAN_SETTINGS };
+    },
+    admin,
+  ],
   ["GET", "/admin/promos", async ({ db }) => ({ promos: await promoList(db) }), admin],
   [
     "POST",

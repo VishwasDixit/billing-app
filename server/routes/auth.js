@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { HttpError, respond } from "../http.js";
 import { hashPassword, checkPassword, sessionCookie, clearCookie, publicUser, isAdminEmail, assertAuthConfigured } from "../auth.js";
-import { TRIAL_DAYS, blockedMessage } from "../subscription.js";
+import { trialDays, blockedMessage, planSettings, PLANS } from "../subscription.js";
 import { defaultMenu, GRILLHIVE_SHOP } from "../seed/grillhive-menu.js";
 import { createCode, verifyCode } from "../otp/codes.js";
 import { sendOtpEmail, emailOtpReady } from "../otp/mailer.js";
@@ -103,7 +103,7 @@ export function newShop({ name, phone, ownerEmail }) {
     defaultDiscount: { type: "percent", value: 0 },
     printer: { paperSize: 58, method: "bluetooth", charsPerLine: 32, largeText: false, slowMode: false, cut: false, printLogo: false },
     deviceSeq: 0,
-    trialEndsAt: new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000),
+    trialEndsAt: new Date(now.getTime() + trialDays() * 24 * 60 * 60 * 1000),
     subscription: null,
     createdAt: now,
   };
@@ -120,7 +120,14 @@ export default [
   [
     "GET",
     "/auth/config",
-    async () => ({ emailOtp: await emailOtpReady(), googleClientId: googleClientId() || (googleEnabled() ? "test" : "") }),
+    async () => ({
+      emailOtp: await emailOtpReady(),
+      googleClientId: googleClientId() || (googleEnabled() ? "test" : ""),
+      // Standard prices for sign-up and marketing text (shops may have their own price).
+      plans: Object.values(PLANS).map(({ id, name, amount, days }) => ({ id, name, amount, days })),
+      trialDays: trialDays(),
+      yearlyBadge: planSettings().yearlyBadge,
+    }),
     { auth: false },
   ],
 

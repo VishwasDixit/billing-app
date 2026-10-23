@@ -69,6 +69,7 @@ export default function Admin() {
   const [payments, setPayments] = useState([]);
   const [storage, setStorage] = useState(null);
   const [helpUnread, setHelpUnread] = useState(0);
+  const [pricing, setPricing] = useState(null);
   const [manageId, setManageId] = useState(null);
   const [focusDelete, setFocusDelete] = useState(false);
   const [q, setQ] = useState("");
@@ -84,6 +85,7 @@ export default function Admin() {
       setShops(s.shops);
       setPayments(p.payments);
       get("/admin/storage").then(setStorage).catch(() => {});
+      get("/admin/plan-settings").then(setPricing).catch(() => {});
       get("/admin/help?status=all").then((h) => setHelpUnread(h.unread)).catch(() => {});
     });
   useEffect(() => {
@@ -119,7 +121,7 @@ export default function Admin() {
         <Seg
           value={tab}
           onChange={setTab}
-          options={[["shops", `Shops (${shops.length})`], ["payments", `Payments${pending.length ? ` (${pending.length} new)` : ""}`], ["promos", "Promo codes"], ["reminders", "Reminders"], ["help", `Help${helpUnread ? ` (${helpUnread} new)` : ""}`]]}
+          options={[["shops", `Shops (${shops.length})`], ["payments", `Payments${pending.length ? ` (${pending.length} new)` : ""}`], ["pricing", "Pricing"], ["promos", "Promo codes"], ["reminders", "Reminders"], ["help", `Help${helpUnread ? ` (${helpUnread} new)` : ""}`]]}
         />
         </div>
       </div>
@@ -264,13 +266,14 @@ export default function Admin() {
         </>
       )}
 
-      {tab === "promos" && <Promos />}
+      {tab === "pricing" && <Pricing value={pricing} onSaved={setPricing} />}
+      {tab === "promos" && <Promos pricing={pricing} />}
 
       {tab === "help" && <AdminHelp onUnread={setHelpUnread} onOpenShop={(id) => (setTab("shops"), setManageId(id))} />}
 
       {tab === "reminders" && <Reminders onOpenShop={(id) => (setTab("shops"), setManageId(id))} />}
 
-      {manage && <ManageShop shop={manage} focusDelete={focusDelete} onClose={() => setManageId(null)} onDone={load} onDeleted={() => (setManageId(null), load())} />}
+      {manage && <ManageShop shop={manage} pricing={pricing} focusDelete={focusDelete} onClose={() => setManageId(null)} onDone={load} onDeleted={() => (setManageId(null), load())} />}
     </div>
   );
 }
@@ -300,10 +303,86 @@ function StorageMeter({ s }) {
   );
 }
 
+// Standard plan prices, plan lengths and the free trial for every shop.
+function Pricing({ value, onSaved }) {
+  const toast = useToast();
+  const [f, setF] = useState(null);
+  const { busy, error, run } = useAction();
+  useEffect(() => {
+    if (value && !f) setF({ monthly: { ...value.monthly }, yearly: { ...value.yearly }, trialDays: value.trialDays, yearlyBadge: value.yearlyBadge || "" });
+  }, [value, f]);
+  if (!f) return <div className="empty">Loading…</div>;
+  const setPlan = (id, k, v) => setF((x) => ({ ...x, [id]: { ...x[id], [k]: v } }));
+  const num = (v) => Math.round(Number(v) || 0);
+  const m = num(f.monthly.amount);
+  const y = num(f.yearly.amount);
+  const perMonth = Math.round((y / Math.max(1, num(f.yearly.days))) * 30);
+  const save = Math.round((1 - y / (m * (num(f.yearly.days) / Math.max(1, num(f.monthly.days))))) * 100);
+  const changed = JSON.stringify(f) !== JSON.stringify({ monthly: value.monthly, yearly: value.yearly, trialDays: value.trialDays, yearlyBadge: value.yearlyBadge || "" });
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!confirm(`Save new prices? Monthly ₹${m} / ${num(f.monthly.days)} days, Yearly ₹${y} / ${num(f.yearly.days)} days, ${num(f.trialDays)}-day free trial.`)) return;
+    run(async () => {
+      const body = { monthly: { amount: m, days: num(f.monthly.days) }, yearly: { amount: y, days: num(f.yearly.days) }, trialDays: num(f.trialDays), yearlyBadge: f.yearlyBadge };
+      const r = await put("/admin/plan-settings", body);
+      onSaved(r);
+      setF({ monthly: { ...r.monthly }, yearly: { ...r.yearly }, trialDays: r.trialDays, yearlyBadge: r.yearlyBadge || "" });
+      toast("Prices saved. New payments and sign-ups use them now.");
+    });
+  };
+
+  return (
+    <form className="card stack" onSubmit={submit}>
+      <div>
+        <h2 style={{ margin: 0 }}>Plan prices &amp; free trial</h2>
+        <p className="small muted" style={{ margin: "4px 0 0" }}>
+          These are the standard prices for every shop. Shops with a special price keep it, and promo codes apply on top. Plans already paid for and running trials don't change.
+        </p>
+      </div>
+      <div className="pricing-grid">
+        {[["monthly", "Monthly plan"], ["yearly", "Yearly plan"]].map(([id, label]) => (
+          <fieldset key={id} className="pricing-box">
+            <legend>{label}</legend>
+            <div className="grid2">
+              <Field label="Price (₹)"><input type="number" min="1" max="100000" required inputMode="numeric" value={f[id].amount} onChange={(e) => setPlan(id, "amount", e.target.value)} /></Field>
+              <Field label="Days"><input type="number" min="1" max="3650" required inputMode="numeric" value={f[id].days} onChange={(e) => setPlan(id, "days", e.target.value)} /></Field>
+            </div>
+          </fieldset>
+        ))}
+      </div>
+      <div className="grid2">
+        <Field label="Free trial (days)" hint="0 = no free trial. Applies to new sign-ups.">
+          <input type="number" min="0" max="30" required inputMode="numeric" value={f.trialDays} onChange={(e) => setF({ ...f, trialDays: e.target.value })} />
+        </Field>
+        <Field label="Yearly badge" hint="Shown on the yearly card, e.g. Best value">
+          <input maxLength={24} value={f.yearlyBadge} onChange={(e) => setF({ ...f, yearlyBadge: e.target.value })} />
+        </Field>
+      </div>
+      <div className="pricing-preview small">
+        Shops will see: <b>₹{m}</b> for {num(f.monthly.days)} days · <b>₹{y}</b> for {num(f.yearly.days)} days (≈ ₹{perMonth}/month{save > 0 ? `, save ${save}%` : ""}) ·{" "}
+        {num(f.trialDays) ? `${num(f.trialDays)}-day free trial` : "no free trial"}
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="btn-row">
+        <button className="btn btn-primary" disabled={busy || !changed}>{busy ? "Saving…" : "Save prices"}</button>
+        {changed && <button type="button" className="btn" onClick={() => setF(null)}>Undo</button>}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => setF({ monthly: { ...value.defaults.monthly }, yearly: { ...value.defaults.yearly }, trialDays: value.defaults.trialDays, yearlyBadge: value.defaults.yearlyBadge })}
+        >
+          Fill original prices
+        </button>
+      </div>
+    </form>
+  );
+}
+
 const EMPTY_PROMO = { code: "", type: "percent", value: 20, plans: ["monthly", "yearly"], maxUses: "", onePerShop: true, validUntil: "", note: "", active: true };
 
 // Promo codes shops can enter on the Plans page.
-function Promos() {
+function Promos({ pricing }) {
   const toast = useToast();
   const [list, setList] = useState(null);
   const [form, setForm] = useState(null); // { ...promo, editing }
@@ -340,7 +419,8 @@ function Promos() {
     });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const togglePlan = (id) => set("plans", form.plans.includes(id) ? form.plans.filter((x) => x !== id) : [...form.plans, id]);
-  const preview = form ? (form.type === "percent" ? [49, 400].map((a) => a - Math.round((a * (Number(form.value) || 0)) / 100)) : [49, 400].map((a) => Math.max(1, a - (Number(form.value) || 0)))) : [];
+  const std = [pricing?.monthly.amount ?? 49, pricing?.yearly.amount ?? 400];
+  const preview = form ? (form.type === "percent" ? std.map((a) => a - Math.round((a * (Number(form.value) || 0)) / 100)) : std.map((a) => Math.max(1, a - (Number(form.value) || 0)))) : [];
 
   return (
     <div className="stack">
@@ -379,7 +459,7 @@ function Promos() {
           </div>
           <label className="check"><input type="checkbox" checked={form.onePerShop} onChange={(e) => set("onePerShop", e.target.checked)} /> Each shop can use it only once</label>
           <Field label="Note (only you see this)"><input maxLength={120} value={form.note} onChange={(e) => set("note", e.target.value)} placeholder="e.g. Diwali offer for Lucknow shops" /></Field>
-          <p className="hint" style={{ margin: 0 }}>At standard prices: Monthly ₹49 → <b>₹{preview[0]}</b>, Yearly ₹400 → <b>₹{preview[1]}</b>. Special shop prices get the same discount.</p>
+          <p className="hint" style={{ margin: 0 }}>At standard prices: Monthly ₹{std[0]} → <b>₹{preview[0]}</b>, Yearly ₹{std[1]} → <b>₹{preview[1]}</b>. Special shop prices get the same discount.</p>
           {error && <div className="error">{error}</div>}
           <div className="btn-row">
             <button type="button" className="btn" onClick={() => setForm(null)}>Cancel</button>
@@ -602,7 +682,7 @@ function Reminders({ onOpenShop }) {
   );
 }
 
-function ManageShop({ shop, focusDelete, onClose, onDone, onDeleted }) {
+function ManageShop({ shop, pricing, focusDelete, onClose, onDone, onDeleted }) {
   const dangerRef = useRef(null);
   useEffect(() => {
     if (focusDelete) setTimeout(() => dangerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
@@ -702,7 +782,7 @@ function ManageShop({ shop, focusDelete, onClose, onDone, onDeleted }) {
                 Save prices
               </button>
               {shop.prices.custom && (
-                <button className="btn btn-sm" disabled={busy} onClick={() => savePrices({ monthly: null, yearly: null })}>Back to standard (₹49 / ₹400)</button>
+                <button className="btn btn-sm" disabled={busy} onClick={() => savePrices({ monthly: null, yearly: null })}>Back to standard (₹{pricing?.monthly.amount ?? 49} / ₹{pricing?.yearly.amount ?? 400})</button>
               )}
             </div>
             <p className="hint" style={{ margin: "6px 0 0" }}>The shop sees these prices on its Plans page. Payments already made aren't changed.</p>

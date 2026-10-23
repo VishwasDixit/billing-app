@@ -18,7 +18,7 @@ export function useResendTimer() {
 
 // Login/sign-up options the server offers (email codes, Google).
 export function useAuthConfig() {
-  const [config, setConfig] = useState({ emailOtp: false, googleClientId: "" });
+  const [config, setConfig] = useState({ emailOtp: false, googleClientId: "", trialDays: 3, plans: null });
   useEffect(() => {
     get("/auth/config").then(setConfig).catch(() => {});
   }, []);
@@ -27,7 +27,7 @@ export function useAuthConfig() {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { googleClientId } = useAuthConfig();
+  const { googleClientId, trialDays } = useAuthConfig();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const { mood, error, busy, signIn } = useDogAuth();
@@ -76,7 +76,7 @@ export default function Login() {
         </p>
 
         <p className="small muted" style={{ textAlign: "center", margin: 0 }}>
-          New shop? <Link to="/register">Start your 3-day free trial</Link>
+          New shop? <Link to="/register">{trialDays ? `Start your ${trialDays}-day free trial` : "Create your shop"}</Link>
         </p>
       </div>
     </div>
