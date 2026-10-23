@@ -158,8 +158,8 @@ function useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAle
     { to: "/dashboard", ico: paid ? "📊" : "🔒", label: "Dashboard", top: true },
     { to: "/expenses", ico: "💸", label: "Expenses", top: true },
     { to: "/kitchen", ico: "🍳", label: "Kitchen screen" },
-    { to: "/kitchen-manage", ico: kitchenAlerts ? "🔔" : "🥫", label: kitchenAlerts ? `Kitchen stock (${kitchenAlerts})` : "Kitchen stock", alert: kitchenAlerts > 0 },
-    ...(isAdmin ? [] : [{ to: "/staff", ico: "👥", label: "Staff & salary" }]),
+    { to: "/kitchen-manage", ico: kitchenAlerts ? "🔔" : "🥫", label: kitchenAlerts ? `Kitchen stock (${kitchenAlerts})` : "Kitchen stock", topLabel: kitchenAlerts ? `Kitchen (${kitchenAlerts})` : "Kitchen", top: true, alert: kitchenAlerts > 0 },
+    ...(isAdmin ? [] : [{ to: "/staff", ico: "👥", label: "Staff & salary", topLabel: "Staff", top: true }]),
     { to: "/menu", ico: "🍔", label: "Menu & stock" },
     { to: "/plans", ico: "💳", label: "Plans" },
     { to: "/settings", ico: "⚙️", label: "Settings", short: "Setup", bottom: true, top: true },
@@ -190,6 +190,7 @@ function Shell({ children }) {
   useEffect(() => setMoreOpen(false), [loc.pathname]);
   const links = useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAlerts });
   if (loc.pathname === "/kitchen") return <ToastFree>{children}<StaffGate /></ToastFree>;
+  const onTop = links.some((l) => l.top && !l.bottom && (loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
   const inMore = !links.some((l) => l.bottom && (l.to === "/" ? loc.pathname === "/" : loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
 
   return (
@@ -213,12 +214,12 @@ function Shell({ children }) {
               <NavLink key={l.to} to={l.to} end={l.to === "/"} className={(l.bottom ? "in-bottom" : "top-only") + (l.alert ? " alert" : "")}>
                 <span className="ico" aria-hidden="true">{l.ico}</span>
                 <span className="lbl">
-                  <span className="lbl-long">{l.label}</span>
+                  <span className="lbl-long">{l.topLabel || l.label}</span>
                   <span className="lbl-short">{l.short || l.label}</span>
                 </span>
               </NavLink>
             ))}
-          <button type="button" className={"more-btn" + (inMore || moreOpen ? " active" : "")} onClick={() => setMoreOpen(true)} aria-label="More pages">
+          <button type="button" className={"more-btn" + (inMore || moreOpen ? " active" : "") + (onTop && !moreOpen ? " on-top" : "")} onClick={() => setMoreOpen(true)} aria-label="More pages">
             <span className="ico" aria-hidden="true">☰</span>
             <span className="lbl">More</span>
             {(helpUnread || (kitchenAlerts > 0 && !isKitchen)) && <span className="dot" aria-hidden="true" />}
