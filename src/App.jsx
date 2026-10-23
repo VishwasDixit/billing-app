@@ -98,15 +98,15 @@ function useOrderAlerts(shop) {
     const t = setInterval(() => document.visibilityState === "visible" && refreshOrders().catch(() => {}), 15000);
     return () => clearInterval(t);
   }, [hasTables]);
-  const prev = useRef(st.waiting);
+  const prev = useRef(st.attention);
   useEffect(() => {
-    if (st.waiting > prev.current) {
+    if (st.attention > prev.current) {
       beep();
-      if (loc.pathname !== "/orders") toast(`🔔 New table order (${st.waiting} waiting). Open Orders to accept.`);
+      if (loc.pathname !== "/orders") toast(`🔔 ${st.attention} table request${st.attention === 1 ? "" : "s"} waiting (orders, bills or payments). Open Orders.`);
     }
-    prev.current = st.waiting;
-  }, [st.waiting]); // eslint-disable-line react-hooks/exhaustive-deps
-  return { hasTables, waiting: st.waiting };
+    prev.current = st.attention;
+  }, [st.attention]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { hasTables, waiting: st.attention };
 }
 
 function Shell({ children }) {

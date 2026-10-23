@@ -4,7 +4,8 @@ import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Modal, useToast } from "../components/ui.jsx";
 import { ItemPicture } from "../components/ItemPicture.jsx";
-import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder } from "../lib/orders.js";
+import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment } from "../lib/orders.js";
+import { StockPanel } from "../components/Stock.jsx";
 import { printKot } from "../printer/index.js";
 import { explainPrintError } from "../printer/transports.js";
 import { usePref } from "../lib/prefs.js";
@@ -56,6 +57,7 @@ export default function Orders() {
   const kot = useKotPrinter();
   const [tableId, setTableId] = useState(null);
   const [adding, setAdding] = useState(null); // table to add an order for
+  const [stockOpen, setStockOpen] = useState(false);
   const cur = shop.currency || "₹";
   useOrderPolling(5000);
 
@@ -115,9 +117,33 @@ export default function Orders() {
         <div className="btn-row">
           {!st.online && <span className="tag warn">Offline · orders saved on this phone</span>}
           {st.pending.length > 0 && <span className="tag warn">{st.pending.length} to upload</span>}
+          <button className="btn" onClick={() => setStockOpen(true)}>🥟 Stock</button>
           <Link className="btn" to="/kitchen">🍳 Kitchen screen</Link>
         </div>
       </div>
+      {stockOpen && <StockPanel onClose={() => setStockOpen(false)} />}
+
+      {st.paymentClaims.length > 0 && (
+        <section className="stack" style={{ marginBottom: 16 }}>
+          <h2>Payments to confirm ({st.paymentClaims.length})</h2>
+          {st.paymentClaims.map((c) => (
+            <div key={c.clientId} className="card order-card new">
+              <div className="order-top">
+                <b>{c.table || "Table"} says paid {money(c.total, cur)} by UPI</b>
+                <span className="small muted">Bill {c.billNo} · {ago(c.customerPaid.at)}</span>
+              </div>
+              {c.customerPaid.utr && <div className="small">UPI reference: <b>{c.customerPaid.utr}</b></div>}
+              <div className="small muted">Check your UPI app or bank for this payment, then confirm.</div>
+              <div className="btn-row" style={{ justifyContent: "flex-end" }}>
+                <button className="btn btn-sm" onClick={() => confirmPayment(c, "cash").then(() => toast("Marked as paid in cash"), (e) => toast(e.message))}>Paid in cash instead</button>
+                <button className="btn btn-sm btn-primary" onClick={() => confirmPayment(c, "upi").then(() => toast(`Payment for ${c.table} confirmed`), (e) => toast(e.message))}>
+                  ✅ Payment received
+                </button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
 
       {waiting.length > 0 && (
         <section className="stack" style={{ marginBottom: 16 }}>
@@ -156,14 +182,16 @@ export default function Orders() {
           const total = list.reduce((s, o) => s + (o.total || 0), 0);
           const ready = list.some((o) => o.status === "ready");
           const since = list[0]?.createdAt;
+          const billReq = list.find((o) => o.billRequest)?.billRequest;
           return (
-            <button key={t.id} className={"table-tile" + (list.length ? (ready ? " ready" : " busy") : "")} onClick={() => setTableId(t.id)}>
+            <button key={t.id} className={"table-tile" + (list.length ? (ready ? " ready" : " busy") : "") + (billReq ? " wants-bill" : "")} onClick={() => setTableId(t.id)}>
               <b>{t.name}</b>
               {list.length ? (
                 <>
                   <span>{money(total, cur)}</span>
                   <span className="small">{list.length} order{list.length === 1 ? "" : "s"} · {ago(since)}</span>
                   {ready && <span className="tag good">food ready</span>}
+                  {billReq && <span className="tag warn">🧾 Bill · {billReq.method === "upi" ? "UPI" : "Counter"}</span>}
                 </>
               ) : (
                 <span className="small muted">Free</span>
@@ -189,7 +217,19 @@ export default function Orders() {
                 const l = lines.get(k);
                 lines.set(k, l ? { ...l, qty: l.qty + i.qty } : { itemId: i.itemId || i.name, name: i.name, variant: i.variant || "", category: i.category || "", rate: i.rate, qty: i.qty });
               }
-            nav("/", { state: { tableBill: { table: openTable.id, tableName: openTable.name, orderIds: list.map((o) => o.clientId), orderNos: list.map((o) => o.orderNo), lines: [...lines.values()] } } });
+            const req = list.find((o) => o.billRequest)?.billRequest;
+            nav("/", {
+              state: {
+                tableBill: {
+                  table: openTable.id,
+                  tableName: openTable.name,
+                  orderIds: list.map((o) => o.clientId),
+                  orderNos: list.map((o) => o.orderNo),
+                  lines: [...lines.values()],
+                  payMode: req?.method === "upi" ? "upi" : req ? "cash" : undefined,
+                },
+              },
+            });
           }}
         />
       )}
@@ -222,6 +262,11 @@ function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
     <Modal title={table.name} onClose={onClose} wide>
       <div className="stack">
         {orders.length === 0 && <div className="empty">No open orders. Tap “Add order” to take one.</div>}
+        {orders.find((o) => o.billRequest) && (
+          <div className="banner warn" style={{ borderRadius: 8 }}>
+            🧾 The customer asked for the bill · will pay {orders.find((o) => o.billRequest).billRequest.method === "upi" ? "online by UPI" : "at the counter"}
+          </div>
+        )}
         {orders.map((o) => (
           <div key={o.clientId} className="order-line">
             <div className="order-top">
@@ -262,7 +307,8 @@ function OrderPicker({ table, onClose, onPlaced }) {
   const active = menu.filter((m) => m.active !== false);
   const cats = ["All", ...new Set(active.map((m) => m.category || "Other"))];
   const shown = active.filter((m) => (cat === "All" || (m.category || "Other") === cat) && (!q || m.name.toLowerCase().includes(q.toLowerCase())));
-  const add = (m, v, d) =>
+  const add = (m, v, d) => {
+    if (d > 0 && m.soldOut && !lines.get(`${m.id}|${v.label}`) && !confirm(`${m.name} is marked sold out. Add it anyway?`)) return;
     setLines((prev) => {
       const k = `${m.id}|${v.label}`;
       const next = new Map(prev);
@@ -271,6 +317,7 @@ function OrderPicker({ table, onClose, onPlaced }) {
       else next.set(k, { itemId: m.id, name: m.name, variant: v.label || "", category: m.category || "", rate: v.price, qty, note: next.get(k)?.note || "" });
       return next;
     });
+  };
   const list = [...lines.values()];
   const total = list.reduce((s, l) => s + l.qty * l.rate, 0);
   const place = async () => {
@@ -292,9 +339,12 @@ function OrderPicker({ table, onClose, onPlaced }) {
             m.variants.map((v) => {
               const l = lines.get(`${m.id}|${v.label}`);
               return (
-                <div key={m.id + v.label} className="picker-row">
+                <div key={m.id + v.label} className={"picker-row" + (m.soldOut ? " out" : "")}>
                   <ItemPicture item={m} size={36} />
-                  <span className="picker-name">{m.name}{v.label ? ` (${v.label})` : ""}<span className="small muted"> {money(v.price, cur)}</span></span>
+                  <span className="picker-name">
+                    {m.name}{v.label ? ` (${v.label})` : ""}<span className="small muted"> {money(v.price, cur)}</span>
+                    {m.soldOut ? <span className="tag bad" style={{ marginLeft: 4 }}>sold out</span> : typeof m.stock === "number" && <span className="tag warn" style={{ marginLeft: 4 }}>{m.stock} left</span>}
+                  </span>
                   <div className="qty">
                     <button onClick={() => add(m, v, -1)} disabled={!l} aria-label="Less">−</button>
                     <span className="picker-qty">{l?.qty || 0}</span>

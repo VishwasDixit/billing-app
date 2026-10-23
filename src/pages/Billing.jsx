@@ -72,6 +72,7 @@ export default function Billing() {
     restored.current = true;
     setTableBill(tb);
     setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant), { ...l }])));
+    if (tb.payMode) setPaymentMode(tb.payMode);
     setCartOpen(true);
     nav(".", { replace: true, state: null });
   }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -106,7 +107,10 @@ export default function Billing() {
       return next;
     });
 
-  const tap = (item) => (item.variants.length > 1 ? setPicker(item) : add(item, item.variants[0]));
+  const tap = (item) => {
+    if (item.soldOut && !confirm(`${item.name} is marked sold out. Add it anyway?`)) return;
+    return item.variants.length > 1 ? setPicker(item) : add(item, item.variants[0]);
+  };
 
   const setQty = (key, qty) =>
     setCart((prev) => {
@@ -204,8 +208,9 @@ export default function Billing() {
             const prices = m.variants.map((v) => v.price);
             return [
               showCat && <div key={"c" + m.id} className="cat-title">{m.category || "Other"}</div>,
-              <button key={m.id} className="menu-item" onClick={() => tap(m)}>
+              <button key={m.id} className={"menu-item" + (m.soldOut ? " sold-out" : "")} onClick={() => tap(m)}>
                 {qty > 0 && <span className="badge">{qty}</span>}
+                {m.soldOut ? <span className="sold-tag">Sold out</span> : typeof m.stock === "number" && m.stock <= 5 && <span className="sold-tag low">{m.stock} left</span>}
                 {showPictures && <ItemPicture item={m} className="tile-pic" />}
                 <span className="name">{m.name}</span>
                 <span className="price">

@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { get, post } from "../lib/api.js";
 import { money } from "../lib/format.js";
 import { defaultImageFor } from "../../shared/menuImages.js";
+import { qrSvg } from "../../shared/billQr.js";
 
 // The page a customer sees after scanning a table's QR code: menu, cart, order status.
 const STEPS = [
@@ -42,7 +43,15 @@ export default function CustomerOrder() {
   const [picker, setPicker] = useState(null);
   const [review, setReview] = useState(false);
   const [mine, setMine] = useState(() => loadMine(token));
-  const [view, setView] = useState(() => (loadMine(token).some((o) => !["served", "rejected", "billed"].includes(o.status)) ? "status" : "menu"));
+  const [view, setView] = useState(() =>
+    loadMine(token).some((o) => !["rejected", "billed"].includes(o.status) || (o.bill && o.bill.paymentMode === "upi" && !o.bill.paymentConfirmed)) ? "status" : "menu"
+  );
+  const [billAsk, setBillAsk] = useState(false);
+  const refreshMine = async () => {
+    const next = await Promise.all(mine.map((o) => get(`/public/shop/${token}/orders/${o.id}?k=${o.key}`).then((s) => ({ ...o, ...s, checkedAt: Date.now() }), () => o)));
+    setMine(next);
+    saveMine(token, next);
+  };
 
   useEffect(() => {
     get(`/public/shop/${token}`).then(setData, (e) => setError(e.message));
@@ -54,7 +63,7 @@ export default function CustomerOrder() {
     const tick = async () => {
       const next = await Promise.all(
         mine.map((o) =>
-          ["served", "rejected", "billed"].includes(o.status) && o.checkedAt && Date.now() - o.checkedAt > 60000
+          (o.status === "rejected" || (o.status === "billed" && (o.bill?.paymentConfirmed || o.bill?.paymentMode !== "upi"))) && o.checkedAt && Date.now() - o.checkedAt > 60000
             ? o
             : get(`/public/shop/${token}/orders/${o.id}?k=${o.key}`).then((s) => ({ ...o, ...s, checkedAt: Date.now() }), () => o)
         )
@@ -120,7 +129,8 @@ export default function CustomerOrder() {
 
       {view === "status" ? (
         <div className="co-status">
-          {[...mine].reverse().map((o) => (
+          <BillBox token={token} mine={mine} cur={cur} onAsk={() => setBillAsk(true)} onChange={refreshMine} />
+          {[...mine].reverse().filter((o) => o.status !== "billed").map((o) => (
             <div key={o.id} className="card co-order">
               <div className="co-order-head">
                 <b>Order #{o.orderNo}</b>
@@ -141,7 +151,9 @@ export default function CustomerOrder() {
               <div className="small muted">{(o.items || []).map((i) => `${i.qty}× ${i.name}${i.variant ? ` (${i.variant})` : ""}`).join(", ")}</div>
             </div>
           ))}
-          <p className="small muted" style={{ textAlign: "center" }}>Pay at the counter when you're done. If no one confirms in a few minutes, please call the staff.</p>
+          {mine.some((o) => o.status === "new") && (
+            <p className="small muted" style={{ textAlign: "center" }}>If no one confirms your order in a few minutes, please call the staff.</p>
+          )}
           {table && data.ordering.open && <button className="btn btn-primary btn-lg" onClick={() => setView("menu")}>+ Order more</button>}
         </div>
       ) : (
@@ -162,6 +174,7 @@ export default function CustomerOrder() {
                   <b>{m.name}</b>
                   {m.note && <div className="small muted">{m.note}</div>}
                   <div className="small">{m.variants.map((v) => `${v.label ? v.label + " " : ""}${money(v.price, cur)}`).join(" · ")}</div>
+                  {m.left != null && <div className="small" style={{ color: "var(--warn)", fontWeight: 600 }}>Only {m.left} left</div>}
                 </div>
                 {table && data.ordering.open && (
                   m.variants.length > 1 ? (
@@ -209,6 +222,18 @@ export default function CustomerOrder() {
             <button className="btn btn-primary" onClick={() => setPicker(null)}>Done</button>
           </div>
         </div>
+      )}
+
+      {billAsk && (
+        <BillAsk
+          token={token}
+          mine={mine}
+          onClose={() => setBillAsk(false)}
+          onDone={async () => {
+            setBillAsk(false);
+            await refreshMine();
+          }}
+        />
       )}
 
       {review && (
@@ -279,6 +304,139 @@ function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced })
         <button className="btn btn-primary btn-lg" disabled={busy} onClick={place}>{busy ? "Sending…" : "Place order"}</button>
         <p className="small muted" style={{ margin: 0, textAlign: "center" }}>You pay at the counter after your meal.</p>
       </div>
+    </div>
+  );
+}
+
+// The table's bill on the customer's phone: ask for it, see it, pay by UPI or at the counter.
+function BillBox({ token, mine, cur, onAsk, onChange }) {
+  const latest = [...mine].reverse();
+  const withBill = latest.find((o) => o.bill);
+  const open = latest.filter((o) => ["accepted", "preparing", "ready", "served"].includes(o.status));
+  const request = open.find((o) => o.billRequest)?.billRequest;
+  if (withBill && !open.length) return <BillCard token={token} order={withBill} cur={cur} onChange={onChange} />;
+  if (!open.length) return null;
+  if (request) {
+    return (
+      <div className="card co-bill-ask done">
+        <b>🧾 Bill requested</b>
+        <div className="small">
+          {request.method === "upi" ? "You'll pay online by UPI." : "You'll pay at the cash counter."} The staff is preparing your bill; it will appear here.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <button className="btn btn-lg co-bill-btn" onClick={onAsk}>
+      🧾 Get the bill
+    </button>
+  );
+}
+
+function BillAsk({ token, mine, onClose, onDone }) {
+  const o = [...mine].reverse().find((x) => ["accepted", "preparing", "ready", "served"].includes(x.status));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const ask = async (method) => {
+    setBusy(true);
+    setError("");
+    try {
+      await post(`/public/shop/${token}/bill-request`, { orderId: o.id, key: o.key, method });
+      await onDone();
+    } catch (err) {
+      setError(err.offline ? "No internet on this phone. Please try again or ask the staff." : err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="co-sheet-back" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="co-sheet">
+        <b>How would you like to pay?</b>
+        {o?.upi && (
+          <button className="pay-method main" disabled={busy} onClick={() => ask("upi")}>
+            <span className="pm-icon">📱</span>
+            <span><b>Pay online (UPI)</b><small>GPay, PhonePe, Paytm or any UPI app, right from your phone</small></span>
+          </button>
+        )}
+        <button className="pay-method" disabled={busy} onClick={() => ask("counter")}>
+          <span className="pm-icon">💵</span>
+          <span><b>Pay at cash counter</b><small>Cash, card or UPI at the counter</small></span>
+        </button>
+        {error && <div className="error">{error}</div>}
+        <button className="btn btn-ghost" onClick={onClose}>Not yet</button>
+      </div>
+    </div>
+  );
+}
+
+function BillCard({ token, order, cur, onChange }) {
+  const b = order.bill;
+  const [utr, setUtr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const upiLink =
+    order.upi &&
+    "upi://pay?" +
+      new URLSearchParams({ pa: order.upi.id, pn: order.upi.name.slice(0, 40), am: Number(b.total).toFixed(2), cu: "INR", tn: `Bill ${b.billNo}` })
+        .toString()
+        .replace(/\+/g, "%20");
+  const paidClaim = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await post(`/public/shop/${token}/bills/${b.id}/paid`, { orderId: order.id, key: order.key, utr });
+      await onChange();
+    } catch (err) {
+      setError(err.offline ? "No internet on this phone. Please try again." : err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const upi = b.paymentMode === "upi";
+  return (
+    <div className="card co-bill">
+      <div className="co-order-head">
+        <b>🧾 Your bill · {b.billNo}</b>
+        <span className="small muted">{order.tableName}</span>
+      </div>
+      <div className="co-bill-lines">
+        {b.items.map((i, k) => (
+          <div key={k} className="co-line-top small">
+            <span>{i.qty}× {i.name}{i.variant ? ` (${i.variant})` : ""}</span>
+            <span>{money(i.amount ?? i.qty * i.rate, cur)}</span>
+          </div>
+        ))}
+      </div>
+      {(b.discount?.amount > 0 || b.gst?.amount > 0) && (
+        <div className="small muted">
+          Subtotal {money(b.subtotal, cur)}
+          {b.discount?.amount > 0 && ` · Discount −${money(b.discount.amount, cur)}`}
+          {b.gst?.amount > 0 && ` · GST ${money(b.gst.amount, cur)}`}
+        </div>
+      )}
+      <div className="co-line-top co-bill-total"><b>Total</b><b>{money(b.total, cur)}</b></div>
+
+      {b.paymentConfirmed ? (
+        <div className="co-paid">✅ Payment received. Thank you, visit again!</div>
+      ) : upi && upiLink ? (
+        b.customerPaid ? (
+          <div className="co-note">⏳ Thanks! Waiting for the shop to confirm your payment.</div>
+        ) : (
+          <div className="stack">
+            <a className="btn btn-primary btn-lg" href={upiLink}>Pay {money(b.total, cur)} with UPI app</a>
+            <details className="small">
+              <summary>Paying from another phone? Show QR</summary>
+              <div className="co-qr" dangerouslySetInnerHTML={{ __html: qrSvg(upiLink, 200) }} />
+            </details>
+            <input className="input" placeholder="UPI reference no. (optional)" maxLength={30} value={utr} onChange={(e) => setUtr(e.target.value.replace(/\s/g, ""))} />
+            {error && <div className="error">{error}</div>}
+            <button className="btn btn-lg" disabled={busy} onClick={paidClaim}>{busy ? "Sending…" : "✔️ I have paid"}</button>
+          </div>
+        )
+      ) : (
+        <div className="co-note">💵 Please pay {money(b.total, cur)} at the cash counter.</div>
+      )}
     </div>
   );
 }

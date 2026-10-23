@@ -48,8 +48,24 @@ export function AppProvider({ children }) {
     });
   }, []);
 
+  // Stock changes made offline wait here and are sent with the next sync.
+  const flushStock = useCallback(async () => {
+    const queue = (await kvGet(`stockQueue:${shopIdRef.current}`)) || [];
+    if (!queue.length) return;
+    const left = [];
+    for (const q of queue) {
+      try {
+        await put(`/menu/${q.id}/stock`, q.patch);
+      } catch (err) {
+        if (err.offline) left.push(q);
+      }
+    }
+    await kvSet(`stockQueue:${shopIdRef.current}`, left);
+  }, []);
+
   const syncNow = useCallback(async () => {
     if (!shopIdRef.current) return;
+    await flushStock().catch(() => {});
     const r = await syncOutbox(shopIdRef.current);
     setOnline(!r.error?.offline);
     await refreshCounts();
@@ -234,6 +250,33 @@ export function AppProvider({ children }) {
         setMenu(r.menu);
         await kvSet("menu", r.menu);
         return r.updated;
+      },
+      // Sold out switch / quantity left / daily amount for one dish. Works offline.
+      async setItemStock(id, patch) {
+        const apply = (list) => list.map((m) => (m.id === id ? { ...m, ...patch, ...(patch.stock != null && patch.soldOut === undefined && { soldOut: patch.stock <= 0 }) } : m));
+        setMenu((list) => {
+          const next = apply(list);
+          kvSet("menu", next);
+          return next;
+        });
+        try {
+          const saved = await put(`/menu/${id}/stock`, patch);
+          setMenu((list) => {
+            const next = list.map((m) => (m.id === id ? saved : m));
+            kvSet("menu", next);
+            return next;
+          });
+          return saved;
+        } catch (err) {
+          if (!err.offline) {
+            loadMenu().catch(() => {});
+            throw err;
+          }
+          const key = `stockQueue:${shopIdRef.current}`;
+          const queue = ((await kvGet(key)) || []).filter((q) => q.id !== id || Object.keys(q.patch).some((k) => !(k in patch)));
+          await kvSet(key, [...queue, { id, patch }]);
+          return null;
+        }
       },
       async deleteMenuItem(id) {
         await del(`/menu/${id}`);

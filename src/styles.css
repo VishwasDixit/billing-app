@@ -698,3 +698,38 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 @media (max-width: 560px) { .page-head { flex-wrap: wrap; } .range-bar { width: 100%; } }
 .chart-grid > *, .chart-box { min-width: 0; }
 .chart-box canvas { max-width: 100%; }
+
+/* Stock */
+.stock-pill { border: 1.5px solid; border-radius: 999px; font: inherit; font-size: 12px; font-weight: 600; padding: 3px 10px; cursor: pointer; white-space: nowrap; background: transparent; min-height: 28px; }
+.stock-pill.ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+.stock-pill.low { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.stock-pill.out { color: #fff; background: var(--danger); border-color: var(--danger); }
+.stock-list { display: grid; gap: 4px; max-height: 55vh; overflow: auto; }
+.stock-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.stock-row.out .stock-name { color: var(--muted); text-decoration: line-through; }
+.stock-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stock-num { width: 64px; flex: none; padding: 6px 8px; font-size: 14px; }
+@media (max-width: 420px) { .stock-num { width: 52px; } }
+.menu-card.sold-out { opacity: .45; }
+.sold-tag { position: absolute; top: 6px; left: 6px; z-index: 1; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; }
+.menu-item { position: relative; }
+.menu-item.sold-out { opacity: .5; }
+.menu-item.sold-out .name { text-decoration: line-through; }
+.sold-tag.low { background: var(--warn); }
+.table-tile.wants-bill { border-color: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.picker-row.out .picker-name { opacity: .55; }
+.co-bill-btn { width: 100%; border: 2px solid var(--accent); color: var(--accent); background: var(--panel); }
+.co-bill-ask { display: grid; gap: 4px; border: 1.5px solid var(--warn); }
+.co-bill { display: grid; gap: 10px; border: 2px solid var(--accent); }
+.co-bill-lines { display: grid; gap: 4px; padding: 8px 0; border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border); }
+.co-bill-total { font-size: 18px; }
+.co-paid { padding: 12px; border-radius: 10px; background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); font-weight: 700; text-align: center; }
+.co-qr { display: grid; place-items: center; padding: 10px; background: #fff; border-radius: 10px; margin-top: 8px; }
+.co-sheet .pay-method { width: 100%; }
+.stock-list { overflow-x: hidden; }
+@media (max-width: 520px) {
+  .stock-row { flex-wrap: wrap; row-gap: 6px; }
+  .stock-name { flex: 1 1 calc(100% - 46px); }
+  .stock-row .stock-num { flex: 1 1 0; width: auto; min-width: 0; }
+  .stock-row .stock-pill { flex: none; }
+}

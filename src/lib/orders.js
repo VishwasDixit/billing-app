@@ -7,12 +7,15 @@ import { get, post } from "./api.js";
 import { kvGet, kvSet } from "./offline.js";
 import { uuid } from "./format.js";
 
-let state = { orders: [], pending: [], statusQueue: [], online: true, loaded: false, waiting: 0 };
+let state = { orders: [], pending: [], statusQueue: [], paymentClaims: [], online: true, loaded: false, waiting: 0, attention: 0 };
 const listeners = new Set();
 const emit = () => listeners.forEach((l) => l());
 const set = (patch) => {
   state = { ...state, ...patch };
   state.waiting = state.orders.filter((o) => o.status === "new").length;
+  // Things staff should act on: new QR orders, tables asking for the bill, payments to confirm.
+  const billTables = new Set(state.orders.filter((o) => o.billRequest && OPEN.includes(o.status)).map((o) => o.table));
+  state.attention = state.waiting + billTables.size + state.paymentClaims.length;
   emit();
 };
 
@@ -51,7 +54,7 @@ export async function refreshOrders() {
   try {
     await flushOrders();
     const r = await get("/orders");
-    set({ orders: r.orders, online: true, loaded: true });
+    set({ orders: r.orders, paymentClaims: r.paymentClaims || [], online: true, loaded: true });
     await kvSet(key("orders"), r.orders);
   } catch (err) {
     if (err.offline) set({ online: false });
@@ -150,6 +153,12 @@ export async function markBilledLocally(ids) {
   set({ orders: state.orders.map(mark), pending: state.pending.map(mark) });
   await kvSet(key("orders"), state.orders);
   await kvSet(key("orderOutbox"), state.pending);
+}
+
+// Staff confirm a customer's "I have paid" (UPI).
+export async function confirmPayment(claim, mode = "upi") {
+  await post(`/bills/${claim.clientId}/confirm-payment`, { mode });
+  set({ paymentClaims: state.paymentClaims.filter((c) => c.clientId !== claim.clientId) });
 }
 
 // Short beep for a new order (no sound file needed).

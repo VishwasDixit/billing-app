@@ -6,6 +6,7 @@ import { subscriptionStatus } from "../subscription.js";
 import { defaultMenu } from "../seed/grillhive-menu.js";
 import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
 import { isLibraryPhoto, CREDIT_URL } from "./images.js";
+import { StockIn, refreshDailyStock, stockDay } from "../stock.js";
 import { LANGUAGE_CODES } from "../../shared/messages.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
@@ -153,7 +154,40 @@ export default [
     },
   ],
 
-  ["GET", "/menu", async ({ db, shop }) => (await db.collection("menuItems").find({ shopId: shop._id }).sort({ sort: 1 }).toArray()).map(publicItem)],
+  [
+    "GET",
+    "/menu",
+    async ({ db, shop }) => {
+      await refreshDailyStock(db, shop._id);
+      return (await db.collection("menuItems").find({ shopId: shop._id }).sort({ sort: 1 }).toArray()).map(publicItem);
+    },
+  ],
+  // Quick stock change: Sold out switch, quantity left, daily amount.
+  [
+    "PUT",
+    "/menu/:id/stock",
+    async ({ db, shop, params, body }) => {
+      const s = StockIn.parse(body);
+      const $set = { updatedAt: new Date() };
+      if (s.soldOut !== undefined) $set.soldOut = s.soldOut;
+      if (s.stock !== undefined) {
+        $set.stock = s.stock;
+        if (s.soldOut === undefined && s.stock !== null) $set.soldOut = s.stock <= 0;
+      }
+      if (s.dailyStock !== undefined) {
+        $set.dailyStock = s.dailyStock;
+        if (s.dailyStock !== null) $set.stockDay = stockDay();
+      }
+      // Back to available with a counted quantity of 0 makes no sense: stop counting.
+      if (s.soldOut === false && s.stock === undefined) {
+        const cur = await db.collection("menuItems").findOne({ _id: oid(params.id), shopId: shop._id }, { projection: { stock: 1 } });
+        if (cur?.stock === 0) $set.stock = null;
+      }
+      const updated = await db.collection("menuItems").findOneAndUpdate({ _id: oid(params.id), shopId: shop._id }, { $set }, { returnDocument: "after" });
+      if (!updated) throw new HttpError(404, "Menu item not found.");
+      return publicItem(updated);
+    },
+  ],
   [
     "POST",
     "/menu",

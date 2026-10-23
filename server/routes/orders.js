@@ -12,6 +12,7 @@ import { round2 } from "../../shared/totals.js";
 import { isAdminEmail } from "../auth.js";
 import { subscriptionStatus, hasPaidFeatures } from "../subscription.js";
 import { rateLimit, clientIp } from "../limits.js";
+import { refreshDailyStock, takeStock, checkAvailable } from "../stock.js";
 
 export const STATUSES = ["new", "accepted", "preparing", "ready", "served", "billed", "rejected"];
 export const OPEN = ["new", "accepted", "preparing", "ready", "served"];
@@ -96,6 +97,13 @@ const priceLines = (menuById, lines) =>
     return { itemId: String(item._id), name: item.name, variant: v.label || "", category: item.category || "", qty: l.qty, rate: v.price, note: l.note || "" };
   });
 
+// The customer's own order, checked with the key their phone got when ordering.
+async function customerOrder(db, shop, id, key) {
+  const o = await db.collection("orders").findOne({ shopId: shop._id, clientId: String(id || "") });
+  if (!o || !key || key !== o.customerKey) throw new HttpError(404, "Order not found.");
+  return o;
+}
+
 export const orderTotal = (items) => round2(items.reduce((s, i) => s + i.qty * i.rate, 0));
 
 export default [
@@ -106,12 +114,22 @@ export default [
     async ({ db, params }) => {
       const shop = await shopByToken(db, params.token);
       const state = await orderingState(db, shop);
-      const menu = await db.collection("menuItems").find({ shopId: shop._id, active: { $ne: false } }).sort({ sort: 1 }).toArray();
+      await refreshDailyStock(db, shop._id);
+      // Sold-out dishes are not shown to customers.
+      const menu = await db.collection("menuItems").find({ shopId: shop._id, active: { $ne: false }, soldOut: { $ne: true } }).sort({ sort: 1 }).toArray();
       return {
         shop: { name: shop.name, logo: shop.logo || "", currency: shop.currency || "₹", address: shop.address || "" },
         tables: tablesOf(shop).map(({ id, name }) => ({ id, name })),
         ordering: state,
-        menu: menu.map((m) => ({ id: String(m._id), name: m.name, category: m.category || "Other", note: m.note || "", variants: m.variants, image: m.image || "" })),
+        menu: menu.map((m) => ({
+          id: String(m._id),
+          name: m.name,
+          category: m.category || "Other",
+          note: m.note || "",
+          variants: m.variants,
+          image: m.image || "",
+          ...(typeof m.stock === "number" && m.stock <= 10 && { left: m.stock }),
+        })),
       };
     },
     { auth: false },
@@ -137,8 +155,12 @@ export default [
       if (ip) await rateLimit(db, `qr-order:ip:${ip}`, 30, "Too many orders from this phone. Please ask the staff.");
       await rateLimit(db, `qr-order:table:${shop._id}:${table.id}`, 25, "This table has sent many orders. Please ask the staff.");
 
+      await refreshDailyStock(db, shop._id);
       const menu = await db.collection("menuItems").find({ shopId: shop._id }).toArray();
-      const items = priceLines(new Map(menu.map((m) => [String(m._id), m])), input.items);
+      const menuById = new Map(menu.map((m) => [String(m._id), m]));
+      const items = priceLines(menuById, input.items);
+      const stockProblem = checkAvailable(menuById, items);
+      if (stockProblem) throw new HttpError(409, stockProblem, { code: "STOCK" });
       const now = new Date();
       const doc = {
         shopId: shop._id,
@@ -167,9 +189,71 @@ export default [
     "/public/shop/:token/orders/:id",
     async ({ db, params, query }) => {
       const shop = await shopByToken(db, params.token);
-      const o = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id });
-      if (!o || !query.k || query.k !== o.customerKey) throw new HttpError(404, "Order not found.");
-      return { orderNo: o.orderNo, tableName: o.tableName, status: o.status, reason: o.rejectReason || "", items: o.items, total: o.total, createdAt: o.createdAt };
+      const o = await customerOrder(db, shop, params.id, query.k);
+      const bill = o.billClientId ? await db.collection("bills").findOne({ shopId: shop._id, clientId: o.billClientId }) : null;
+      return {
+        orderNo: o.orderNo,
+        tableName: o.tableName,
+        status: o.status,
+        reason: o.rejectReason || "",
+        items: o.items,
+        total: o.total,
+        createdAt: o.createdAt,
+        billRequest: o.billRequest || null,
+        upi: shop.upiId ? { id: shop.upiId, name: shop.name } : null,
+        bill: bill && {
+          id: bill.clientId,
+          billNo: bill.billNo,
+          items: bill.items.map(({ name, variant, qty, rate, amount }) => ({ name, variant, qty, rate, amount })),
+          subtotal: bill.subtotal,
+          discount: bill.discount,
+          gst: bill.gst,
+          total: bill.total,
+          paymentMode: bill.paymentMode,
+          status: bill.status,
+          customerPaid: !!bill.customerPaid,
+          paymentConfirmed: !!bill.paymentConfirmedAt,
+          createdAt: bill.createdAt,
+        },
+      };
+    },
+    { auth: false },
+  ],
+
+  // The customer asks for the bill and says how they'll pay.
+  [
+    "POST",
+    "/public/shop/:token/bill-request",
+    async ({ db, params, body }) => {
+      const shop = await shopByToken(db, params.token);
+      const { orderId, key, method } = z.object({ orderId: z.string(), key: z.string(), method: z.enum(["upi", "counter"]) }).parse(body);
+      const o = await customerOrder(db, shop, orderId, key);
+      if (method === "upi" && !shop.upiId) throw new HttpError(400, "Online payment isn't set up here. Please pay at the counter.");
+      const billRequest = { method, at: new Date() };
+      const { modifiedCount } = await db
+        .collection("orders")
+        .updateMany({ shopId: shop._id, table: o.table, status: { $in: OPEN.filter((s) => s !== "new") } }, { $set: { billRequest, updatedAt: new Date() } });
+      if (!modifiedCount) throw new HttpError(400, "There's nothing to bill yet. Please wait until your order is in the kitchen.");
+      return { ok: true, billRequest };
+    },
+    { auth: false },
+  ],
+  // The customer says they've paid the bill by UPI; staff confirm it.
+  [
+    "POST",
+    "/public/shop/:token/bills/:billId/paid",
+    async ({ db, params, body }) => {
+      const shop = await shopByToken(db, params.token);
+      const { orderId, key, utr } = z
+        .object({ orderId: z.string(), key: z.string(), utr: z.string().trim().max(30).optional().default("") })
+        .parse(body);
+      const o = await customerOrder(db, shop, orderId, key);
+      if (o.billClientId !== params.billId) throw new HttpError(404, "Bill not found.");
+      const r = await db
+        .collection("bills")
+        .updateOne({ shopId: shop._id, clientId: params.billId, paymentConfirmedAt: { $exists: false } }, { $set: { customerPaid: { at: new Date(), utr } } });
+      if (!r.matchedCount) return { ok: true, alreadyConfirmed: true };
+      return { ok: true };
     },
     { auth: false },
   ],
@@ -187,7 +271,16 @@ export default [
         .sort({ createdAt: 1 })
         .limit(400)
         .toArray();
-      return { orders: list.map(publicOrder), serverTime: new Date() };
+      const claims = await db
+        .collection("bills")
+        .find({ shopId: shop._id, customerPaid: { $exists: true }, paymentConfirmedAt: { $exists: false }, createdAt: { $gte: new Date(Date.now() - 2 * 864e5) } })
+        .project({ clientId: 1, billNo: 1, table: 1, total: 1, customerPaid: 1, paymentMode: 1 })
+        .toArray();
+      return {
+        orders: list.map(publicOrder),
+        paymentClaims: claims.map(({ _id, ...b }) => ({ ...b, id: String(_id) })),
+        serverTime: new Date(),
+      };
     },
   ],
   // Just the count of QR orders waiting, for the badge and sound on every screen.
@@ -218,6 +311,7 @@ export default [
             acceptedAt: o.createdAt,
             updatedAt: now,
           });
+          await takeStock(db, shop._id, o.items);
           results.push({ clientId: o.clientId, ok: true });
         } catch (err) {
           if (err.code === 11000) results.push({ clientId: o.clientId, ok: true, duplicate: true });
@@ -247,6 +341,7 @@ export default [
         { $set: { status, updatedAt: now, [`${status}At`]: now, [`${status}By`]: user.name, ...(status === "rejected" && { rejectReason: reason }) } },
         { returnDocument: "after" }
       );
+      if (o && status === "accepted") await takeStock(db, shop._id, o.items);
       if (!o) {
         const cur = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id }, { projection: { status: 1 } });
         if (!cur) throw new HttpError(404, "Order not found.");

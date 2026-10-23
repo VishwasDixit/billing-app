@@ -6,6 +6,7 @@ import { CustomerIn, upsertCustomer, udharStatusFor } from "./customers.js";
 import { accessEndsAt } from "../subscription.js";
 import { dayRange } from "./analytics.js";
 import { markOrdersBilled } from "./orders.js";
+import { takeStock } from "../stock.js";
 
 const BillIn = z.object({
   clientId: z.string().uuid(),
@@ -108,6 +109,8 @@ export default [
         try {
           await db.collection("bills").insertOne(doc);
           await markOrdersBilled(db, shop._id, b.orderIds, b.clientId);
+          // Counter bills take stock now; table bills already did when their orders went to the kitchen.
+          if (!b.orderIds?.length && b.status !== "void") await takeStock(db, shop._id, b.items);
           results.push({ clientId: b.clientId, ok: true });
         } catch (err) {
           if (err.code === 11000) results.push({ clientId: b.clientId, ok: true, duplicate: true });
@@ -136,6 +139,21 @@ export default [
       const ids = [...new Set(bills.filter((b) => b.paymentMode === "credit" && b.customer).map((b) => b.customer.clientId))];
       const udhar = await udharStatusFor(db, shop._id, ids);
       return { bills: bills.map((b) => ({ ...publicBill(b), udhar: udhar.get(String(b._id)) || undefined })), hasMore: bills.length === limit };
+    },
+  ],
+  // Staff confirm a customer's UPI payment (or record how a table paid). :id is the bill's client id.
+  [
+    "POST",
+    "/bills/:id/confirm-payment",
+    async ({ db, shop, params, body, user }) => {
+      const { mode } = z.object({ mode: z.enum(["cash", "upi", "card"]).optional() }).parse(body || {});
+      const b = await db.collection("bills").findOneAndUpdate(
+        { shopId: shop._id, clientId: params.id },
+        { $set: { paymentConfirmedAt: new Date(), paymentConfirmedBy: user.name, ...(mode && { paymentMode: mode }) } },
+        { returnDocument: "after" }
+      );
+      if (!b) throw new HttpError(404, "Bill not found.");
+      return publicBill(b);
     },
   ],
   [

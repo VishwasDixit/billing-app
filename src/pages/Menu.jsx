@@ -6,6 +6,7 @@ import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
 import { menuPhoto, sizeOf, fmtBytes } from "../lib/image.js";
 import { ItemPicture } from "../components/ItemPicture.jsx";
 import { PhotoSearch } from "../components/PhotoSearch.jsx";
+import { StockPill, StockPanel } from "../components/Stock.jsx";
 import { post, put } from "../lib/api.js";
 
 const PRESETS = {
@@ -17,6 +18,7 @@ const PRESETS = {
 export default function Menu() {
   const { menu, shop, resetMenu, addDefaultPictures } = useApp();
   const [autoPick, setAutoPick] = useState(false);
+  const [stockOpen, setStockOpen] = useState(false);
   const plainItems = menu.filter((m) => !m.image || isDefaultImage(m.image));
   const toast = useToast();
   const cur = shop.currency || "₹";
@@ -42,6 +44,7 @@ export default function Menu() {
         <h1>Menu</h1>
         <div className="btn-row">
           <input className="input" style={{ width: 180 }} type="search" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <button className="btn" onClick={() => setStockOpen(true)}>🥟 Stock</button>
           <button className="btn btn-primary" onClick={() => setEditing({ name: "", category: "", note: "", variants: PRESETS.single, active: true })}>
             + Add item
           </button>
@@ -55,6 +58,7 @@ export default function Menu() {
         </div>
       )}
       {autoPick && <AutoPick items={plainItems} onClose={() => setAutoPick(false)} />}
+      {stockOpen && <StockPanel onClose={() => setStockOpen(false)} />}
 
       {missingPictures > 0 && (
         <div className="card" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -86,6 +90,9 @@ export default function Menu() {
                     </td>
                     <td className="num">
                       {m.variants.map((v) => (v.label ? `${v.label} ${money(v.price, cur)}` : money(v.price, cur))).join(" · ")}
+                      <div style={{ marginTop: 4 }}>
+                        <StockPill item={m} />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -114,7 +121,8 @@ export default function Menu() {
 }
 
 function ItemEditor({ item, categories, onClose }) {
-  const { saveMenuItem, deleteMenuItem, setMenuPhoto, removeMenuPhoto } = useApp();
+  const { saveMenuItem, deleteMenuItem, setMenuPhoto, removeMenuPhoto, setItemStock } = useApp();
+  const [stock, setStock] = useState({ soldOut: !!item.soldOut, stock: item.stock ?? "", dailyStock: item.dailyStock ?? "" });
   const toast = useToast();
   const [f, setF] = useState({ ...item, variants: item.variants.map((v) => ({ ...v })) });
   // null = keep, data URL = new photo, "default" = back to the drawn picture, { link } = library photo
@@ -167,6 +175,13 @@ function ItemEditor({ item, categories, onClose }) {
         setF({ ...f, id: saved.id });
         throw new Error(`Item saved, but the photo couldn't be uploaded: ${err.message}`);
       }
+      // Stock: only send what changed.
+      const n = (v) => (v === "" || v == null ? null : Math.max(0, Math.floor(Number(v))));
+      const patch = {};
+      if (stock.soldOut !== !!item.soldOut) patch.soldOut = stock.soldOut;
+      if (n(stock.stock) !== (item.stock ?? null)) patch.stock = n(stock.stock);
+      if (n(stock.dailyStock) !== (item.dailyStock ?? null)) patch.dailyStock = n(stock.dailyStock) || null;
+      if (Object.keys(patch).length) await setItemStock(saved.id, patch);
       toast(f.id ? "Item updated" : "Item added");
       onClose();
     });
@@ -247,6 +262,21 @@ function ItemEditor({ item, categories, onClose }) {
           <input type="checkbox" checked={f.active !== false} onChange={(e) => setF({ ...f, active: e.target.checked })} />
           Show on billing screen
         </label>
+        <fieldset className="pricing-box">
+          <legend>Stock</legend>
+          <label className="check">
+            <input type="checkbox" checked={stock.soldOut} onChange={(e) => setStock({ ...stock, soldOut: e.target.checked })} />
+            Sold out (customers won't see it)
+          </label>
+          <div className="grid2">
+            <Field label="Left now" hint="Empty = don't count">
+              <input type="number" min="0" inputMode="numeric" value={stock.stock} onChange={(e) => setStock({ ...stock, stock: e.target.value })} />
+            </Field>
+            <Field label="Every day start with" hint="Empty = no daily reset">
+              <input type="number" min="1" inputMode="numeric" value={stock.dailyStock} onChange={(e) => setStock({ ...stock, dailyStock: e.target.value })} />
+            </Field>
+          </div>
+        </fieldset>
         {error && <div className="error">{error}</div>}
         <div className="modal-actions">
           {f.id && (
