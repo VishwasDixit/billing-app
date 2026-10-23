@@ -48,6 +48,10 @@ export default function Settings() {
   const [pw, setPw] = useState(false);
   const [showPictures, setShowPictures] = useShowPictures();
   const [theme, setTheme] = useTheme();
+  // Opened from "Set up tables": jump to that card.
+  useEffect(() => {
+    if (window.location.hash === "#tables") setTimeout(() => document.getElementById("tables")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+  }, []);
   const { busy, error, run } = useAction();
   const access = accessState(shop);
 
@@ -243,6 +247,10 @@ export default function Settings() {
               </button>
               <button className="btn btn-danger" onClick={() => confirm("Log out of this device?") && logout()}>Log out</button>
             </div>
+            <div className="small muted">
+              App version {__APP_VERSION__} ·{" "}
+              <button className="link-btn" onClick={() => checkForUpdate(toast)}>Check for update</button>
+            </div>
           </section>
         </div>
       </div>
@@ -251,6 +259,20 @@ export default function Settings() {
       {pw && <PasswordModal onClose={() => setPw(false)} />}
     </div>
   );
+}
+
+// Asks for the newest version of the app; if there is one, the page reloads with it.
+async function checkForUpdate(toast) {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    await reg?.update();
+    if (reg?.installing || reg?.waiting) {
+      toast("Updating to the new version…");
+      setTimeout(() => window.location.reload(), 1500);
+    } else toast("You have the latest version.");
+  } catch {
+    toast("Couldn't check right now. Check the internet and try again.");
+  }
 }
 
 // Tables for table orders, the customer QR codes, and KOT printing on this device.

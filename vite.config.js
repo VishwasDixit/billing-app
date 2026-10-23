@@ -3,10 +3,12 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(new Date().toISOString().slice(0, 16).replace("T", " ")) },
   plugins: [
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      injectRegister: false, // registered in src/main.jsx so updates also reload open pages
       includeAssets: ["icon.svg"],
       manifest: {
         name: "Billing – Shop POS",
@@ -24,6 +26,10 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: "/index.html",
+        // A new version takes over open pages straight away (src/main.jsx then reloads them).
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         navigateFallbackDenylist: [/^\/api/],
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
         // Uploaded menu photos never change (a new photo gets a new URL), so cache them for offline billing.

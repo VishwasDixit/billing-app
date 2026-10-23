@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { markBilledLocally } from "../lib/orders.js";
 import { useApp, accessState } from "../lib/store.jsx";
@@ -35,9 +35,41 @@ export default function Billing() {
   // Billing a table: its orders' items fill the cart, and the bill closes those orders.
   const location = useLocation();
   const [tableBill, setTableBill] = useState(null);
+  // The bill being made survives a refresh or an app update (kept on this device only).
+  const draftKey = `billDraft:${shop.id}`;
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || location.state?.tableBill) return;
+    restored.current = true;
+    try {
+      const d = JSON.parse(localStorage.getItem(draftKey) || "null");
+      if (!d?.cart?.length) return;
+      setCart(new Map(d.cart));
+      if (d.discount) setDiscount(d.discount);
+      if (d.gstPercent != null) setGstPercent(d.gstPercent);
+      if (d.paymentMode) setPaymentMode(d.paymentMode);
+      if (d.customer) setCustomer(d.customer);
+      if (d.paidNow) setPaidNow(d.paidNow);
+      if (d.billDate) setBillDate(d.billDate);
+      if (d.tableBill) setTableBill(d.tableBill);
+    } catch {
+      /* no saved bill */
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!restored.current) return;
+    try {
+      if (!cart.size) localStorage.removeItem(draftKey);
+      else localStorage.setItem(draftKey, JSON.stringify({ cart: [...cart.entries()], discount, gstPercent, paymentMode, customer, paidNow, billDate, tableBill }));
+    } catch {
+      /* storage full or blocked */
+    }
+  }, [cart, discount, gstPercent, paymentMode, customer, paidNow, billDate, tableBill, draftKey]);
+
   useEffect(() => {
     const tb = location.state?.tableBill;
     if (!tb) return;
+    restored.current = true;
     setTableBill(tb);
     setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant), { ...l }])));
     setCartOpen(true);

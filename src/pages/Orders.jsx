@@ -91,9 +91,17 @@ export default function Orders() {
       <div className="page">
         <div className="page-head"><h1>Orders</h1></div>
         <div className="card stack" style={{ maxWidth: 520 }}>
-          <h2>Set up your tables first</h2>
-          <p className="muted" style={{ margin: 0 }}>Add your tables in Settings › Tables &amp; QR ordering. Then you can take table orders, print KOTs for the kitchen and let customers order by scanning a QR code.</p>
-          <Link className="btn btn-primary" to="/settings#tables">Set up tables</Link>
+          <h2>🍽️ Table orders, KOT &amp; QR ordering</h2>
+          <ol className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+            <li>Add your tables in <b>Settings › Tables &amp; QR ordering</b> and tap <b>Save settings</b>.</li>
+            <li>Take orders for a table here; the <b>KOT</b> prints for the kitchen (works without internet).</li>
+            <li>Turn on <b>QR ordering</b> and print the table QR codes so customers can order from their phones.</li>
+            <li>Open the <b>Kitchen screen</b> on a tablet, and bill each table at the end.</li>
+          </ol>
+          <div className="btn-row">
+            <Link className="btn btn-primary" to="/settings#tables">Set up tables</Link>
+            <Link className="btn" to="/kitchen">🍳 Kitchen screen</Link>
+          </div>
         </div>
       </div>
     );

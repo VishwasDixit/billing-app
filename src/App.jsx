@@ -115,12 +115,12 @@ function Shell({ children }) {
   const isAdmin = user.role === "admin";
   const helpUnread = useHelpUnread(!isAdmin);
   const paid = access.state === "paid" || isAdmin;
-  const { hasTables, waiting } = useOrderAlerts(shop);
+  const { waiting } = useOrderAlerts(shop);
   const loc = useLocation();
   if (loc.pathname === "/kitchen") return <ToastFree>{children}</ToastFree>;
   const links = [
     ["/", "🧾", "Billing"],
-    ...(hasTables ? [["/orders", waiting ? "🔔" : "🍽️", waiting ? `Orders (${waiting})` : "Orders", waiting ? `${waiting} new` : "Orders"]] : []),
+    ["/orders", waiting ? "🔔" : "🍽️", waiting ? `Orders (${waiting})` : "Orders", waiting ? `${waiting} new` : "Orders"],
     ["/bills", "📄", "Bills"],
     ["/customers", "📒", "Udhar"],
     ["/dashboard", paid ? "📊" : "🔒", "Dashboard", "Stats"],
