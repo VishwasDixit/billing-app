@@ -180,4 +180,24 @@ describe("paying for QR orders", () => {
     const staff = (await c("GET", "/orders")).body.orders.find((x) => x.clientId === o.orderId);
     expect(staff.billRequest.method).toBe("paid");
   });
+
+  it("two staff phones confirming at the same moment make one bill", async () => {
+    const { c, order, pay } = await shop("race@test.local", "choose");
+    const o = await order(1);
+    await pay(o, "upi");
+    const r = await Promise.all(Array.from({ length: 6 }, () => c("POST", `/orders/${o.orderId}/payment`, { action: "confirm" })));
+    expect(r.filter((x) => x.status === 200)).toHaveLength(1);
+    expect(r.filter((x) => x.status === 409)).toHaveLength(5);
+    expect((await c("GET", "/bills")).body.bills.filter((b) => b.billNo.startsWith("P-"))).toHaveLength(1);
+  });
+
+  it("orders from one mobile at the same moment save one customer", async () => {
+    const { c, token, tea } = await shop("samephone@test.local", "end");
+    await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        client()("POST", `/public/shop/${token}/orders`, { table: "T1", name: `Family ${i}`, phone: "9876511111", items: [{ itemId: tea.id, qty: 1 }] })
+      )
+    );
+    expect((await c("GET", "/customers")).body.customers.filter((x) => x.phone === "9876511111")).toHaveLength(1);
+  });
 });

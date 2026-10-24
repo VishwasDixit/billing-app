@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "concurrently": "^9.2.5",
     "mongodb-memory-server": "^10.4.3",
     "vite": "^5.4.21",

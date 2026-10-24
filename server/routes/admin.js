@@ -383,7 +383,7 @@ export default [
     "POST",
     "/admin/users/:id/password",
     async ({ db, params, body }) => {
-      const { password } = z.object({ password: z.string().min(6, "must be at least 6 characters").max(100) }).parse(body);
+      const { password } = z.object({ password: z.string().min(8, "must be at least 8 characters").max(100) }).parse(body);
       const { matchedCount } = await db.collection("users").updateOne({ _id: oid(params.id) }, { $set: { passwordHash: await hashPassword(password) }, $inc: { sessionVersion: 1 } });
       if (!matchedCount) throw new HttpError(404, "User not found.");
       return { ok: true };

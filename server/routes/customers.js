@@ -45,9 +45,21 @@ export const cleanMobile = (p) => {
 export async function upsertCustomerByPhone(db, shopId, { name, phone }) {
   const found = await db.collection("customers").findOne({ shopId, phone: { $in: [phone, `+91${phone}`, `+91 ${phone}`, `0${phone}`] } });
   if (found) return { clientId: found.clientId, name: found.name, phone: found.phone };
+  // phoneKey is unique per shop, so two orders from one number at the same moment make one customer.
+  const now = new Date();
   const c = { clientId: crypto.randomUUID(), name, phone };
-  await upsertCustomer(db, shopId, c);
-  return c;
+  try {
+    const r = await db.collection("customers").findOneAndUpdate(
+      { shopId, phoneKey: phone },
+      { $setOnInsert: { shopId, ...c, phoneKey: phone, address: "", note: "", language: "", createdAt: now } },
+      { upsert: true, returnDocument: "after" }
+    );
+    return { clientId: r.clientId, name: r.name, phone: r.phone };
+  } catch (err) {
+    if (err?.code !== 11000) throw err;
+    const r = await db.collection("customers").findOne({ shopId, phoneKey: phone });
+    return { clientId: r.clientId, name: r.name, phone: r.phone };
+  }
 }
 
 // Creates the customer the first time a device sends it (offline-safe), never overwriting later edits.
@@ -183,7 +195,12 @@ export default [
       const patch = CustomerIn.omit({ clientId: true }).partial().parse(body);
       const updated = await db
         .collection("customers")
-        .findOneAndUpdate({ _id: c._id }, { $set: { ...patch, updatedAt: new Date() } }, { returnDocument: "after" });
+        .findOneAndUpdate(
+          { _id: c._id },
+          // A new number: the old one is free for a new QR customer.
+          { $set: { ...patch, updatedAt: new Date() }, ...(patch.phone !== undefined && patch.phone !== c.phone && { $unset: { phoneKey: "" } }) },
+          { returnDocument: "after" }
+        );
       return customerSummary(db, shop, updated);
     },
   ],

@@ -16,6 +16,7 @@ export function send(res, status, data, headers = {}) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
+  securityHeaders(res);
   for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
   res.end(JSON.stringify(data));
 }
@@ -25,9 +26,18 @@ export function sendError(res, err) {
     const first = err.issues[0];
     return send(res, 400, { error: `${first.path.join(".") || "input"}: ${first.message}` });
   }
+  // A refused upload may still be arriving: close the connection instead of reusing it.
+  if (err instanceof HttpError && err.status === 413) res.setHeader("Connection", "close");
   if (err instanceof HttpError) return send(res, err.status, { error: err.message, ...err.extra });
   console.error(err);
   return send(res, 500, { error: "Something went wrong on the server." });
+}
+
+// Also set by vercel.json for pages; here so every API answer has them wherever it runs.
+export function securityHeaders(res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
 }
 
 const MAX_BODY = 512 * 1024;
@@ -35,6 +45,11 @@ const MAX_BODY = 512 * 1024;
 // Returns { raw, json }. Reads the stream ourselves so webhooks can verify the raw body.
 export async function readBody(req) {
   if (req.method === "GET" || req.method === "HEAD") return { raw: "", json: {} };
+  // Only JSON is accepted. A cross-site HTML form can't send JSON, so this blocks form-based CSRF
+  // (on top of the SameSite cookie).
+  const type = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  const hasBody = Number(req.headers["content-length"] || 0) > 0 || !!req.headers["transfer-encoding"];
+  if (hasBody && type !== "application/json") throw new HttpError(415, "Send JSON (Content-Type: application/json).");
   let raw = "";
   if (!req.readableEnded) {
     for await (const chunk of req) {

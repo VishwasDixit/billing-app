@@ -2,7 +2,7 @@ import { getDb, describeDbError } from "./db.js";
 import { razorpayKeyStatus } from "./routes/pay.js";
 import { emailOtpEnabled, verifyGmail } from "./otp/mailer.js";
 import { googleClientId } from "./google.js";
-import { HttpError, readBody, send, sendError } from "./http.js";
+import { HttpError, readBody, send, sendError, securityHeaders } from "./http.js";
 import { requireUser, jwtSecretOk, clearCookie, readStaffToken } from "./auth.js";
 import { subscriptionStatus, blockedMessage, loadPlanSettings } from "./subscription.js";
 import authRoutes from "./routes/auth.js";
@@ -109,6 +109,7 @@ export async function handle(req, res) {
     if (res.writableEnded) return;
     if (out && out.__response) return send(res, out.status, out.data, out.headers);
     if (out && out.__raw) {
+      securityHeaders(res);
       res.writeHead(out.status, { ...out.headers, "Content-Length": out.body.length });
       return res.end(out.body);
     }

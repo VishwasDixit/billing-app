@@ -614,7 +614,7 @@ function PasswordModal({ onClose }) {
         }}
       >
         {!user.canSetPassword && <Field label="Current password"><input type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} /></Field>}
-        <Field label="New password" hint="At least 6 characters"><input type="password" required minLength={6} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+        <Field label="New password" hint="At least 8 characters"><input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
         {error && <div className="error">{error}</div>}
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>Cancel</button>

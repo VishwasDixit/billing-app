@@ -9,7 +9,7 @@ export async function getDb() {
     const uri = process.env.MONGODB_URI;
     if (!uri) throw new HttpError(500, "Server setup problem: MONGODB_URI is not set in Vercel → Settings → Environment Variables.");
     g.__billingDb = (async () => {
-      const client = new MongoClient(uri, { maxPoolSize: 5 });
+      const client = new MongoClient(uri, { maxPoolSize: Number(process.env.MONGODB_POOL) || 10 });
       await client.connect();
       const db = client.db(process.env.MONGODB_DB || "billing");
       await ensureIndexes(db);
@@ -76,6 +76,8 @@ async function ensureIndexes(db) {
     db.collection("expenses").createIndex({ shopId: 1, date: -1 }),
     db.collection("customers").createIndex({ shopId: 1, clientId: 1 }, { unique: true }),
     db.collection("customers").createIndex({ shopId: 1, name: 1 }),
+    db.collection("customers").createIndex({ shopId: 1, phone: 1 }),
+    db.collection("customers").createIndex({ shopId: 1, phoneKey: 1 }, { unique: true, partialFilterExpression: { phoneKey: { $type: "string" } } }),
     db.collection("customerPayments").createIndex({ shopId: 1, customerClientId: 1, createdAt: 1 }),
     db.collection("bills").createIndex({ shopId: 1, "customer.clientId": 1, createdAt: 1 }),
     db.collection("payments").createIndex({ shopId: 1, createdAt: -1 }),

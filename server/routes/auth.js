@@ -19,7 +19,7 @@ const Register = z.object({
   name: z.string().trim().min(2).max(40),
   phone: z.string().trim().regex(/^[0-9+\- ]{10,15}$/, "enter a valid phone number"),
   email: z.string().trim().toLowerCase().email(),
-  password: z.string().min(6, "must be at least 6 characters").max(100),
+  password: z.string().min(8, "must be at least 8 characters").max(100),
 });
 
 const Login = z.object({
@@ -255,7 +255,7 @@ export default [
     "POST",
     "/auth/password/reset",
     async ({ db, body }) => {
-      const { email, code, password } = CodeIn.extend({ password: z.string().min(6, "must be at least 6 characters").max(100) }).parse(body);
+      const { email, code, password } = CodeIn.extend({ password: z.string().min(8, "must be at least 8 characters").max(100) }).parse(body);
       await otp(verifyCode({ db, key: email, purpose: "reset", code }));
       const user = await db.collection("users").findOne({ email });
       if (!user) throw new HttpError(400, "No account found for this email.");
@@ -339,7 +339,7 @@ export default [
     "/auth/password",
     async ({ db, user, body }) => {
       const { current, password } = z
-        .object({ current: z.string().optional(), password: z.string().min(6, "must be at least 6 characters").max(100) })
+        .object({ current: z.string().optional(), password: z.string().min(8, "must be at least 8 characters").max(100) })
         .parse(body);
       const resetting = user.passwordResetUntil > new Date();
       if (!resetting) {

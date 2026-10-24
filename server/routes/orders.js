@@ -114,13 +114,20 @@ const payableTotal = (shop, items) => computeTotals(items, { type: "percent", va
 // even before the table is closed. The order already took stock when it went to the kitchen.
 async function createOrderBill(db, shop, o, user) {
   if (o.billClientId) return db.collection("bills").findOne({ shopId: shop._id, clientId: o.billClientId });
+  // Claim the order first, so two phones confirming at once can't make two bills.
+  const clientId = crypto.randomUUID();
+  const claim = await db.collection("orders").updateOne({ _id: o._id, billClientId: { $exists: false } }, { $set: { billClientId: clientId } });
+  if (!claim.modifiedCount) {
+    const cur = await db.collection("orders").findOne({ _id: o._id }, { projection: { billClientId: 1 } });
+    return db.collection("bills").findOne({ shopId: shop._id, clientId: cur.billClientId });
+  }
   const r = await db.collection("counters").findOneAndUpdate({ _id: `bills:${shop._id}:P` }, { $inc: { n: 1 } }, { upsert: true, returnDocument: "after" });
   const t = computeTotals(o.items, { type: "percent", value: 0 }, shop.gstPercent || 0);
   const now = new Date();
   const mode = o.pay?.method === "upi" ? "upi" : "cash";
   const bill = {
     shopId: shop._id,
-    clientId: crypto.randomUUID(),
+    clientId,
     billNo: `P-${r.n}`,
     deviceCode: "P",
     createdAt: now,
@@ -143,8 +150,13 @@ async function createOrderBill(db, shop, o, user) {
     paymentConfirmedAt: now,
     paymentConfirmedBy: user.name,
   };
-  await db.collection("bills").insertOne(bill);
-  await db.collection("orders").updateOne({ _id: o._id }, { $set: { billClientId: bill.clientId, billNo: bill.billNo } });
+  try {
+    await db.collection("bills").insertOne(bill);
+  } catch (err) {
+    await db.collection("orders").updateOne({ _id: o._id, billClientId: clientId }, { $unset: { billClientId: "" } });
+    throw err;
+  }
+  await db.collection("orders").updateOne({ _id: o._id }, { $set: { billNo: bill.billNo } });
   return bill;
 }
 
@@ -376,7 +388,11 @@ export default [
         if (pay.state !== "refundDue") throw new HttpError(409, "No refund is due.");
         $set = { pay: { ...pay, state: "refunded", refundedAt: now, refundedBy: user.name }, updatedAt: now };
       }
-      let u = await db.collection("orders").findOneAndUpdate({ _id: o._id }, { $set }, { returnDocument: "after" });
+      // Only if nobody changed it meanwhile (two staff phones tapping at once).
+      let u = await db
+        .collection("orders")
+        .findOneAndUpdate({ _id: o._id, status: o.status, "pay.state": o.pay?.state ?? null }, { $set }, { returnDocument: "after" });
+      if (!u) throw new HttpError(409, "Someone just updated this order. Please refresh.");
       if ($set.status === "accepted") await takeStock(db, shop._id, u.items, { orderId: u.clientId });
       let bill = null;
       if (action === "confirm") {

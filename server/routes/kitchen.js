@@ -139,7 +139,8 @@ export default [
       const id = oid(params.id);
       const used = await db.collection("recipes").countDocuments({ shopId: shop._id, ingredientIds: String(id) });
       if (used) throw new HttpError(409, `This item is used in ${used} recipe${used === 1 ? "" : "s"}. Remove it from those recipes first.`);
-      await db.collection("ingredients").deleteOne({ _id: id, shopId: shop._id });
+      const { deletedCount } = await db.collection("ingredients").deleteOne({ _id: id, shopId: shop._id });
+      if (!deletedCount) throw new HttpError(404, "Item not found.");
       await db.collection("kitchenAlerts").updateMany({ shopId: shop._id, ingredientId: String(id), resolvedAt: null }, { $set: { resolvedAt: now() } });
       return { ok: true };
     },
@@ -283,7 +284,8 @@ export default [
     "DELETE",
     "/kitchen/recipes/:itemId",
     async ({ db, shop, params }) => {
-      await db.collection("recipes").deleteOne({ shopId: shop._id, itemId: params.itemId });
+      const { deletedCount } = await db.collection("recipes").deleteOne({ shopId: shop._id, itemId: params.itemId });
+      if (!deletedCount) throw new HttpError(404, "No recipe for this dish.");
       return { ok: true };
     },
     K,

@@ -854,7 +854,7 @@ function ManageShop({ shop, pricing, focusDelete, onClose, onDone, onDeleted }) 
           >
             <h4>Reset password</h4>
             <div style={{ display: "flex", gap: 8 }}>
-              <input className="input" type="text" minLength={6} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="New password (6+ characters)" />
+              <input className="input" type="text" minLength={8} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="New password (8+ characters)" />
               <button className="btn" disabled={busy}>Reset</button>
             </div>
           </form>

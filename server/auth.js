@@ -60,10 +60,12 @@ export async function requireUser(req, db) {
   if (!token) throw new HttpError(401, "Please log in.");
   let payload;
   try {
-    payload = jwt.verify(token, secret());
+    payload = jwt.verify(token, secret(), { algorithms: ["HS256"] });
   } catch {
     throw new HttpError(401, "Your session expired. Please log in again.");
   }
+  // A kitchen-phone PIN token is not a login.
+  if (payload.typ === "pin" || !payload.uid || !ObjectId.isValid(payload.uid)) throw new HttpError(401, "Please log in.");
   const user = await db.collection("users").findOne({ _id: new ObjectId(payload.uid) });
   if (!user) throw new HttpError(401, "Please log in.");
   if ((payload.sv || 0) !== (user.sessionVersion || 0)) {
@@ -91,13 +93,14 @@ export async function requireUser(req, db) {
 }
 
 // Short-lived proof that a staff member entered their PIN on this device (sent as x-staff-token).
-export const staffToken = (staff) => jwt.sign({ st: String(staff._id), sid: String(staff.shopId), n: staff.name }, secret(), { expiresIn: 12 * 3600 });
+// typ "pin" keeps it apart from login cookies: neither can be used as the other.
+export const staffToken = (staff) => jwt.sign({ typ: "pin", st: String(staff._id), sid: String(staff.shopId), n: staff.name }, secret(), { expiresIn: 12 * 3600 });
 export function readStaffToken(req, shopId) {
   const t = req.headers["x-staff-token"];
   if (!t) return null;
   try {
-    const p = jwt.verify(String(t), secret());
-    return p.sid === String(shopId) ? { id: p.st, name: p.n } : null;
+    const p = jwt.verify(String(t), secret(), { algorithms: ["HS256"] });
+    return p.typ === "pin" && p.sid === String(shopId) ? { id: p.st, name: p.n } : null;
   } catch {
     return null;
   }

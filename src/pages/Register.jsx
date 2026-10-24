@@ -96,8 +96,8 @@ export default function Register() {
             >
               <input required type="email" autoComplete="email" readOnly={!!google} value={f.email} onChange={(e) => setF({ ...f, email: e.target.value.trim() })} />
             </Field>
-            <Field label="Password" hint="At least 6 characters">
-              <input required type="password" minLength={6} autoComplete="new-password" value={f.password} onChange={set("password")} />
+            <Field label="Password" hint="At least 8 characters">
+              <input required type="password" minLength={8} autoComplete="new-password" value={f.password} onChange={set("password")} />
             </Field>
             {error && <div className="error">{error}</div>}
             <button className="btn btn-primary btn-lg" disabled={busy}>
