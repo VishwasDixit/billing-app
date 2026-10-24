@@ -17,11 +17,19 @@ export default defineConfig({
         theme_color: "#0f766e",
         background_color: "#f5f6f8",
         display: "standalone",
+        id: "/",
         start_url: "/",
+        scope: "/",
+        orientation: "any",
         icons: [
           { src: "icon-192.png", sizes: "192x192", type: "image/png" },
           { src: "icon-512.png", sizes: "512x512", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+          // Full-bleed with padding, so Android launchers can crop it to any shape.
+          { src: "icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+        ],
+        shortcuts: [
+          { name: "New bill", url: "/", icons: [{ src: "icon-192.png", sizes: "192x192" }] },
+          { name: "Orders", url: "/orders", icons: [{ src: "icon-192.png", sizes: "192x192" }] },
         ],
       },
       workbox: {
