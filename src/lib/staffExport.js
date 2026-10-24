@@ -31,7 +31,9 @@ export async function salarySlipPdf(shop, worker, s, records, adjustments = []) 
       ["Earned", rs(s.earned)],
       ["Overtime", `${s.otHours} h · ${rs(s.overtime)}`],
       ...adjustments.map((a) => [a.amount > 0 ? `Bonus: ${a.note}` : `Deduction: ${a.note}`, `${a.amount > 0 ? "+" : "-"} ${rs(Math.abs(a.amount))}`]),
+      ...(s.loanCut ? [["Loan instalment", `- ${rs(s.loanCut)}`]] : []),
       ["Advances taken", `- ${rs(s.advance)}`],
+      ...(s.previousBalance ? [["Earlier balance", `${s.previousBalance < 0 ? "-" : "+"} ${rs(Math.abs(s.previousBalance))}`]] : []),
       ["Already paid", `- ${rs(s.paid)}`],
       [{ content: "Payable", styles: { fontStyle: "bold" } }, { content: rs(s.payable), styles: { fontStyle: "bold" } }],
     ],
@@ -79,4 +81,12 @@ export async function monthSheetExcel(shop, month, staff, records, salary, adjus
         }]
       : []),
   ]).toFile(`${shop.name.replace(/\W+/g, "-")}-staff-${month}.xlsx`);
+}
+
+// One worker's passbook: every month with earned, cuts, paid and the running balance.
+export async function passbookExcel(shop, worker, months) {
+  const { default: writeExcelFile } = await import("write-excel-file/browser");
+  const head = ["Month", "Paid days", "Earned", "Overtime", "Bonus", "Deductions", "Loan", "Advances", "Earlier balance", "Paid", "Balance"].map((v) => ({ value: v, fontWeight: "bold" }));
+  const rows = [...months].reverse().map((m) => [m.month, m.paidDays, m.earned, m.overtime, m.bonus, m.deduction, m.loanCut, m.advance, m.previousBalance, m.paid, m.payable]);
+  await writeExcelFile([head, ...rows], { columns: head.map(() => ({ width: 13 })), stickyRowsCount: 1, sheet: "Passbook" }).toFile(`${worker.name.replace(/\W+/g, "-")}-passbook.xlsx`);
 }

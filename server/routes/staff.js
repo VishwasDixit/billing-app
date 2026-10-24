@@ -7,7 +7,8 @@ import bcrypt from "bcryptjs";
 import { HttpError } from "../http.js";
 import { staffToken } from "../auth.js";
 import { bump, hitsOf } from "../limits.js";
-import { STATUS_IDS, salaryFor } from "../../shared/salary.js";
+import { STATUS_IDS, salarySettings } from "../../shared/salary.js";
+import { payrollData, workerLedger, loanStatus, todayIst } from "../staff/ledger.js";
 
 const K = { kitchen: true };
 const oid = (id, what = "Worker") => {
@@ -32,6 +33,11 @@ const StaffIn = z.object({
   shiftStart: Time,
   shiftEnd: Time,
   joinedAt: Ymd.optional(),
+  leftAt: Ymd.nullable().optional(),
+  // Balance when you started using the app (+ = you owe them, − = they owe you), from that month.
+  openingBalance: z.object({ amount: z.number().min(-1e7).max(1e7), month: z.string().regex(/^\d{4}-\d{2}$/) }).nullable().optional(),
+  // A wage change applies from this month; earlier months keep the old wage.
+  wageFrom: z.string().regex(/^\d{4}-\d{2}$/).optional(),
   active: z.boolean().default(true),
   // Signing in on their own phone: kitchen screens only, or billing manager (no money reports).
   access: z.enum(["none", "kitchen", "manager"]).optional(),
@@ -49,6 +55,34 @@ async function paymentExpense(db, shop, p) {
   if (p.addExpense === false) return null;
   return db.collection("expenses").findOne({ shopId: shop._id, category: "Salary", amount: p.amount, date: p.date, note: `${p.staffName} · salary ${p.month}` });
 }
+
+// After salary is paid the owner can close the month: no more changes until it's reopened.
+async function assertOpen(db, shop, ...months) {
+  const closed = await db.collection("salaryMonths").findOne({ shopId: shop._id, month: { $in: months.filter(Boolean) } });
+  if (closed) throw new HttpError(409, `${new Date(closed.month + "-01T12:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" })} is closed. Reopen it on the Salary page to make changes.`, { code: "MONTH_CLOSED" });
+}
+
+async function recordPayment(db, shop, user, s, p) {
+  let expenseId;
+  if (p.addExpense !== false) {
+    expenseId = (
+      await db.collection("expenses").insertOne({
+        shopId: shop._id, date: p.date, category: "Salary", amount: p.amount, note: `${s.name} · salary ${p.month}`,
+        paymentMode: p.mode === "bank" ? "bank" : p.mode, createdAt: new Date(), addedBy: user.name,
+      })
+    ).insertedId;
+  }
+  await db.collection("salaryPayments").insertOne({ ...p, shopId: shop._id, staffId: String(s._id), staffName: s.name, createdAt: new Date(), ...(expenseId && { expenseId }) });
+}
+
+const Loan = z.object({
+  amount: z.number().positive().max(1e7),
+  cut: z.number().positive().max(1e7),
+  startMonth: z.string().regex(/^\d{4}-\d{2}$/),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  note: z.string().trim().max(80).optional().default(""),
+  mode: z.enum(["cash", "upi", "bank"]).default("cash"),
+});
 
 export const defaultAccess = (role) => (role === "manager" || role === "waiter" ? "manager" : role === "cook" || role === "helper" ? "kitchen" : "none");
 const needsPin = (access, hasPin) => {
@@ -105,7 +139,7 @@ export default [
     "/staff",
     async ({ db, shop, user, body }) => {
       ownerOnly(user);
-      const { pin, ...s } = StaffIn.parse(body);
+      const { pin, wageFrom, ...s } = StaffIn.parse(body);
       s.access = s.access ?? (pin ? defaultAccess(s.role) : "none");
       needsPin(s.access, !!pin);
       const doc = { ...s, shopId: shop._id, ...(pin && { pinHash: await bcrypt.hash(pin, 8) }), pinVersion: 0, createdAt: new Date() };
@@ -139,29 +173,148 @@ export default [
     async ({ db, shop, user, query }) => {
       ownerOnly(user);
       const month = Month.parse(query.month);
-      const [staff, records, advances, payments, adjustments] = await Promise.all([
-        db.collection("staff").find({ shopId: shop._id }).sort({ active: -1, name: 1 }).toArray(),
-        db.collection("attendance").find({ shopId: shop._id, date: { $regex: `^${month}` } }).toArray(),
-        db.collection("staffAdvances").find({ shopId: shop._id, date: { $regex: `^${month}` } }).sort({ date: 1 }).toArray(),
-        db.collection("salaryPayments").find({ shopId: shop._id, month }).sort({ date: 1 }).toArray(),
-        db.collection("salaryAdjustments").find({ shopId: shop._id, month }).sort({ createdAt: 1 }).toArray(),
-      ]);
-      const clean = ({ _id, shopId, ...x }) => ({ ...x, id: String(_id) });
+      const data = await payrollData(db, shop, month);
+      const today = todayIst();
+      const inMonth = (list, key = "date") => list.filter((x) => String(x[key]).startsWith(month));
+      const salary = {};
+      for (const w of data.staff) salary[String(w._id)] = workerLedger(w, data, month, today).at(-1);
+      const loans = data.loans.map((l) => loanStatus(l, month));
+      const active = data.staff.filter((w) => w.active || salary[String(w._id)]?.marked || salary[String(w._id)]?.payable);
+      const sum = (f) => Math.round(active.reduce((t, w) => t + f(salary[String(w._id)]), 0) * 100) / 100;
+      const closed = data.closed.find((c) => c.month === month) || null;
       return {
         month,
-        staff: staff.map(publicStaff),
-        records: records.map(clean),
-        advances: advances.map(clean),
-        payments: payments.map(clean),
-        adjustments: adjustments.map(clean),
-        salary: Object.fromEntries(
-          staff.map((s) => {
-            const id = String(s._id);
-            const mine = (list) => list.filter((x) => x.staffId === id);
-            return [id, salaryFor(s, month, mine(records), mine(advances), mine(payments), mine(adjustments))];
-          })
-        ),
+        today,
+        settings: data.settings,
+        closed,
+        staff: data.staff.map(publicStaff),
+        records: inMonth(data.records),
+        advances: inMonth(data.advances),
+        payments: data.payments.filter((p) => p.month === month),
+        adjustments: data.adjustments.filter((a) => a.month === month),
+        loans,
+        salary,
+        summary: {
+          gross: sum((x) => x.gross),
+          paid: sum((x) => x.paid),
+          due: sum((x) => Math.max(0, x.payable)),
+          owedToShop: sum((x) => Math.max(0, -x.payable)),
+          loansLeft: Math.round(loans.filter((l) => !l.done).reduce((t, l) => t + loanStatus(l, month).left, 0) * 100) / 100,
+        },
       };
+    },
+  ],
+  // One worker's passbook: every month with what was earned, cut and paid, and the running balance.
+  [
+    "GET",
+    "/staff/:id/passbook",
+    async ({ db, shop, user, params, query }) => {
+      ownerOnly(user);
+      const upto = query.upto ? Month.parse(query.upto) : todayIst().slice(0, 7);
+      const w = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
+      if (!w) throw new HttpError(404, "Worker not found.");
+      const data = await payrollData(db, shop, upto);
+      const rows = workerLedger(w, data, upto);
+      return { worker: publicStaff(w), months: rows.slice(-24).reverse(), loans: data.loans.filter((l) => l.staffId === params.id).map((l) => loanStatus(l, upto)) };
+    },
+  ],
+  // ---------- Salary settings, closing months, paying everyone ----------
+  [
+    "PUT",
+    "/staff/settings",
+    async ({ db, shop, user, body }) => {
+      ownerOnly(user);
+      const st = z
+        .object({
+          weeklyOff: z.array(z.number().int().min(0).max(6)).max(7),
+          unmarked: z.enum(["none", "present"]),
+          dayBasis: z.enum(["month", "30", "26"]),
+          otAuto: z.boolean(),
+        })
+        .parse(body);
+      await db.collection("shops").updateOne({ _id: shop._id }, { $set: { salarySettings: st } });
+      return { settings: salarySettings(st) };
+    },
+  ],
+  [
+    "POST",
+    "/staff/months/:month/:action",
+    async ({ db, shop, user, params }) => {
+      ownerOnly(user);
+      const month = Month.parse(params.month);
+      if (params.action === "close") {
+        await db.collection("salaryMonths").updateOne({ shopId: shop._id, month }, { $set: { closedAt: new Date(), closedBy: user.name } }, { upsert: true });
+      } else if (params.action === "reopen") {
+        await db.collection("salaryMonths").deleteOne({ shopId: shop._id, month });
+      } else throw new HttpError(404, "Not found.");
+      return { ok: true };
+    },
+  ],
+  [
+    "POST",
+    "/staff/pay-all",
+    async ({ db, shop, user, body }) => {
+      ownerOnly(user);
+      const b = z
+        .object({
+          month: Month,
+          date: Ymd,
+          mode: z.enum(["cash", "upi", "bank"]).default("cash"),
+          addExpense: z.boolean().default(true),
+          payments: z.array(z.object({ staffId: z.string(), amount: z.number().positive().max(1e7) })).min(1, "choose who to pay").max(100),
+        })
+        .parse(body);
+      await assertOpen(db, shop, b.month);
+      const workers = await db.collection("staff").find({ shopId: shop._id, _id: { $in: b.payments.map((p) => oid(p.staffId)) } }).toArray();
+      let total = 0;
+      for (const p of b.payments) {
+        const w = workers.find((x) => String(x._id) === p.staffId);
+        if (!w) continue;
+        await recordPayment(db, shop, user, w, { month: b.month, amount: p.amount, date: b.date, mode: b.mode, addExpense: b.addExpense });
+        total += p.amount;
+      }
+      return { ok: true, paid: b.payments.length, total: Math.round(total * 100) / 100 };
+    },
+  ],
+  // ---------- Loans repaid in monthly instalments ----------
+  [
+    "POST",
+    "/staff/:id/loans",
+    async ({ db, shop, user, params, body }) => {
+      ownerOnly(user);
+      const l = Loan.parse(body);
+      const w = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
+      if (!w) throw new HttpError(404, "Worker not found.");
+      const doc = { ...l, skips: [], shopId: shop._id, staffId: params.id, staffName: w.name, createdAt: new Date(), createdBy: user.name };
+      doc._id = (await db.collection("staffLoans").insertOne(doc)).insertedId;
+      return { ok: true, id: String(doc._id) };
+    },
+  ],
+  [
+    "PUT",
+    "/staff/loans/:id",
+    async ({ db, shop, user, params, body }) => {
+      ownerOnly(user);
+      const l = Loan.partial()
+        .extend({ skip: z.string().regex(/^\d{4}-\d{2}$/).optional(), unskip: z.string().regex(/^\d{4}-\d{2}$/).optional(), closedMonth: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional() })
+        .parse(body);
+      const { skip, unskip, ...set } = l;
+      const update = { $set: { ...set, updatedAt: new Date() } };
+      if (skip) update.$addToSet = { skips: skip };
+      if (unskip) update.$pull = { skips: unskip };
+      const r = await db.collection("staffLoans").findOneAndUpdate({ _id: oid(params.id, "Loan"), shopId: shop._id }, update);
+      if (!r) throw new HttpError(404, "Loan not found.");
+      return { ok: true };
+    },
+  ],
+  [
+    "DELETE",
+    "/staff/loans/:id",
+    async ({ db, shop, user, params }) => {
+      ownerOnly(user);
+      const { deletedCount } = await db.collection("staffLoans").deleteOne({ _id: oid(params.id, "Loan"), shopId: shop._id });
+      if (!deletedCount) throw new HttpError(404, "Loan not found.");
+      return { ok: true };
     },
   ],
   // Mark one day for one worker ("none" clears it). Works offline from the app's queue.
@@ -182,6 +335,7 @@ export default [
         })
         .parse(body);
       if (!(await db.collection("staff").findOne({ _id: oid(a.staffId), shopId: shop._id }))) throw new HttpError(404, "Worker not found.");
+      await assertOpen(db, shop, a.date.slice(0, 7));
       const filter = { shopId: shop._id, staffId: a.staffId, date: a.date };
       if (a.status === "none") {
         await db.collection("attendance").deleteOne(filter);
@@ -216,6 +370,7 @@ export default [
         dates.push(new Date(t).toISOString().slice(0, 10));
       }
       if (dates.length > 62) throw new HttpError(400, "Mark up to 62 days at a time.");
+      await assertOpen(db, shop, ...new Set(dates.map((d) => d.slice(0, 7))));
       const ids = b.staffIds.filter((id) => ObjectId.isValid(id));
       const workers = await db.collection("staff").find({ shopId: shop._id, _id: { $in: ids.map((id) => new ObjectId(id)) } }, { projection: { _id: 1 } }).toArray();
       if (workers.length !== b.staffIds.length) throw new HttpError(404, "Worker not found.");
@@ -249,6 +404,7 @@ export default [
         .parse(body);
       const s = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
       if (!s) throw new HttpError(404, "Worker not found.");
+      await assertOpen(db, shop, a.date.slice(0, 7));
       const doc = { ...a, shopId: shop._id, staffId: params.id, staffName: s.name, createdAt: new Date() };
       doc._id = (await db.collection("staffAdvances").insertOne(doc)).insertedId;
       return { ok: true, id: String(doc._id) };
@@ -259,6 +415,8 @@ export default [
     "/staff/advances/:id",
     async ({ db, shop, user, params }) => {
       ownerOnly(user);
+      const adv = await db.collection("staffAdvances").findOne({ _id: oid(params.id, "Advance"), shopId: shop._id });
+      if (adv) await assertOpen(db, shop, adv.date.slice(0, 7));
       const { deletedCount } = await db.collection("staffAdvances").deleteOne({ _id: oid(params.id, "Advance"), shopId: shop._id });
       if (!deletedCount) throw new HttpError(404, "Advance not found.");
       return { ok: true };
@@ -272,6 +430,8 @@ export default [
       const a = z
         .object({ amount: z.number().positive().max(1e7), date: Ymd, note: z.string().trim().max(80).optional().default(""), mode: z.enum(["cash", "upi", "bank"]).default("cash") })
         .parse(body);
+      const old = await db.collection("staffAdvances").findOne({ _id: oid(params.id, "Advance"), shopId: shop._id });
+      if (old) await assertOpen(db, shop, old.date.slice(0, 7), a.date.slice(0, 7));
       const r = await db.collection("staffAdvances").findOneAndUpdate({ _id: oid(params.id, "Advance"), shopId: shop._id }, { $set: { ...a, updatedAt: new Date() } });
       if (!r) throw new HttpError(404, "Advance not found.");
       return { ok: true };
@@ -284,6 +444,7 @@ export default [
     async ({ db, shop, user, params, body }) => {
       ownerOnly(user);
       const a = Adjustment.parse(body);
+      await assertOpen(db, shop, a.month);
       const s = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
       if (!s) throw new HttpError(404, "Worker not found.");
       const doc = { ...a, shopId: shop._id, staffId: params.id, staffName: s.name, createdAt: new Date() };
@@ -297,6 +458,7 @@ export default [
     async ({ db, shop, user, params, body }) => {
       ownerOnly(user);
       const { month, ...a } = Adjustment.parse(body);
+      await assertOpen(db, shop, month);
       const r = await db.collection("salaryAdjustments").findOneAndUpdate({ _id: oid(params.id, "Adjustment"), shopId: shop._id }, { $set: { ...a, updatedAt: new Date() } });
       if (!r) throw new HttpError(404, "Adjustment not found.");
       return { ok: true };
@@ -307,6 +469,8 @@ export default [
     "/staff/adjustments/:id",
     async ({ db, shop, user, params }) => {
       ownerOnly(user);
+      const adj = await db.collection("salaryAdjustments").findOne({ _id: oid(params.id, "Adjustment"), shopId: shop._id });
+      if (adj) await assertOpen(db, shop, adj.month);
       const { deletedCount } = await db.collection("salaryAdjustments").deleteOne({ _id: oid(params.id, "Adjustment"), shopId: shop._id });
       if (!deletedCount) throw new HttpError(404, "Adjustment not found.");
       return { ok: true };
@@ -321,6 +485,7 @@ export default [
       const p = z.object({ amount: z.number().positive().max(1e7), date: Ymd, mode: z.enum(["cash", "upi", "bank"]).default("cash") }).parse(body);
       const before = await db.collection("salaryPayments").findOne({ _id: oid(params.id, "Payment"), shopId: shop._id });
       if (!before) throw new HttpError(404, "Payment not found.");
+      await assertOpen(db, shop, before.month);
       await db.collection("salaryPayments").updateOne({ _id: before._id }, { $set: { ...p, updatedAt: new Date() } });
       const exp = await paymentExpense(db, shop, before);
       if (exp) await db.collection("expenses").updateOne({ _id: exp._id }, { $set: { amount: p.amount, date: p.date, paymentMode: p.mode, updatedAt: new Date() } });
@@ -334,6 +499,7 @@ export default [
       ownerOnly(user);
       const before = await db.collection("salaryPayments").findOne({ _id: oid(params.id, "Payment"), shopId: shop._id });
       if (!before) throw new HttpError(404, "Payment not found.");
+      await assertOpen(db, shop, before.month);
       const exp = await paymentExpense(db, shop, before);
       await db.collection("salaryPayments").deleteOne({ _id: before._id });
       if (exp) await db.collection("expenses").deleteOne({ _id: exp._id });
@@ -351,16 +517,8 @@ export default [
         .parse(body);
       const s = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
       if (!s) throw new HttpError(404, "Worker not found.");
-      let expenseId;
-      if (p.addExpense) {
-        expenseId = (
-          await db.collection("expenses").insertOne({
-            shopId: shop._id, date: p.date, category: "Salary", amount: p.amount, note: `${s.name} · salary ${p.month}`,
-            paymentMode: p.mode === "bank" ? "bank" : p.mode, createdAt: new Date(), addedBy: user.name,
-          })
-        ).insertedId;
-      }
-      await db.collection("salaryPayments").insertOne({ ...p, shopId: shop._id, staffId: params.id, staffName: s.name, createdAt: new Date(), ...(expenseId && { expenseId }) });
+      await assertOpen(db, shop, p.month);
+      await recordPayment(db, shop, user, s, p);
       return { ok: true };
     },
   ],
@@ -370,11 +528,18 @@ export default [
     "/staff/:id",
     async ({ db, shop, user, params, body }) => {
       ownerOnly(user);
-      const { pin, ...s } = StaffIn.partial().parse(body);
+      const { pin, wageFrom, ...s } = StaffIn.partial().parse(body);
       const before = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
       if (!before) throw new HttpError(404, "Worker not found.");
       needsPin(s.access ?? before.access, !!(pin || before.pinHash));
       const $set = { ...s, updatedAt: new Date(), ...(pin && { pinHash: await bcrypt.hash(pin, 8) }) };
+      // A raise applies from its month (this month unless chosen); earlier months keep the old wage.
+      const wageChanged = (s.wage !== undefined && s.wage !== before.wage) || (s.wageType !== undefined && s.wageType !== (before.wageType || "monthly"));
+      if (wageChanged) {
+        const from = wageFrom || todayIst().slice(0, 7);
+        const history = (before.wageHistory?.length ? before.wageHistory : [{ from: "0000-00", wage: before.wage || 0, wageType: before.wageType || "monthly" }]).filter((h) => h.from < from);
+        $set.wageHistory = [...history, { from, wage: s.wage ?? before.wage, wageType: s.wageType ?? before.wageType ?? "monthly" }];
+      }
       // A new PIN, less access or leaving the job ends that worker's sign-in on their phone.
       const signOut = !!pin || (s.access !== undefined && s.access !== before.access) || s.active === false;
       const r = await db.collection("staff").findOneAndUpdate({ _id: before._id }, { $set, ...(signOut && { $inc: { pinVersion: 1 } }) }, { returnDocument: "after" });

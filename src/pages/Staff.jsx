@@ -4,7 +4,8 @@ import { useApp } from "../lib/store.jsx";
 import { money, todayYmd } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { ATTENDANCE, STATUS_IDS } from "../../shared/salary.js";
-import { salarySlipPdf, monthSheetExcel } from "../lib/staffExport.js";
+import { salarySlipPdf, monthSheetExcel, passbookExcel } from "../lib/staffExport.js";
+import { autoStatus } from "../../shared/salary.js";
 
 const ROLES = ["cook", "helper", "waiter", "cleaner", "manager", "other"];
 const ACCESS = [["none", "No app"], ["kitchen", "Kitchen (cook)"], ["manager", "Billing manager"]];
@@ -115,7 +116,9 @@ function WorkerModal({ worker, onClose, onSaved }) {
     wageType: worker.wageType || "monthly", wage: worker.wage ?? "", otRate: worker.otRate ?? "",
     shiftStart: worker.shiftStart || "", shiftEnd: worker.shiftEnd || "", joinedAt: worker.joinedAt || "", active: worker.active !== false,
     access: worker.access || (worker.id ? "none" : defaultAccess(worker.role || "cook")),
+    wageFrom: thisMonth(),
   });
+  const wageChanged = !!worker.id && (Number(f.wage) !== Number(worker.wage || 0) || f.wageType !== (worker.wageType || "monthly"));
   const [accessTouched, setAccessTouched] = useState(!!worker.id);
   const { busy, error, run } = useAction();
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
@@ -124,7 +127,8 @@ function WorkerModal({ worker, onClose, onSaved }) {
     run(async () => {
       const body = {
         name: f.name, phone: f.phone, role: f.role, wageType: f.wageType, wage: Number(f.wage) || 0, otRate: Number(f.otRate) || 0,
-        shiftStart: f.shiftStart || null, shiftEnd: f.shiftEnd || null, active: f.active, access: f.access, ...(f.joinedAt && { joinedAt: f.joinedAt }), ...(f.pin && { pin: f.pin }),
+        shiftStart: f.shiftStart || null, shiftEnd: f.shiftEnd || null, active: f.active, access: f.access,
+        ...(wageChanged && { wageFrom: f.wageFrom }), ...(f.joinedAt && { joinedAt: f.joinedAt }), ...(f.pin && { pin: f.pin }),
       };
       if (isNew) await post("/staff", body);
       else await put(`/staff/${worker.id}`, body);
@@ -153,6 +157,11 @@ function WorkerModal({ worker, onClose, onSaved }) {
             <Seg value={f.wageType} onChange={(v) => set("wageType", v)} options={[["monthly", "per month"], ["daily", "per day"]]} />
           </div>
         </Field>
+        {wageChanged && (
+          <Field label="New wage applies from" hint="Months before this keep the old wage, so past salaries don't change.">
+            <input type="month" required value={f.wageFrom} onChange={(e) => setF({ ...f, wageFrom: e.target.value })} />
+          </Field>
+        )}
         <div className="grid3 price-inputs">
           <Field label="Overtime ₹/hour"><input type="number" min="0" value={f.otRate} onChange={(e) => set("otRate", e.target.value)} /></Field>
           <Field label="Shift from"><input type="time" value={f.shiftStart} onChange={(e) => set("shiftStart", e.target.value)} /></Field>
@@ -256,6 +265,7 @@ function Attendance({ data, onChange }) {
   };
   const down = (e, staffId, date) => {
     if (e.button === 2) return;
+    if (data.closed) return toast(`${monthLabel(month)} is closed. Reopen it on the Salary tab to change attendance.`);
     stroke.current = { start: [staffId, date], cells: [], done: new Set(), dragging: false, long: false };
     stroke.current.timer = setTimeout(() => {
       if (stroke.current && !stroke.current.dragging) {
@@ -318,9 +328,10 @@ function Attendance({ data, onChange }) {
   };
   const counts = (id) => {
     const c = Object.fromEntries(STATUS_IDS.map((s) => [s, 0]));
+    const w = active.find((x) => x.id === id);
     for (const d of days) {
-      const r = recs.get(keyOf(id, d));
-      if (r && c[r.status] != null) c[r.status]++;
+      const st = recs.get(keyOf(id, d))?.status || autoStatus(w, d, data.settings, today);
+      if (st && c[st] != null) c[st]++;
     }
     return c;
   };
@@ -328,6 +339,7 @@ function Attendance({ data, onChange }) {
   if (!active.length) return <div className="empty">Add workers first (Workers tab).</div>;
   return (
     <div className="stack">
+      {data.closed && <div className="banner info closed-banner">🔒 {monthLabel(month)} is closed, so attendance is locked. Reopen it on the Salary tab to make changes.</div>}
       <div className="brush-bar">
         <span className="small muted">Mark as:</span>
         {BRUSHES.map((b) => (
@@ -371,17 +383,18 @@ function Attendance({ data, onChange }) {
                   <td className="tl-name"><b>{w.name}</b><div className="small muted">{w.role}</div></td>
                   {days.map((d) => {
                     const r = recs.get(keyOf(w.id, d));
+                    const auto = r ? null : autoStatus(w, d, data.settings, today);
                     const wd = new Date(d + "T12:00:00").getDay();
                     return (
                       <td
                         key={d}
                         data-cell={`${w.id}|${d}`}
-                        className={"tl-cell " + (r?.status || "") + (wd === 0 ? " sun" : "") + (d === today ? " today" : "") + (d > today ? " future" : "")}
+                        className={"tl-cell " + (r?.status || (auto ? `${auto} auto` : "")) + (wd === 0 ? " sun" : "") + (d === today ? " today" : "") + (d > today ? " future" : "")}
                         onPointerDown={(e) => d <= today && down(e, w.id, d)}
-                        onContextMenu={(e) => (e.preventDefault(), setTime({ worker: w, date: d }))}
+                        onContextMenu={(e) => (e.preventDefault(), !data.closed && setTime({ worker: w, date: d }))}
                         title={`${w.name} · ${d}${r ? ` · ${ATTENDANCE[r.status]?.label}` : ""}${r?.otHours ? ` · OT ${r.otHours} h` : ""}`}
                       >
-                        {r ? ATTENDANCE[r.status]?.short : ""}
+                        {r ? ATTENDANCE[r.status]?.short : auto ? ATTENDANCE[auto].short : ""}
                         {r?.otHours ? <sup>+</sup> : null}
                       </td>
                     );
@@ -502,80 +515,398 @@ function TimeModal({ worker, date, rec, onClose, onSave }) {
 
 const fmtDay = (d) => `${d.slice(8)}/${d.slice(5, 7)}`;
 
-// Salary: everything can be fixed — advances, bonus/deductions and payments (their expense follows).
+const MODES = [["cash", "Cash"], ["upi", "UPI"], ["bank", "Bank"]];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Status of a worker's month: paid, part paid, due, or they owe the shop.
+function payState(s) {
+  if (s.payable < 0) return ["blue", "Owes you"];
+  if (s.payable === 0 && s.paid > 0) return ["good", "Paid ✓"];
+  if (s.payable > 0 && s.paid > 0) return ["warn", "Part paid"];
+  if (s.payable > 0) return ["bad", "Due"];
+  return ["", "—"];
+}
+
+// Salary overview: who is paid and who is due, pay everyone, close the month.
 function Salary({ data, month, onChange }) {
   const { shop } = useApp();
   const toast = useToast();
-  const [modal, setModal] = useState(null); // { kind: "advance"|"adjust"|"pay", worker, item? }
-  const { busy, run } = useAction();
-  const workers = useMemo(() => data.staff.filter((s) => s.active || data.salary[s.id]?.marked), [data]);
-  const total = workers.reduce((s, w) => s + Math.max(0, data.salary[w.id]?.payable || 0), 0);
-  const mine = (list, id) => (list || []).filter((x) => x.staffId === id);
+  const [sheet, setSheet] = useState(null); // worker id
+  const [payAll, setPayAll] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const { busy, error, run } = useAction();
+  const workers = useMemo(() => data.staff.filter((s) => s.active || data.salary[s.id]?.marked || data.salary[s.id]?.payable || data.salary[s.id]?.paid), [data]);
+  const sm = data.summary;
+  const closed = data.closed;
+  const due = workers.filter((w) => data.salary[w.id]?.payable > 0);
+  const closeMonth = () =>
+    confirm(`Close ${monthLabel(month)}? Attendance, advances, bonuses and payments for this month will be locked until you reopen it.`) &&
+    run(async () => (await post(`/staff/months/${month}/close`), toast("Month closed"), onChange()));
   return (
     <div className="stack">
-      <div className="btn-row">
-        <div className="small" style={{ flex: 1 }}>Total still to pay: <b>{money(total)}</b></div>
-        <button className="btn btn-sm" disabled={busy || !workers.length} onClick={() => run(() => monthSheetExcel(shop, month, workers, data.records, data.salary, data.adjustments))}>📊 Month sheet (Excel)</button>
-      </div>
-      {workers.length === 0 && <div className="empty">No workers yet.</div>}
-      <div className="shop-list">
-        {workers.map((w) => {
-          const s = data.salary[w.id];
-          const advances = mine(data.advances, w.id);
-          const adjustments = mine(data.adjustments, w.id);
-          const payments = mine(data.payments, w.id);
-          return (
-            <div key={w.id} className="card stack salary-card">
-              <div className="shop-title"><b>{w.name}</b> <span className="tag">{w.role}</span> <span className="small muted">{money(w.wage)} {w.wageType === "daily" ? "/day" : "/month"}</span></div>
-              <div className="salary-grid small">
-                <span>Paid days</span><b>{s.paidDays} / {s.daysInMonth}</b>
-                <span>Earned</span><b>{money(s.earned)}</b>
-                {s.overtime > 0 && (<><span>Overtime ({s.otHours} h)</span><b>+ {money(s.overtime)}</b></>)}
-                {s.bonus > 0 && (<><span>Bonus</span><b>+ {money(s.bonus)}</b></>)}
-                {s.deduction > 0 && (<><span>Deductions</span><b>− {money(s.deduction)}</b></>)}
-                {s.advance > 0 && (<><span>Advances</span><b>− {money(s.advance)}</b></>)}
-                {s.paid > 0 && (<><span>Paid</span><b>− {money(s.paid)}</b></>)}
-                <span><b>Payable</b></span><b className={s.payable > 0 ? "" : "muted"}>{money(s.payable)}</b>
-              </div>
-              {(advances.length > 0 || adjustments.length > 0 || payments.length > 0) && (
-                <div className="money-list small">
-                  {advances.map((a) => (
-                    <button key={a.id} className="money-item" onClick={() => setModal({ kind: "advance", worker: w, item: a })}>
-                      <span>💵 Advance · {fmtDay(a.date)}{a.note ? ` · ${a.note}` : ""}</span><b>− {money(a.amount)}</b><span className="muted">✏️</span>
-                    </button>
-                  ))}
-                  {adjustments.map((a) => (
-                    <button key={a.id} className="money-item" onClick={() => setModal({ kind: "adjust", worker: w, item: a })}>
-                      <span>{a.amount > 0 ? "🎁 Bonus" : "➖ Deduction"} · {a.note}</span><b>{a.amount > 0 ? "+" : "−"} {money(Math.abs(a.amount))}</b><span className="muted">✏️</span>
-                    </button>
-                  ))}
-                  {payments.map((p) => (
-                    <button key={p.id} className="money-item" onClick={() => setModal({ kind: "pay", worker: w, item: p })}>
-                      <span>✅ Paid · {fmtDay(p.date)} · {p.mode}</span><b>{money(p.amount)}</b><span className="muted">✏️</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="btn-row">
-                <button className="btn btn-sm" onClick={() => setModal({ kind: "advance", worker: w })}>+ Advance</button>
-                <button className="btn btn-sm" onClick={() => setModal({ kind: "adjust", worker: w })}>± Bonus / deduction</button>
-                {s.payable > 0 && <button className="btn btn-sm btn-primary" onClick={() => setModal({ kind: "pay", worker: w, amount: s.payable })}>Pay {money(s.payable)}</button>}
-                <button className="btn btn-sm btn-ghost" onClick={() => run(() => salarySlipPdf(shop, w, s, data.records.filter((r) => r.staffId === w.id), adjustments))}>📄 Slip</button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {modal && (
-        <MoneyModal
-          {...modal}
-          month={month}
-          onClose={() => setModal(null)}
-          onDone={(msg) => (setModal(null), toast(msg), onChange())}
-        />
+      {closed && (
+        <div className="banner info closed-banner">
+          🔒 {monthLabel(month)} is closed ({new Date(closed.closedAt).toLocaleDateString("en-IN")}{closed.closedBy ? ` by ${closed.closedBy}` : ""}). Nothing in it can change.
+          <button className="link-btn" onClick={() => run(async () => (await post(`/staff/months/${month}/reopen`), toast("Month reopened"), onChange()))}>Reopen</button>
+        </div>
       )}
+      <div className="stats salary-stats">
+        <div className="stat"><div className="label">Salary this month</div><div className="value">{money(sm.gross)}</div></div>
+        <div className="stat"><div className="label">Paid</div><div className="value">{money(sm.paid)}</div></div>
+        <div className="stat"><div className="label">Still to pay</div><div className="value" style={{ color: sm.due ? "var(--danger)" : undefined }}>{money(sm.due)}</div></div>
+        {(sm.owedToShop > 0 || sm.loansLeft > 0) && (
+          <div className="stat"><div className="label">Staff owe you</div><div className="value">{money(sm.owedToShop + sm.loansLeft)}</div><div className="small muted">{sm.loansLeft ? `loans ${money(sm.loansLeft)}` : ""}{sm.loansLeft && sm.owedToShop ? " · " : ""}{sm.owedToShop ? `advances ${money(sm.owedToShop)}` : ""}</div></div>
+        )}
+      </div>
+      <div className="btn-row">
+        {!closed && due.length > 0 && <button className="btn btn-primary" onClick={() => setPayAll(true)}>💸 Pay everyone due ({due.length})</button>}
+        {!closed && <button className="btn" disabled={busy} onClick={closeMonth}>🔒 Close month</button>}
+        <button className="btn btn-ghost" onClick={() => setSettings(true)}>⚙️ Salary settings</button>
+        <button className="btn btn-ghost" disabled={busy || !workers.length} onClick={() => run(() => monthSheetExcel(shop, month, workers, data.records, data.salary, data.adjustments))}>📊 Excel</button>
+      </div>
+      {error && <div className="error">{error}</div>}
+      {workers.length === 0 && <div className="empty">No workers yet.</div>}
+      {workers.length > 0 && (
+        <div className="card table-wrap" style={{ padding: 0 }}>
+          <table className="table salary-table">
+            <thead>
+              <tr><th>Worker</th><th className="num">Days</th><th className="num hide-sm">Earned</th><th className="num hide-sm">Cuts</th><th className="num hide-sm">Earlier</th><th className="num">Payable</th><th></th></tr>
+            </thead>
+            <tbody>
+              {workers.map((w) => {
+                const s = data.salary[w.id];
+                const [cls, label] = payState(s);
+                const cuts = s.advance + s.loanCut + s.deduction;
+                return (
+                  <tr key={w.id} className="click" onClick={() => setSheet(w.id)}>
+                    <td><b>{w.name}</b><div className="small muted">{w.role} · {money(s.wage)}{s.wageType === "daily" ? "/day" : "/mo"}</div></td>
+                    <td className="num">{s.paidDays}{s.auto.present + s.auto.weekoff ? <div className="small muted">{s.auto.present + s.auto.weekoff} auto</div> : null}</td>
+                    <td className="num hide-sm">{money(s.earned + s.overtime + s.bonus)}</td>
+                    <td className="num hide-sm">{cuts ? `− ${money(cuts)}` : "—"}</td>
+                    <td className="num hide-sm">{s.previousBalance ? money(s.previousBalance) : "—"}</td>
+                    <td className="num"><b>{money(s.payable)}</b>{s.paid ? <div className="small muted">paid {money(s.paid)}</div> : null}</td>
+                    <td><span className={"tag " + cls}>{label}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="hint" style={{ margin: 0 }}>Tap a worker for the full breakdown, passbook and loans. "Earlier" is salary left unpaid (or advances not yet recovered) from previous months.</p>
+      {sheet && <WorkerSalarySheet worker={data.staff.find((w) => w.id === sheet)} data={data} month={month} onChange={onChange} onClose={() => setSheet(null)} />}
+      {payAll && <PayAllModal workers={due} data={data} month={month} onClose={() => setPayAll(false)} onDone={(r) => (setPayAll(false), toast(`Paid ${r.paid} worker${r.paid === 1 ? "" : "s"} · ${money(r.total)}`), onChange())} />}
+      {settings && <SalarySettingsModal settings={data.settings} onClose={() => setSettings(false)} onDone={() => (setSettings(false), toast("Salary settings saved"), onChange())} />}
     </div>
   );
+}
+
+// Everything about one worker's pay: this month, the passbook, and loans.
+function WorkerSalarySheet({ worker, data, month, onChange, onClose }) {
+  const { shop } = useApp();
+  const [tab, setTab] = useState("month");
+  const [modal, setModal] = useState(null);
+  const { busy, run } = useAction();
+  const toast = useToast();
+  const s = data.salary[worker.id];
+  const mine = (list) => (list || []).filter((x) => x.staffId === worker.id);
+  const advances = mine(data.advances);
+  const adjustments = mine(data.adjustments);
+  const payments = mine(data.payments);
+  const loans = mine(data.loans);
+  const closed = !!data.closed;
+  const [cls, label] = payState(s);
+  const done = (msg) => (setModal(null), toast(msg), onChange());
+  const phone = String(worker.phone || "").replace(/\D/g, "");
+  const wa = `https://wa.me/${phone.length === 10 ? "91" + phone : phone}?text=${encodeURIComponent(slipText(shop, worker, s))}`;
+  const line = (labelText, value, onClick, cls2 = "") => (
+    <button key={labelText} type="button" className={"sal-line " + cls2} onClick={onClick} disabled={!onClick || closed}>
+      <span>{labelText}</span><b>{value}</b>
+    </button>
+  );
+  return (
+    <Modal title={`${worker.name} · ${monthLabel(month)}`} onClose={onClose} wide>
+      <div className="stack sheet-body">
+        <div className="btn-row" style={{ justifyContent: "space-between" }}>
+          <span className="small muted">{worker.role} · {money(s.wage)} {s.wageType === "daily" ? "per day" : "per month"} · <span className={"tag " + cls}>{label}</span></span>
+          <Seg value={tab} onChange={setTab} options={[["month", "This month"], ["passbook", "Passbook"], ["loans", `Loans${loans.filter((l) => !l.done).length ? ` (${loans.filter((l) => !l.done).length})` : ""}`]]} />
+        </div>
+
+        {tab === "month" && (
+          <>
+            <div className="sal-lines">
+              {line("Earlier balance", s.previousBalance ? money(s.previousBalance) : "—", () => setModal({ kind: "opening" }), s.previousBalance < 0 ? "neg" : "")}
+              {line(`Earned · ${s.paidDays} of ${s.daysInMonth} days × ${money(s.perDay)}`, money(s.earned), null)}
+              {s.auto.present + s.auto.weekoff > 0 && <div className="small muted sal-note">Includes {s.auto.weekoff ? `${s.auto.weekoff} weekly off` : ""}{s.auto.weekoff && s.auto.present ? " and " : ""}{s.auto.present ? `${s.auto.present} unmarked day(s) counted present` : ""} (Salary settings).</div>}
+              {s.overtime > 0 && line(`Overtime · ${s.otHours} h × ${money(s.otRate)}`, `+ ${money(s.overtime)}`, null)}
+              {adjustments.map((a) => line(`${a.amount > 0 ? "🎁 Bonus" : "➖ Deduction"} · ${a.note}`, `${a.amount > 0 ? "+" : "−"} ${money(Math.abs(a.amount))}`, () => setModal({ kind: "adjust", item: a }), a.amount < 0 ? "neg" : ""))}
+              {s.loans.map((l) => line(`🏦 Loan instalment${l.note ? ` · ${l.note}` : ""} · ${money(l.leftAfter)} left after`, `− ${money(l.cut)}`, () => setTab("loans"), "neg"))}
+              {advances.map((a) => line(`💵 Advance · ${fmtDay(a.date)}${a.note ? ` · ${a.note}` : ""}`, `− ${money(a.amount)}`, () => setModal({ kind: "advance", item: a }), "neg"))}
+              {payments.map((p) => line(`✅ Paid · ${fmtDay(p.date)} · ${p.mode}`, `− ${money(p.amount)}`, () => setModal({ kind: "pay", item: p }), "neg"))}
+              <div className="sal-line total"><span>{s.payable < 0 ? `${worker.name} owes you` : "Payable"}</span><b>{money(Math.abs(s.payable))}</b></div>
+            </div>
+            {!closed ? (
+              <div className="btn-row">
+                {s.payable > 0 && <button className="btn btn-primary" onClick={() => setModal({ kind: "pay", amount: s.payable })}>Pay {money(s.payable)}</button>}
+                <button className="btn btn-sm" onClick={() => setModal({ kind: "advance" })}>+ Advance</button>
+                <button className="btn btn-sm" onClick={() => setModal({ kind: "adjust" })}>± Bonus / deduction</button>
+                <button className="btn btn-sm" onClick={() => setModal({ kind: "loan" })}>🏦 Give loan</button>
+              </div>
+            ) : (
+              <p className="hint" style={{ margin: 0 }}>🔒 This month is closed. Reopen it on the Salary page to change anything.</p>
+            )}
+            <div className="btn-row">
+              <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run(() => salarySlipPdf(shop, worker, s, data.records.filter((r) => r.staffId === worker.id), adjustments))}>📄 Slip PDF</button>
+              <a className="btn btn-sm btn-ghost" href={wa} target="_blank" rel="noopener noreferrer">💬 Send slip on WhatsApp</a>
+            </div>
+            {worker.wageHistory?.length > 1 && (
+              <p className="small muted" style={{ margin: 0 }}>
+                Wage history: {worker.wageHistory.map((h, i) => `${money(h.wage)}${h.wageType === "daily" ? "/day" : "/mo"} ${i === 0 ? "earlier" : `from ${monthLabel(h.from)}`}`).join(" · ")}
+              </p>
+            )}
+          </>
+        )}
+        {tab === "passbook" && <Passbook worker={worker} month={month} />}
+        {tab === "loans" && <Loans worker={worker} loans={loans} month={month} onEdit={(l) => setModal({ kind: "loan", item: l })} onNew={() => setModal({ kind: "loan" })} onChange={onChange} />}
+      </div>
+      {["advance", "adjust", "pay"].includes(modal?.kind) && <MoneyModal {...modal} worker={worker} month={month} onClose={() => setModal(null)} onDone={done} />}
+      {modal?.kind === "loan" && <LoanModal worker={worker} loan={modal.item} month={month} onClose={() => setModal(null)} onDone={done} />}
+      {modal?.kind === "opening" && <OpeningModal worker={worker} month={month} onClose={() => setModal(null)} onDone={done} />}
+    </Modal>
+  );
+}
+
+// Month by month like a bank passbook: what was earned, cut and paid, and the balance after each month.
+function Passbook({ worker, month }) {
+  const { shop } = useApp();
+  const [pb, setPb] = useState(null);
+  const { busy, error, run } = useAction();
+  useEffect(() => {
+    run(async () => setPb(await get(`/staff/${worker.id}/passbook?upto=${month}`)));
+  }, [worker.id, month]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!pb) return error ? <div className="error">{error}</div> : <div className="empty">Loading…</div>;
+  return (
+    <div className="stack">
+      <div className="card table-wrap" style={{ padding: 0 }}>
+        <table className="table passbook">
+          <thead><tr><th>Month</th><th className="num">Earned</th><th className="num">Cuts</th><th className="num">Paid</th><th className="num">Balance</th></tr></thead>
+          <tbody>
+            {pb.months.map((m) => (
+              <tr key={m.month}>
+                <td>{new Date(m.month + "-01T12:00").toLocaleDateString("en-IN", { month: "short", year: "numeric" })}<div className="small muted">{m.paidDays} days</div></td>
+                <td className="num">{money(m.earned + m.overtime + m.bonus)}</td>
+                <td className="num">{m.advance + m.loanCut + m.deduction ? `− ${money(m.advance + m.loanCut + m.deduction)}` : "—"}</td>
+                <td className="num">{m.paid ? money(m.paid) : "—"}</td>
+                <td className="num"><b style={{ color: m.payable < 0 ? "var(--danger)" : undefined }}>{money(m.payable)}</b></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {pb.months.length === 0 && <div className="empty">Nothing yet.</div>}
+      </div>
+      <p className="hint" style={{ margin: 0 }}>Balance = still to pay after that month (minus = the worker owes you). It carries into the next month.</p>
+      {pb.months.length > 0 && <button className="btn btn-sm" style={{ justifySelf: "start" }} disabled={busy} onClick={() => run(() => passbookExcel(shop, worker, pb.months))}>📊 Download passbook (Excel)</button>}
+    </div>
+  );
+}
+
+function Loans({ worker, loans, month, onEdit, onNew, onChange }) {
+  const toast = useToast();
+  const { run } = useAction();
+  const act = (l, body, msg) => run(async () => (await put(`/staff/loans/${l.id}`, body), toast(msg), onChange()));
+  return (
+    <div className="stack">
+      {loans.length === 0 && <p className="small muted" style={{ margin: 0 }}>No loans. A loan is given once and cut from salary every month until it's repaid.</p>}
+      {loans.map((l) => {
+        const skipped = l.skips?.includes(month);
+        return (
+          <div key={l.id} className={"card stack loan-card" + (l.done ? " done" : "")}>
+            <div className="btn-row" style={{ justifyContent: "space-between" }}>
+              <b>🏦 {money(l.amount)}{l.note ? ` · ${l.note}` : ""}</b>
+              <span className={"tag " + (l.done ? "good" : "warn")}>{l.done ? (l.closedMonth ? "Closed" : "Repaid ✓") : `${money(l.left)} left`}</span>
+            </div>
+            <div className="loan-bar"><span style={{ width: `${Math.min(100, (l.repaid / l.amount) * 100)}%` }} /></div>
+            <div className="small muted">Given {fmtDay(l.date)} · {money(l.cut)}/month from {monthLabel(l.startMonth)} · repaid {money(l.repaid)}{l.skips?.length ? ` · skipped ${l.skips.map((m) => monthLabel(m).split(" ")[0]).join(", ")}` : ""}</div>
+            {!l.done && (
+              <div className="btn-row">
+                <button className="btn btn-sm" onClick={() => onEdit(l)}>Edit</button>
+                <button className="btn btn-sm" onClick={() => act(l, skipped ? { unskip: month } : { skip: month }, skipped ? "Instalment back on this month" : "No instalment this month")}>{skipped ? "Cut this month again" : `Skip ${monthLabel(month).split(" ")[0]}`}</button>
+                <button className="btn btn-sm btn-ghost" onClick={() => confirm("Close this loan? No more instalments will be cut (from this month).") && act(l, { closedMonth: month }, "Loan closed")}>Close loan</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <button className="btn btn-sm" style={{ justifySelf: "start" }} onClick={onNew}>🏦 Give a loan</button>
+    </div>
+  );
+}
+
+function LoanModal({ worker, loan, month, onClose, onDone }) {
+  const [f, setF] = useState({ amount: loan?.amount ?? "", cut: loan?.cut ?? "", startMonth: loan?.startMonth || month, date: loan?.date || todayYmd(), note: loan?.note || "", mode: loan?.mode || "cash" });
+  const { busy, error, run } = useAction();
+  const months = f.amount && f.cut ? Math.ceil(Number(f.amount) / Number(f.cut)) : 0;
+  const save = (e) => {
+    e.preventDefault();
+    run(async () => {
+      const body = { amount: Number(f.amount), cut: Number(f.cut), startMonth: f.startMonth, date: f.date, note: f.note, mode: f.mode };
+      loan ? await put(`/staff/loans/${loan.id}`, body) : await post(`/staff/${worker.id}/loans`, body);
+      onDone(loan ? "Loan updated" : "Loan saved");
+    });
+  };
+  return (
+    <Modal title={loan ? `Edit loan · ${worker.name}` : `Loan to ${worker.name}`} onClose={onClose}>
+      <form className="stack" onSubmit={save}>
+        <div className="grid2">
+          <Field label="Loan amount (₹)"><input type="number" min="1" required value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} autoFocus /></Field>
+          <Field label="Cut each month (₹)"><input type="number" min="1" required value={f.cut} onChange={(e) => setF({ ...f, cut: e.target.value })} /></Field>
+        </div>
+        <div className="grid2">
+          <Field label="Given on"><input type="date" value={f.date} max={todayYmd()} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+          <Field label="First cut in"><input type="month" required value={f.startMonth} onChange={(e) => setF({ ...f, startMonth: e.target.value })} /></Field>
+        </div>
+        <Seg value={f.mode} onChange={(v) => setF({ ...f, mode: v })} options={MODES} />
+        <Field label="Note"><input maxLength={80} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="e.g. sister's wedding" /></Field>
+        {months > 0 && <p className="small muted" style={{ margin: 0 }}>Repaid in about {months} month{months === 1 ? "" : "s"}. You can skip a month (e.g. festival) or close it early.</p>}
+        {error && <div className="error">{error}</div>}
+        <div className="modal-actions">
+          {loan && <button type="button" className="btn btn-danger" disabled={busy} onClick={() => confirm("Delete this loan and all its instalments?") && run(async () => (await api(`/staff/loans/${loan.id}`, { method: "DELETE" }), onDone("Loan deleted")))}>Delete</button>}
+          <span className="spacer" />
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>Save</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Balance from before you used the app (+ you owe them, − they owe you).
+function OpeningModal({ worker, month, onClose, onDone }) {
+  const ob = worker.openingBalance;
+  const [f, setF] = useState({ amount: ob ? Math.abs(ob.amount) : "", sign: ob && ob.amount < 0 ? "-" : "+", month: ob?.month || month });
+  const { busy, error, run } = useAction();
+  const save = (e) => {
+    e.preventDefault();
+    run(async () => {
+      const amount = Number(f.amount) || 0;
+      await put(`/staff/${worker.id}`, { openingBalance: amount ? { amount: f.sign === "-" ? -amount : amount, month: f.month } : null });
+      onDone(amount ? "Starting balance saved" : "Starting balance removed");
+    });
+  };
+  return (
+    <Modal title={`Starting balance · ${worker.name}`} onClose={onClose}>
+      <form className="stack" onSubmit={save}>
+        <p className="small muted" style={{ margin: 0 }}>
+          The "earlier balance" is worked out from past months automatically. If you started using the app with something already pending, enter it once here.
+        </p>
+        <Seg value={f.sign} onChange={(v) => setF({ ...f, sign: v })} options={[["+", "I owe them salary"], ["-", "They owe me (old advance)"]]} />
+        <div className="grid2">
+          <Field label="Amount (₹)"><input type="number" min="0" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
+          <Field label="From month"><input type="month" required value={f.month} onChange={(e) => setF({ ...f, month: e.target.value })} /></Field>
+        </div>
+        {error && <div className="error">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>Save</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Pay everyone due at once: one date and method, amounts can be changed.
+function PayAllModal({ workers, data, month, onClose, onDone }) {
+  const [rows, setRows] = useState(() => workers.map((w) => ({ id: w.id, name: w.name, amount: data.salary[w.id].payable, on: true })));
+  const [date, setDate] = useState(todayYmd());
+  const [mode, setMode] = useState("cash");
+  const [addExpense, setAddExpense] = useState(true);
+  const { busy, error, run } = useAction();
+  const chosen = rows.filter((r) => r.on && Number(r.amount) > 0);
+  const total = chosen.reduce((t, r) => t + Number(r.amount), 0);
+  return (
+    <Modal title={`Pay salaries · ${monthLabel(month)}`} onClose={onClose}>
+      <div className="stack">
+        <div className="pay-rows">
+          {rows.map((r, i) => (
+            <label key={r.id} className="pay-row">
+              <input type="checkbox" checked={r.on} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, on: e.target.checked } : x)))} />
+              <span>{r.name}</span>
+              <input className="input" type="number" min="0" value={r.amount} disabled={!r.on} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
+            </label>
+          ))}
+        </div>
+        <div className="grid2">
+          <Field label="Date"><input type="date" value={date} max={todayYmd()} onChange={(e) => setDate(e.target.value)} /></Field>
+          <div className="field">Paid by<Seg value={mode} onChange={setMode} options={MODES} /></div>
+        </div>
+        <label className="check small"><input type="checkbox" checked={addExpense} onChange={(e) => setAddExpense(e.target.checked)} /> Add to Expenses (Salary) so profit includes it</label>
+        {error && <div className="error">{error}</div>}
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button
+            className="btn btn-primary"
+            disabled={busy || !chosen.length}
+            onClick={() => run(async () => onDone(await post("/staff/pay-all", { month, date, mode, addExpense, payments: chosen.map((r) => ({ staffId: r.id, amount: Number(r.amount) })) })))}
+          >
+            Pay {chosen.length} · {money(total)}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function SalarySettingsModal({ settings, onClose, onDone }) {
+  const [f, setF] = useState({ ...settings });
+  const { busy, error, run } = useAction();
+  const toggleDay = (d) => setF({ ...f, weeklyOff: f.weeklyOff.includes(d) ? f.weeklyOff.filter((x) => x !== d) : [...f.weeklyOff, d].sort() });
+  return (
+    <Modal title="Salary settings" onClose={onClose}>
+      <div className="stack">
+        <div className="field">
+          Weekly off day(s)
+          <div className="chips">{WEEKDAYS.map((d, i) => <button key={d} type="button" className={"chip" + (f.weeklyOff.includes(i) ? " on" : "")} onClick={() => toggleDay(i)}>{d}</button>)}</div>
+          <span className="hint">Unmarked days on these weekdays count as Week off (paid for monthly wages).</span>
+        </div>
+        <div className="field">
+          Days you don't mark
+          <Seg value={f.unmarked} onChange={(v) => setF({ ...f, unmarked: v })} options={[["none", "Not paid"], ["present", "Count as present"]]} />
+          <span className="hint">"Count as present" suits shops that only mark absences. Only days up to today, after the joining date.</span>
+        </div>
+        <div className="field">
+          Day rate for monthly wages
+          <Seg value={f.dayBasis} onChange={(v) => setF({ ...f, dayBasis: v })} options={[["month", "÷ days in month"], ["30", "÷ 30"], ["26", "÷ 26 working days"]]} />
+          <span className="hint">₹15,000 a month = {f.dayBasis === "30" ? "₹500" : f.dayBasis === "26" ? "₹577" : "₹484–536"} a day. With ÷ 26, week offs aren't paid days and a full month never pays more than the wage.</span>
+        </div>
+        <label className="check small"><input type="checkbox" checked={f.otAuto} onChange={(e) => setF({ ...f, otAuto: e.target.checked })} /> Overtime without a set rate = day rate ÷ shift hours</label>
+        {error && <div className="error">{error}</div>}
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy} onClick={() => run(async () => (await put("/staff/settings", f), onDone()))}>Save</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// A short slip to send on WhatsApp.
+function slipText(shop, worker, s) {
+  const r = (n) => `₹${Math.round(Math.abs(n)).toLocaleString("en-IN")}`;
+  const lines = [
+    `*${shop.name}* · Salary ${monthLabel(s.month)}`,
+    `${worker.name}`,
+    `Days paid: ${s.paidDays} of ${s.daysInMonth}`,
+    `Earned: ${r(s.earned)}`,
+    s.overtime ? `Overtime (${s.otHours} h): +${r(s.overtime)}` : null,
+    s.bonus ? `Bonus: +${r(s.bonus)}` : null,
+    s.deduction ? `Deductions: -${r(s.deduction)}` : null,
+    s.loanCut ? `Loan instalment: -${r(s.loanCut)}` : null,
+    s.advance ? `Advances: -${r(s.advance)}` : null,
+    s.previousBalance ? `Earlier balance: ${s.previousBalance < 0 ? "-" : "+"}${r(s.previousBalance)}` : null,
+    s.paid ? `Paid: -${r(s.paid)}` : null,
+    s.payable < 0 ? `*You owe: ${r(s.payable)}*` : `*Balance to pay: ${r(s.payable)}*`,
+  ];
+  return lines.filter(Boolean).join("\n");
 }
 
 // Add or fix an advance, a bonus/deduction, or a salary payment.
