@@ -17,7 +17,7 @@ function orderItems(st, isKitchen) {
   const asked = new Map();
   for (const o of st.orders) if (o.billRequest && OPEN.includes(o.status) && !asked.has(o.table)) asked.set(o.table, o);
   for (const o of asked.values())
-    out.push({ key: "b" + o.table, icon: "🧾", at: o.billRequest.at, text: `${o.tableName || o.table} asks for the bill · will pay ${o.billRequest.method === "upi" ? "by UPI" : "at the counter"}`, to: "/orders" });
+    out.push({ key: "b" + o.table, icon: "🧾", at: o.billRequest.at, text: o.billRequest.method === "paid" ? `${o.tableName || o.table} has paid and is leaving: close the table` : `${o.tableName || o.table} asks for the bill · will pay ${o.billRequest.method === "upi" ? "by UPI" : "at the counter"}`, to: "/orders" });
   for (const o of st.orders.filter((x) => x.pay?.state === "claimed"))
     out.push({ key: "op" + o.clientId, icon: "💳", at: o.pay.claimedAt, text: `#${o.orderNo} · ${o.tableName || o.table} says paid ${money(o.pay.amount)} by UPI: confirm`, to: "/orders" });
   for (const o of st.orders.filter((x) => x.pay?.state === "refundDue"))

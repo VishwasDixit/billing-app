@@ -139,4 +139,16 @@ describe("paying for QR orders", () => {
     for (let i = 0; i < 10; i++) await pay(o, "end");
     expect((await pay(o, "end")).status).toBe(429);
   });
+
+  it("a table that paid everything can just say it's leaving", async () => {
+    const { c, token, order, pay } = await shop("leaving@test.local", "choose");
+    const o = await order(1);
+    await pay(o, "upi");
+    await c("POST", `/orders/${o.orderId}/payment`, { action: "confirm" });
+    await c("POST", `/orders/${o.orderId}/status`, { status: "accepted" });
+    const r = await client()("POST", `/public/shop/${token}/bill-request`, { orderId: o.orderId, key: o.key, method: "paid" });
+    expect(r.body.billRequest.method).toBe("paid");
+    const staff = (await c("GET", "/orders")).body.orders.find((x) => x.clientId === o.orderId);
+    expect(staff.billRequest.method).toBe("paid");
+  });
 });

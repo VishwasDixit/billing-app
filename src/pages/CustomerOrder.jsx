@@ -129,7 +129,23 @@ export default function CustomerOrder() {
 
       {view === "status" ? (
         <div className="co-status">
-          <BillBox token={token} mine={mine} cur={cur} onAsk={() => setBillAsk(true)} onChange={refreshMine} />
+          <BillBox
+            token={token}
+            mine={mine}
+            cur={cur}
+            onAsk={async (method) => {
+              if (method !== "paid") return setBillAsk(true);
+              // Everything is paid: just tell the staff the table is done.
+              const o = [...mine].reverse().find((x) => ["accepted", "preparing", "ready", "served"].includes(x.status));
+              try {
+                await post(`/public/shop/${token}/bill-request`, { orderId: o.id, key: o.key, method: "paid" });
+              } catch {
+                /* the staff can still close it */
+              }
+              await refreshMine();
+            }}
+            onChange={refreshMine}
+          />
           {[...mine].reverse().filter((o) => o.status !== "billed").map((o) => (
             <div key={o.id} className="card co-order">
               <div className="co-order-head">
@@ -436,25 +452,48 @@ function BillBox({ token, mine, cur, onAsk, onChange }) {
   const request = open.find((o) => o.billRequest)?.billRequest;
   if (withBill && !open.length) return <BillCard token={token} order={withBill} cur={cur} onChange={onChange} />;
   if (!open.length) return null;
+  // Orders already paid while ordering (or paid and waiting for the staff to confirm).
+  const isPaid = (o) => ["paid", "claimed"].includes(o.pay?.state);
+  const paid = open.filter(isPaid);
+  const due = open.filter((o) => !isPaid(o));
+  const paidSum = paid.reduce((s, o) => s + (o.pay?.amount ?? o.total), 0);
+  const dueSum = due.reduce((s, o) => s + o.total, 0);
+  if (!due.length) {
+    const waiting = paid.some((o) => o.pay?.state === "claimed");
+    return (
+      <div className="card co-bill-ask done">
+        <b>✅ Your orders are paid ({money(paidSum, cur)})</b>
+        <div className="small">
+          {waiting ? "The staff are confirming your payment. " : ""}Nothing more to pay.{" "}
+          {request ? "The staff will close your table. Thank you!" : "When you're done, let the staff know you're leaving."}
+        </div>
+        {!request && <button className="btn btn-sm" onClick={() => onAsk("paid")}>👋 We're done, close our table</button>}
+      </div>
+    );
+  }
   if (request) {
     return (
       <div className="card co-bill-ask done">
         <b>🧾 Bill requested</b>
         <div className="small">
-          {request.method === "upi" ? "You'll pay online by UPI." : "You'll pay at the cash counter."} The staff is preparing your bill; it will appear here.
+          {paidSum > 0 && `${money(paidSum, cur)} already paid. `}
+          {request.method === "upi" ? `You'll pay the rest${paidSum ? "" : ` (${money(dueSum, cur)})`} online by UPI.` : `You'll pay the rest at the cash counter.`} The staff is preparing your bill; it will appear here.
         </div>
       </div>
     );
   }
   return (
-    <button className="btn btn-lg co-bill-btn" onClick={onAsk}>
-      🧾 Get the bill
+    <button className="btn btn-lg co-bill-btn" onClick={() => onAsk()}>
+      🧾 Get the bill{paidSum > 0 ? ` · ${money(dueSum, cur)} left to pay` : ""}
     </button>
   );
 }
 
 function BillAsk({ token, mine, onClose, onDone }) {
   const o = [...mine].reverse().find((x) => ["accepted", "preparing", "ready", "served"].includes(x.status));
+  const openMine = mine.filter((x) => ["accepted", "preparing", "ready", "served"].includes(x.status));
+  const paidSum = openMine.filter((x) => ["paid", "claimed"].includes(x.pay?.state)).reduce((s, x) => s + (x.pay?.amount ?? x.total), 0);
+  const dueSum = openMine.filter((x) => !["paid", "claimed"].includes(x.pay?.state)).reduce((s, x) => s + x.total, 0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const ask = async (method) => {
@@ -473,6 +512,7 @@ function BillAsk({ token, mine, onClose, onDone }) {
     <div className="co-sheet-back" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="co-sheet">
         <b>How would you like to pay?</b>
+        {dueSum > 0 && paidSum > 0 && <div className="small muted">{money(paidSum, "₹")} is already paid · {money(dueSum, "₹")} left</div>}
         {o?.upi && (
           <button className="pay-method main" disabled={busy} onClick={() => ask("upi")}>
             <span className="pm-icon">📱</span>

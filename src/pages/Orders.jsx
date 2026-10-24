@@ -236,7 +236,7 @@ export default function Orders() {
                   <span>{money(total, cur)}</span>
                   <span className="small">{list.length} order{list.length === 1 ? "" : "s"} · {ago(since)}</span>
                   {ready && <span className="tag good">food ready</span>}
-                  {billReq && <span className="tag warn">🧾 Bill · {billReq.method === "upi" ? "UPI" : "Counter"}</span>}
+                  {billReq && <span className="tag warn">🧾 Bill · {billReq.method === "upi" ? "UPI" : billReq.method === "paid" ? "all paid ✓" : "Counter"}</span>}
                 </>
               ) : (
                 <span className="small muted">Free</span>
@@ -275,7 +275,7 @@ export default function Orders() {
                   orderIds: list.map((o) => o.clientId),
                   orderNos: list.map((o) => o.orderNo),
                   lines: [...lines.values()],
-                  payMode: req?.method === "upi" ? "upi" : req ? "cash" : undefined,
+                  payMode: req?.method === "upi" || req?.method === "paid" ? "upi" : req ? "cash" : undefined,
                   prepaid: Math.round(paid.reduce((s, o) => s + (o.pay.amount || 0), 0) * 100) / 100,
                   prepaidOrderNos: paid.map((o) => o.orderNo),
                 },
@@ -315,7 +315,9 @@ function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
         {orders.length === 0 && <div className="empty">No open orders. Tap “Add order” to take one.</div>}
         {orders.find((o) => o.billRequest) && (
           <div className="banner warn" style={{ borderRadius: 8 }}>
-            🧾 The customer asked for the bill · will pay {orders.find((o) => o.billRequest).billRequest.method === "upi" ? "online by UPI" : "at the counter"}
+            🧾 {orders.find((o) => o.billRequest).billRequest.method === "paid"
+              ? "The customers have paid their orders and are leaving. Bill the table to close it."
+              : `The customer asked for the bill · will pay ${orders.find((o) => o.billRequest).billRequest.method === "upi" ? "online by UPI" : "at the counter"}`}
           </div>
         )}
         {orders.map((o) => (

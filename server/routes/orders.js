@@ -242,7 +242,7 @@ export default [
     "/public/shop/:token/bill-request",
     async ({ db, params, body }) => {
       const shop = await shopByToken(db, params.token);
-      const { orderId, key, method } = z.object({ orderId: z.string(), key: z.string(), method: z.enum(["upi", "counter"]) }).parse(body);
+      const { orderId, key, method } = z.object({ orderId: z.string(), key: z.string(), method: z.enum(["upi", "counter", "paid"]) }).parse(body);
       const o = await customerOrder(db, shop, orderId, key);
       if (method === "upi" && !shop.upiId) throw new HttpError(400, "Online payment isn't set up here. Please pay at the counter.");
       const billRequest = { method, at: new Date() };
