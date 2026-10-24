@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApp, accessState } from "../lib/store.jsx";
-import { post } from "../lib/api.js";
+import { post, put } from "../lib/api.js";
 import { fmtDate } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { PAPER } from "../printer/receipt.js";
@@ -178,6 +178,7 @@ export default function Settings() {
           <TablesCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} access={access} />
 
           {user.role !== "admin" && <KitchenStaffCard />}
+          <BillSafetyCard />
 
           <section className="card stack">
             <h2>Appearance</h2>
@@ -465,6 +466,59 @@ function IPhonePrintHelp() {
       </div>
       <p className="hint" style={{ margin: "8px 0 0" }}>Until then, use <b>PDF</b> on the bill to share it on WhatsApp.</p>
     </div>
+  );
+}
+
+// Bill safety: an owner PIN for editing, deleting and restoring bills (set or removed with the password).
+function BillSafetyCard() {
+  const { shop, saveShop } = useApp();
+  const toast = useToast();
+  const [open, setOpen] = useState(null); // "set" | "off"
+  const [pin, setPin] = useState("");
+  const [password, setPassword] = useState("");
+  const { busy, error, run } = useAction();
+  const submit = (e) => {
+    e.preventDefault();
+    run(async () => {
+      await put("/shop/bill-pin", { password, pin: open === "off" ? null : pin });
+      await saveShop({});
+      toast(open === "off" ? "Owner PIN turned off" : "Owner PIN saved");
+      setOpen(null);
+      setPin("");
+      setPassword("");
+    });
+  };
+  return (
+    <section className="card stack">
+      <h2>Bill safety</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        Every edited or deleted bill is recorded with who did it and why, and you see it in Alerts, on the Dashboard and in the morning email.
+        Turn on an <b>owner PIN</b> so staff using this login can't edit, delete or restore bills without you. Bills more than a week old always need it.
+      </p>
+      <div className="small">{shop.billPin ? <span className="tag good">Owner PIN is on</span> : <span className="tag">Owner PIN is off</span>}</div>
+      {!open ? (
+        <div className="btn-row">
+          <button className="btn btn-sm" onClick={() => setOpen("set")}>{shop.billPin ? "Change PIN" : "Set owner PIN"}</button>
+          {shop.billPin && <button className="btn btn-sm btn-ghost" onClick={() => setOpen("off")}>Turn off</button>}
+        </div>
+      ) : (
+        <form className="stack" onSubmit={submit}>
+          {open === "set" && (
+            <Field label="New 4-digit owner PIN" hint="Don't share it with staff.">
+              <input className="pin-input" type="password" inputMode="numeric" autoComplete="off" required pattern="\d{4}" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} />
+            </Field>
+          )}
+          <Field label="Your account password (to confirm)">
+            <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </Field>
+          {error && <div className="error">{error}</div>}
+          <div className="btn-row">
+            <button type="button" className="btn btn-sm" onClick={() => setOpen(null)}>Cancel</button>
+            <button className="btn btn-sm btn-primary" disabled={busy}>{open === "off" ? "Turn off PIN" : "Save PIN"}</button>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
 

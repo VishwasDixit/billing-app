@@ -101,6 +101,7 @@ export default function Dashboard() {
               </>
             )}
           </div>
+          <BillChangesCard from={range[0]} to={range[1]} cur={cur} />
           <p className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
             Changes compare with the previous {data.days.length === 1 ? "day" : `${data.days.length} days`} ({shortDate(data.range.prevFrom)} – {shortDate(data.range.prevTo)}). Profit = sales − expenses.
           </p>
@@ -280,6 +281,41 @@ function LockedDashboard({ expired }) {
           <Link className="btn btn-primary btn-lg" to="/plans">See plans</Link>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Edited and deleted bills in this period: the owner's check against counter mistakes and misuse.
+function BillChangesCard({ from, to, cur }) {
+  const [c, setC] = useState(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    get(`/bills/changes?from=${from}&to=${to}`).then(setC, () => setC(null));
+  }, [from, to]);
+  if (!c || (!c.edited && !c.deleted && !c.restored)) return null;
+  return (
+    <div className={"card stack bill-changes" + (c.flags.length ? " flagged" : "")} style={{ marginBottom: 14 }}>
+      <div className="btn-row" style={{ justifyContent: "space-between" }}>
+        <b>
+          🧾 Bill changes: {c.edited} edited · {c.deleted} deleted ({money(c.deletedAmount, cur)}){c.restored ? ` · ${c.restored} restored` : ""}
+        </b>
+        <div className="btn-row">
+          <button className="btn btn-sm btn-ghost" onClick={() => setOpen(!open)}>{open ? "Hide" : "Details"}</button>
+          <Link className="btn btn-sm" to="/bills">Deleted bin</Link>
+        </div>
+      </div>
+      {c.flags.map((f, i) => <div key={i} className="small" style={{ color: "var(--danger)" }}>⚠️ {f}</div>)}
+      {open && (
+        <div className="stack small">
+          {c.items.map((x) => (
+            <div key={x.id}>
+              <b>{x.action === "delete" ? "🗑️ Deleted" : x.action === "edit" ? "✏️ Edited" : "♻️ Restored"}</b> bill {x.billNo} · {money(x.total, cur)}
+              {x.action === "edit" && x.before != null ? ` (was ${money(x.before, cur)})` : ""} · {x.reasonLabel}{x.note ? ` · ${x.note}` : ""} · {x.by} ·{" "}
+              <span className="muted">{new Date(x.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

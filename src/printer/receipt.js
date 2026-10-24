@@ -90,7 +90,11 @@ export function receiptRows(shop, bill) {
   const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   pair(`Bill: ${bill.billNo}`, `${date} ${time}`);
   if (bill.table) line(`Table: ${ascii(bill.table)}`);
-  if (bill.status === "void") center("*** VOID ***", { bold: true });
+  if (bill.status === "void" || bill.status === "deleted") center("*** CANCELLED ***", { bold: true });
+  if (bill.editedAt && bill.status === "paid") {
+    const e = new Date(bill.editedAt);
+    center(`*** REVISED ${pad2(e.getDate())}/${pad2(e.getMonth() + 1)} ${pad2(e.getHours())}:${pad2(e.getMinutes())} ***`, { bold: true });
+  }
   if (bill.customer?.name) {
     wrap("Customer: " + bill.customer.name, cols).forEach((l) => line(l));
     if (bill.customer.phone) line("Ph: " + bill.customer.phone);

@@ -66,6 +66,9 @@ async function ensureIndexes(db) {
     db.collection("menuImages").createIndex({ shopId: 1, itemId: 1 }),
     db.collection("bills").createIndex({ shopId: 1, clientId: 1 }, { unique: true }),
     db.collection("bills").createIndex({ shopId: 1, createdAt: -1 }),
+    // Deleted bills leave the bin by themselves 30 days later.
+    db.collection("bills").createIndex({ purgeAt: 1 }, { expireAfterSeconds: 0 }),
+    db.collection("billAudit").createIndex({ shopId: 1, at: -1 }),
     db.collection("expenses").createIndex({ shopId: 1, date: -1 }),
     db.collection("customers").createIndex({ shopId: 1, clientId: 1 }, { unique: true }),
     db.collection("customers").createIndex({ shopId: 1, name: 1 }),

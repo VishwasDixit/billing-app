@@ -2,6 +2,8 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { markBilledLocally } from "../lib/orders.js";
 import { useApp, accessState } from "../lib/store.jsx";
+import { put } from "../lib/api.js";
+import { EDIT_REASONS, isOldBill } from "../../shared/billChanges.js";
 import { computeTotals } from "../../shared/totals.js";
 import { money, todayYmd } from "../lib/format.js";
 import { Modal, Seg, useToast } from "../components/ui.jsx";
@@ -35,11 +37,15 @@ export default function Billing() {
   // Billing a table: its orders' items fill the cart, and the bill closes those orders.
   const location = useLocation();
   const [tableBill, setTableBill] = useState(null);
+  // Changing a saved bill (from Bill history › Edit): same number and date, with a reason.
+  const [editBill, setEditBill] = useState(null);
+  const [editReason, setEditReason] = useState("");
+  const [editPin, setEditPin] = useState("");
   // The bill being made survives a refresh or an app update (kept on this device only).
   const draftKey = `billDraft:${shop.id}`;
   const restored = useRef(false);
   useEffect(() => {
-    if (restored.current || location.state?.tableBill) return;
+    if (restored.current || location.state?.tableBill || location.state?.editBill) return;
     restored.current = true;
     try {
       const d = JSON.parse(localStorage.getItem(draftKey) || "null");
@@ -52,6 +58,7 @@ export default function Billing() {
       if (d.paidNow) setPaidNow(d.paidNow);
       if (d.billDate) setBillDate(d.billDate);
       if (d.tableBill) setTableBill(d.tableBill);
+      if (d.editBill) setEditBill(d.editBill);
     } catch {
       /* no saved bill */
     }
@@ -60,11 +67,40 @@ export default function Billing() {
     if (!restored.current) return;
     try {
       if (!cart.size) localStorage.removeItem(draftKey);
-      else localStorage.setItem(draftKey, JSON.stringify({ cart: [...cart.entries()], discount, gstPercent, paymentMode, customer, paidNow, billDate, tableBill }));
+      else localStorage.setItem(draftKey, JSON.stringify({ cart: [...cart.entries()], discount, gstPercent, paymentMode, customer, paidNow, billDate, tableBill, editBill }));
     } catch {
       /* storage full or blocked */
     }
-  }, [cart, discount, gstPercent, paymentMode, customer, paidNow, billDate, tableBill, draftKey]);
+  }, [cart, discount, gstPercent, paymentMode, customer, paidNow, billDate, tableBill, editBill, draftKey]);
+
+  useEffect(() => {
+    const b = location.state?.editBill;
+    if (!b) return;
+    restored.current = true;
+    setEditBill({ id: b.id, billNo: b.billNo, createdAt: b.createdAt, total: b.total });
+    setTableBill(null);
+    setBillDate("");
+    setCart(new Map(b.items.map((l) => [lineKey(l.itemId || l.name, l.variant || ""), { itemId: l.itemId, name: l.name, variant: l.variant || "", category: l.category || "", rate: l.rate, qty: l.qty }])));
+    setDiscount({ type: b.discount?.type || "percent", value: b.discount?.value || 0 });
+    setGstPercent(b.gst?.percent || 0);
+    setPaymentMode(b.paymentMode || "cash");
+    setCustomer(b.customer || null);
+    setPaidNow(b.paidNow || 0);
+    setEditReason("");
+    setEditPin("");
+    setCartOpen(true);
+    nav(".", { replace: true, state: null });
+  }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cancelEdit = () => {
+    setEditBill(null);
+    setCart(new Map());
+    setDiscount(shop.defaultDiscount || { type: "percent", value: 0 });
+    setGstPercent(shop.gstPercent || 0);
+    setPaymentMode("cash");
+    setCustomer(null);
+    setPaidNow(0);
+    nav("/bills");
+  };
 
   useEffect(() => {
     const tb = location.state?.tableBill;
@@ -86,8 +122,8 @@ export default function Billing() {
   const [showPictures] = useShowPictures();
 
   // Shop defaults may change in Settings.
-  useEffect(() => setDiscount(shop.defaultDiscount || { type: "percent", value: 0 }), [shop.defaultDiscount]);
-  useEffect(() => setGstPercent(shop.gstPercent || 0), [shop.gstPercent]);
+  useEffect(() => void (!editBill && setDiscount(shop.defaultDiscount || { type: "percent", value: 0 })), [shop.defaultDiscount]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => void (!editBill && setGstPercent(shop.gstPercent || 0)), [shop.gstPercent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const active = menu.filter((m) => m.active !== false);
   const categories = useMemo(() => ["All", ...new Set(active.map((m) => m.category || "Other"))], [active]);
@@ -139,6 +175,7 @@ export default function Billing() {
   async function finish(kind) {
     if (!cart.size || busy) return;
     if (needCustomer) return toast("Choose the customer for this udhar bill.");
+    if (editBill) return saveEdit(kind);
     if (!access.active) {
       toast("Your plan has ended. Choose a plan to keep billing.");
       return nav("/plans");
@@ -175,6 +212,49 @@ export default function Billing() {
       }
     } catch (err) {
       toast("Couldn't save the bill: " + err.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  // Saves the changed bill (online only), then prints the REVISED copy if asked.
+  async function saveEdit(kind) {
+    if (!editReason) return toast("Choose why this bill is being changed.");
+    setBusy(kind);
+    try {
+      const bill = await put(`/bills/${editBill.id}`, {
+        items: lines.map(([, l]) => ({ itemId: l.itemId || "", name: l.name, variant: l.variant || "", category: l.category || "", qty: l.qty, rate: l.rate })),
+        discount: { type: discount.type, value: Number(discount.value) || 0 },
+        gstPercent: Number(gstPercent) || 0,
+        paymentMode,
+        ...(customer && { customer: { clientId: customer.clientId, name: customer.name, phone: customer.phone || "" } }),
+        ...(credit && { paidNow: paidNowClamped }),
+        reason: editReason,
+        ...(editPin && { pin: editPin }),
+      });
+      setEditBill(null);
+      setCart(new Map());
+      setDiscount(shop.defaultDiscount || { type: "percent", value: 0 });
+      setGstPercent(shop.gstPercent || 0);
+      setPaymentMode("cash");
+      setCustomer(null);
+      setPaidNow(0);
+      setCartOpen(false);
+      if (kind === "print") {
+        try {
+          await printBill(shop, bill);
+          toast(`Bill ${bill.billNo} updated and printed (REVISED)`);
+        } catch (err) {
+          const msg = explainPrintError(err);
+          if (msg) setPrintError({ bill, msg });
+          else toast(`Bill ${bill.billNo} updated (not printed)`);
+        }
+      } else if (kind === "pdf") {
+        await shareBillPdf(shop, bill);
+        toast(`Bill ${bill.billNo} updated`);
+      } else toast(`Bill ${bill.billNo} updated`);
+    } catch (err) {
+      toast(err.offline ? "Editing a bill needs internet. Try again when online." : "Couldn't update the bill: " + err.message);
     } finally {
       setBusy("");
     }
@@ -231,10 +311,10 @@ export default function Billing() {
 
       <aside className={"cart-panel" + (cartOpen ? " open" : "")}>
         <div className="cart-head">
-          <h2>Current bill</h2>
+          <h2>{editBill ? `Edit bill ${editBill.billNo}` : "Current bill"}</h2>
           <div className="btn-row">
             {cart.size > 0 && (
-              <button className="btn btn-ghost btn-sm" onClick={() => confirm("Clear all items?") && (setCart(new Map()), setTableBill(null))}>
+              !editBill && <button className="btn btn-ghost btn-sm" onClick={() => confirm("Clear all items?") && (setCart(new Map()), setTableBill(null))}>
                 Clear
               </button>
             )}
@@ -243,13 +323,19 @@ export default function Billing() {
             </button>
           </div>
         </div>
+        {editBill && (
+          <div className="edit-banner">
+            <span>✏️ Changing bill {editBill.billNo} (was {money(editBill.total, cur)})</span>
+            <button className="link-btn" onClick={cancelEdit}>Cancel edit</button>
+          </div>
+        )}
         {tableBill && (
           <div className="table-bill-bar">
             <span>🍽️ <b>{tableBill.tableName}</b> · orders {tableBill.orderNos.map((n) => `#${n}`).join(", ")}</span>
             <button className="link-btn" onClick={() => (setTableBill(null), setCart(new Map()))}>Cancel</button>
           </div>
         )}
-        <div className={"bill-date" + (pastDate ? " past" : "")}>
+        {!editBill && <div className={"bill-date" + (pastDate ? " past" : "")}>
           <label htmlFor="bill-date">📅 Bill date</label>
           <input
             id="bill-date"
@@ -265,7 +351,7 @@ export default function Billing() {
           ) : (
             <button className="btn btn-sm btn-ghost" onClick={() => setBillDate(todayYmd(-1))}>Yesterday</button>
           )}
-        </div>
+        </div>}
         {pastDate && <div className="small past-note">This bill will be saved on {pastLabel} and count in that day's sales.</div>}
         <div className="cart-list">
           {lines.length === 0 && <div className="empty">Tap menu items to add them.</div>}
@@ -331,15 +417,31 @@ export default function Billing() {
 
         <PrinterBar method={shop.printer?.method} />
 
+        {editBill && (
+          <div className="edit-reason">
+            <span className="small">Why are you changing it?</span>
+            <div className="reason-grid">
+              {Object.entries(EDIT_REASONS).map(([k, label]) => (
+                <button key={k} type="button" className={"chip" + (editReason === k ? " on" : "")} onClick={() => setEditReason(k)}>{label}</button>
+              ))}
+            </div>
+            {(shop.billPin || isOldBill(editBill)) && (
+              <label className="field small">
+                Owner PIN
+                <input className="input pin-input" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={editPin} onChange={(e) => setEditPin(e.target.value.replace(/\D/g, ""))} />
+              </label>
+            )}
+          </div>
+        )}
         <div className="bill-actions">
           <button className="btn btn-primary btn-lg" disabled={!cart.size || !!busy || needCustomer} onClick={() => finish("print")}>
-            {busy === "print" ? "Printing…" : "Print bill"}
+            {busy === "print" ? "Printing…" : editBill ? "Update & print" : "Print bill"}
           </button>
           <button className="btn btn-lg" disabled={!cart.size || !!busy || needCustomer} onClick={() => finish("pdf")} title="Save and share as PDF">
             PDF
           </button>
           <button className="btn btn-lg" disabled={!cart.size || !!busy || needCustomer} onClick={() => finish("save")} title="Save without printing">
-            Save
+            {editBill ? "Update" : "Save"}
           </button>
         </div>
       </aside>

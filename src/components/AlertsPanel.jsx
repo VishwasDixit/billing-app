@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { get, post } from "../lib/api.js";
 import { useOrders, chime } from "../lib/orders.js";
-import { money, fmtDateTime } from "../lib/format.js";
+import { money, fmtDateTime, todayYmd } from "../lib/format.js";
 import { usePref } from "../lib/prefs.js";
 
 const ICON = { out: "🔴", low: "🟠", expiring: "⏳", expired: "⛔", waste: "🗑️", variance: "🔍" };
@@ -44,9 +44,11 @@ export function AlertsPanel({ onClose, isKitchen, sheet, onKitchenChange }) {
   const st = useOrders();
   const [kitchen, setKitchen] = useState(null);
   const [sound, setSound] = usePref("alertSound", true);
+  const [changes, setChanges] = useState(null);
   const load = () => get("/kitchen/alerts").then((r) => setKitchen(r.alerts), () => setKitchen([]));
   useEffect(() => {
     load();
+    if (!isKitchen) get(`/bills/changes?from=${todayYmd()}&to=${todayYmd()}`).then(setChanges, () => {});
     const onKey = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -86,7 +88,23 @@ export function AlertsPanel({ onClose, isKitchen, sheet, onKitchenChange }) {
               <button className="btn btn-sm btn-ghost" onClick={() => seen(a)}>Seen</button>
             </div>
           ))}
-          {kitchen && !kitchen.length && !orders.length && <div className="empty small">✅ All clear. Nothing needs you right now.</div>}
+          {changes?.items.length > 0 && <div className="alerts-group">Bill changes today</div>}
+          {changes?.flags.map((f, i) => (
+            <button key={"f" + i} className="alerts-item bad" onClick={() => go("/dashboard")}>
+              <span aria-hidden="true">⚠️</span>
+              <span className="alerts-text">{f}</span>
+            </button>
+          ))}
+          {changes?.items.slice(0, 8).map((x) => (
+            <button key={x.id} className="alerts-item" onClick={() => go("/bills")}>
+              <span aria-hidden="true">{x.action === "delete" ? "🗑️" : x.action === "edit" ? "✏️" : "♻️"}</span>
+              <span className="alerts-text">
+                Bill {x.billNo} {x.action === "delete" ? "deleted" : x.action === "edit" ? "edited" : "restored"} · {money(x.total)} · {x.reasonLabel} · {x.by}
+                <span className="small muted"> · {fmtDateTime(x.at)}</span>
+              </span>
+            </button>
+          ))}
+          {kitchen && !kitchen.length && !orders.length && !changes?.items.length && <div className="empty small">✅ All clear. Nothing needs you right now.</div>}
           {!kitchen && <div className="empty small">Loading…</div>}
         </div>
         <div className="alerts-foot">

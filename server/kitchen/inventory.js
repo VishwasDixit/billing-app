@@ -50,16 +50,16 @@ async function logMoves(db, moves) {
 
 // ---------- Using ingredients when dishes are ordered ----------
 // items: [{ itemId, variant, qty }]. ref: { orderId?, billId? }.
-export async function useIngredients(db, shopId, items, ref = {}) {
+// What the recipes say these dishes need: ingredientId -> [{ qty, unit }].
+async function recipeNeed(db, shopId, items) {
+  const need = new Map();
   const lines = (items || []).filter((i) => /^[a-f0-9]{24}$/.test(String(i.itemId || "")) && i.qty > 0);
-  if (!lines.length) return;
+  if (!lines.length) return need;
   const recipes = await db
     .collection("recipes")
     .find({ shopId, itemId: { $in: [...new Set(lines.map((l) => String(l.itemId)))] } })
     .toArray();
-  if (!recipes.length) return;
   const byItem = new Map(recipes.map((r) => [r.itemId, r]));
-  const need = new Map(); // ingredientId -> [{ qty, unit }]
   for (const l of lines) {
     const r = byItem.get(String(l.itemId));
     if (!r) continue;
@@ -71,6 +71,11 @@ export async function useIngredients(db, shopId, items, ref = {}) {
       need.set(p.ingredientId, list);
     }
   }
+  return need;
+}
+
+export async function useIngredients(db, shopId, items, ref = {}) {
+  const need = await recipeNeed(db, shopId, items);
   if (!need.size) return;
   const ings = await db
     .collection("ingredients")
@@ -85,6 +90,26 @@ export async function useIngredients(db, shopId, items, ref = {}) {
       { $set: { stock: round((ing.stock || 0) - qty), batches: drawBatches(ing.batches, qty), updatedAt: now() } }
     );
     moves.push({ shopId, ingredientId: String(ing._id), name: ing.name, unit: ing.unit, type: "used", qty: -qty, cost: money(qty * (ing.costPerUnit || 0)), ...ref });
+  }
+  await logMoves(db, moves);
+  await checkLowStock(db, shopId, ings.map((i) => i._id));
+}
+
+// A bill deleted (food not made) or edited down: the recipe quantities go back on the shelf.
+export async function returnIngredients(db, shopId, items, ref = {}) {
+  const need = await recipeNeed(db, shopId, items);
+  if (!need.size) return;
+  const ings = await db
+    .collection("ingredients")
+    .find({ shopId, tracked: true, _id: { $in: [...need.keys()].filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id)) } })
+    .toArray();
+  const moves = [];
+  for (const ing of ings) {
+    const qty = round(need.get(String(ing._id)).reduce((s, n) => s + (convert(n.qty, n.unit, ing.unit) ?? 0), 0));
+    if (!(qty > 0)) continue;
+    const batches = [...(ing.batches || []), { id: crypto.randomUUID(), qty, expiry: null, receivedAt: now() }];
+    await db.collection("ingredients").updateOne({ _id: ing._id }, { $set: { stock: round((ing.stock || 0) + qty), batches, updatedAt: now() } });
+    moves.push({ shopId, ingredientId: String(ing._id), name: ing.name, unit: ing.unit, type: "returned", qty, cost: money(qty * (ing.costPerUnit || 0)), ...ref });
   }
   await logMoves(db, moves);
   await checkLowStock(db, shopId, ings.map((i) => i._id));
@@ -298,6 +323,7 @@ export async function kitchenReport(db, shopId, start, end) {
   const add = (m) => {
     const r = byIng.get(m.ingredientId) || { name: m.name, unit: m.unit, used: 0, usedCost: 0, purchased: 0, purchaseCost: 0, wasted: 0, wasteCost: 0, missing: 0, missingCost: 0 };
     if (m.type === "used") (r.used += -m.qty), (r.usedCost += m.cost || 0);
+    if (m.type === "returned") (r.used -= m.qty), (r.usedCost -= m.cost || 0); // bill deleted or edited down
     if (m.type === "purchase") (r.purchased += m.qty), (r.purchaseCost += m.cost || 0);
     if (m.type === "waste" || m.type === "expired") (r.wasted += -m.qty), (r.wasteCost += m.cost || 0);
     if (m.type === "count" && m.qty < 0) (r.missing += -m.qty), (r.missingCost += -(m.cost || 0));

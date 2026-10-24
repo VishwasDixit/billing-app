@@ -38,7 +38,7 @@ export async function learnKitchen(db, shopId) {
   const sales = await db
     .collection("bills")
     .aggregate([
-      { $match: { shopId, createdAt: { $gte: new Date(t.getTime() - SALES_DAYS * DAY) }, status: { $ne: "void" } } },
+      { $match: { shopId, createdAt: { $gte: new Date(t.getTime() - SALES_DAYS * DAY) }, status: "paid" } },
       { $unwind: "$items" },
       { $group: { _id: { day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "+05:30" } }, item: "$items.itemId", variant: "$items.variant" }, qty: { $sum: "$items.qty" }, name: { $first: "$items.name" } } },
     ])

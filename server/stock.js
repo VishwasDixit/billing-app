@@ -2,7 +2,7 @@
 // that goes down as dishes are ordered (Sold out at 0) and resets to a daily amount each day.
 // Table orders count when they reach the kitchen; counter bills count when they upload.
 import { z } from "zod";
-import { useIngredients } from "./kitchen/inventory.js";
+import { useIngredients, returnIngredients } from "./kitchen/inventory.js";
 
 let clock = () => new Date();
 export function setStockClock(fn) {
@@ -44,6 +44,23 @@ export async function takeStock(db, shopId, items, ref = {}) {
     }))
   );
   await db.collection("menuItems").updateMany({ _id: { $in: ids }, shopId, stock: { $lte: 0 } }, { $set: { stock: 0, soldOut: true } });
+}
+
+// The reverse of takeStock: a bill deleted before the food was made, or edited down.
+export async function putBackStock(db, shopId, items, ref = {}) {
+  await returnIngredients(db, shopId, items, ref);
+  const byItem = new Map();
+  for (const i of items || []) {
+    if (!i.itemId || !/^[a-f0-9]{24}$/.test(String(i.itemId))) continue;
+    byItem.set(String(i.itemId), (byItem.get(String(i.itemId)) || 0) + (i.qty || 0));
+  }
+  if (!byItem.size) return;
+  const { ObjectId } = await import("mongodb");
+  await db.collection("menuItems").bulkWrite(
+    [...byItem].map(([id, qty]) => ({
+      updateOne: { filter: { _id: new ObjectId(id), shopId, stock: { $type: "number" } }, update: { $inc: { stock: qty }, $set: { soldOut: false } } },
+    }))
+  );
 }
 
 // For a customer's order: refuses sold-out dishes and more than what's left.

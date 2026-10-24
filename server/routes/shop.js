@@ -3,6 +3,8 @@ import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError, respondRaw } from "../http.js";
 import { subscriptionStatus } from "../subscription.js";
+import { checkPassword } from "../auth.js";
+import bcrypt from "bcryptjs";
 import { defaultMenu } from "../seed/grillhive-menu.js";
 import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
 import { isLibraryPhoto, CREDIT_URL } from "./images.js";
@@ -16,8 +18,8 @@ export const MAX_PHOTOS_PER_SHOP = 150;
 const PHOTO_URL = /^\/api\/menu-images\/[a-f0-9]{24}$/;
 
 export function publicShop(shop, isAdmin = false) {
-  const { deviceSeq, ...rest } = shop;
-  return { ...rest, id: String(shop._id), _id: undefined, status: subscriptionStatus(shop, { isAdmin }) };
+  const { deviceSeq, billPinHash, ...rest } = shop;
+  return { ...rest, billPin: !!billPinHash, id: String(shop._id), _id: undefined, status: subscriptionStatus(shop, { isAdmin }) };
 }
 
 const ShopSettings = z
@@ -128,6 +130,21 @@ function deviceCode(n) {
 
 export default [
   // The secret part of the table QR links. A new one makes old printed QR codes stop working.
+  // Bill safety: a 4-digit owner PIN for editing, deleting and restoring bills.
+  // Setting or removing it needs the account password, so a cashier using the shop login can't.
+  [
+    "PUT",
+    "/shop/bill-pin",
+    async ({ db, shop, user, body }) => {
+      const { password, pin } = z
+        .object({ password: z.string().min(1, "enter your password"), pin: z.string().regex(/^\d{4}$/, "PIN must be 4 digits").nullable() })
+        .parse(body);
+      if (!user.passwordHash || !(await checkPassword(password, user.passwordHash))) throw new HttpError(400, "Wrong password.");
+      const update = pin ? { $set: { billPinHash: await bcrypt.hash(pin, 8) } } : { $unset: { billPinHash: "" } };
+      const updated = await db.collection("shops").findOneAndUpdate({ _id: shop._id }, update, { returnDocument: "after" });
+      return publicShop(updated, user.role === "admin");
+    },
+  ],
   [
     "POST",
     "/shop/order-token",

@@ -868,3 +868,14 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .alerts-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 8px; border-top: 1px solid var(--border); }
 button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
 .more-tile.alert-tile { border-color: var(--warn); color: var(--warn); }
+
+/* ---------- Bill changes ---------- */
+.reason-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.bill-history { margin-top: 12px; background: var(--bg); }
+.bin-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bin-main { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.bin-restore { min-width: 180px; }
+.pin-input { max-width: 120px; letter-spacing: .4em; font-size: 18px; }
+.edit-banner { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 14px; font-weight: 600; }
+.edit-reason { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); }
+.bill-changes.flagged { border-color: var(--danger); }
