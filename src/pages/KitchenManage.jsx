@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useApp } from "../lib/store.jsx";
 import { StaffBar } from "../components/StaffPin.jsx";
+import { isOwner } from "../lib/roles.js";
 import Stock from "./kitchen/Stock.jsx";
 import Recipes from "./kitchen/Recipes.jsx";
 import { Alerts, Shopping, Report } from "./kitchen/Panels.jsx";
@@ -11,7 +12,7 @@ import Brain from "./kitchen/Brain.jsx";
 export default function KitchenManage() {
   const { user } = useApp();
   const [params, setParams] = useSearchParams();
-  const owner = user.role !== "kitchen";
+  const owner = isOwner(user);
   const tabs = [
     ["stock", "🥫 Stock"],
     ["recipes", "📖 Recipes"],

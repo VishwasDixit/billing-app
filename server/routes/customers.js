@@ -147,6 +147,7 @@ export default [
       const owing = customers.filter((c) => c.due > 0);
       return { customers, totalDue: round2(owing.reduce((s, c) => s + c.due, 0)), owingCount: owing.length };
     },
+    { manager: true },
   ],
   [
     "POST",
@@ -156,6 +157,7 @@ export default [
       await upsertCustomer(db, shop._id, c);
       return customerSummary(db, shop, await db.collection("customers").findOne({ shopId: shop._id, clientId: c.clientId }));
     },
+    { manager: true },
   ],
   [
     "PUT",
@@ -203,6 +205,7 @@ export default [
       }
       return { customer: await customerSummary(db, shop, c), ledger: entries.reverse() };
     },
+    { manager: true },
   ],
   [
     "POST",
@@ -213,6 +216,7 @@ export default [
       await db.collection("customerPayments").insertOne({ shopId: shop._id, customerClientId: c.clientId, amount: round2(p.amount), mode: p.mode, note: p.note, createdAt: new Date() });
       return customerSummary(db, shop, c);
     },
+    { manager: true },
   ],
   [
     "DELETE",
@@ -233,5 +237,6 @@ export default [
       await db.collection("customers").updateOne({ _id: c._id }, { $set: { lastRemindedAt: new Date() } });
       return { ok: true };
     },
+    { manager: true },
   ],
 ];

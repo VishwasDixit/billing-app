@@ -75,6 +75,8 @@ export default function Login() {
           <Link to="/forgot">Forgot password?</Link>
         </p>
 
+        <Link className="btn staff-login-btn" to="/staff-login">👨‍🍳 Staff login (cook or counter)</Link>
+
         <p className="small muted" style={{ textAlign: "center", margin: 0 }}>
           New shop? <Link to="/register">{trialDays ? `Start your ${trialDays}-day free trial` : "Create your shop"}</Link>
         </p>

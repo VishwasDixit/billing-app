@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { markBilledLocally } from "../lib/orders.js";
 import { useApp, accessState } from "../lib/store.jsx";
 import { put } from "../lib/api.js";
+import { isOwner } from "../lib/roles.js";
 import { EDIT_REASONS, isOldBill } from "../../shared/billChanges.js";
 import { computeTotals } from "../../shared/totals.js";
 import { money, todayYmd } from "../lib/format.js";
@@ -17,7 +18,8 @@ import { CustomerPicker } from "../components/CustomerPicker.jsx";
 const lineKey = (itemId, variant) => `${itemId}|${variant}`;
 
 export default function Billing() {
-  const { shop, menu, recordBill, customers } = useApp();
+  const { shop, menu, recordBill, customers, user } = useApp();
+  const owner = isOwner(user);
   const toast = useToast();
   const nav = useNavigate();
   const cur = shop.currency || "₹";
@@ -177,8 +179,8 @@ export default function Billing() {
     if (needCustomer) return toast("Choose the customer for this udhar bill.");
     if (editBill) return saveEdit(kind);
     if (!access.active) {
-      toast("Your plan has ended. Choose a plan to keep billing.");
-      return nav("/plans");
+      toast(owner ? "Your plan has ended. Choose a plan to keep billing." : "The shop's plan has ended. Ask the owner to renew it.");
+      return owner ? nav("/plans") : undefined;
     }
     setBusy(kind);
     setPrintError(null);
@@ -265,7 +267,7 @@ export default function Billing() {
       <section className="menu-panel">
         <div className="menu-tools">
           <input className="input" type="search" placeholder="Search menu…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <Link className="btn" to="/menu">Edit menu</Link>
+          {owner && <Link className="btn" to="/menu">Edit menu</Link>}
         </div>
         {pastDate && (
           <div className="past-date-bar">

@@ -30,7 +30,7 @@ export function StaffGate() {
     ask = (r) => setReq(r);
     return () => (ask = null);
   }, []);
-  if (user.role !== "kitchen" || !req) return null;
+  if (user.role !== "kitchen" || user.staff || !req) return null;
   return (
     <PinPad
       onDone={(staff) => {
@@ -114,7 +114,9 @@ function PinPad({ onDone, onCancel }) {
 
 // Small bar on the kitchen phone: who is signed in, and "Switch".
 export function StaffBar() {
+  const { user } = useApp();
   const s = useCurrentStaff();
+  if (user.staff) return <div className="staff-bar">👤 <b>{user.staff.name}</b></div>;
   if (!s) return null;
   return (
     <div className="staff-bar">

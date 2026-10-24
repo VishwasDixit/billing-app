@@ -211,6 +211,7 @@ export default [
       }
       return { results };
     },
+    { manager: true },
   ],
   [
     "GET",
@@ -233,6 +234,7 @@ export default [
       const udhar = await udharStatusFor(db, shop._id, ids);
       return { bills: bills.map((b) => ({ ...publicBill(b), udhar: udhar.get(String(b._id)) || undefined })), hasMore: bills.length === limit };
     },
+    { manager: true },
   ],
   // Staff confirm a customer's UPI payment (or record how a table paid). :id is the bill's client id.
   [
@@ -248,6 +250,7 @@ export default [
       if (!b) throw new HttpError(404, "Bill not found.");
       return publicBill(b);
     },
+    { manager: true },
   ],
   // Edit a saved bill: same number and date, the old version kept in its history.
   [
@@ -283,6 +286,7 @@ export default [
       await audit(db, shop, b, { action: "edit", total: t.total, before: b.total, reason: e.reason, reasonLabel: EDIT_REASONS[e.reason], note: e.note, by: user.name });
       return publicBill(updated);
     },
+    { manager: true },
   ],
   // Delete into the bin (kept 30 days, never counted in sales).
   [
@@ -304,6 +308,7 @@ export default [
       await deleteBill(db, shop, user, b, { ...d, foodMade: d.foodMade ?? DELETE_REASONS[d.reason].foodMade });
       return publicBill(await db.collection("bills").findOne({ _id: b._id }));
     },
+    { manager: true },
   ],
   // Older app versions: "void" is a delete with the reason written in.
   [
@@ -316,6 +321,7 @@ export default [
       await deleteBill(db, shop, user, b, { reason: "other", note: reason, foodMade: true, cancelOrders: false });
       return publicBill(await db.collection("bills").findOne({ _id: b._id }));
     },
+    { manager: true },
   ],
   // Back from the bin: counted again, marked restored, stock taken again if it was put back.
   [
@@ -345,6 +351,7 @@ export default [
       await audit(db, shop, b, { action: "restore", total: b.total, reason: "restore", reasonLabel: "Restored", note: was, by: user.name });
       return publicBill(await db.collection("bills").findOne({ _id: b._id }));
     },
+    { manager: true },
   ],
   // Edits and deletes in a period, for the dashboard card, alerts and the morning email.
   [

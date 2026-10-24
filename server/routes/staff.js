@@ -1,5 +1,6 @@
 // Staff: workers with a 4-digit PIN (for the shared kitchen phone), attendance marked by the
 // owner, cash advances, and monthly salary worked out from attendance.
+import crypto from "node:crypto";
 import { z } from "zod";
 import { ObjectId } from "mongodb";
 import bcrypt from "bcryptjs";
@@ -14,7 +15,7 @@ const oid = (id, what = "Worker") => {
   return new ObjectId(id);
 };
 const ownerOnly = (user) => {
-  if (user.role === "kitchen") throw new HttpError(403, "Only the owner can do this.");
+  if (user.role === "kitchen" || user.role === "manager") throw new HttpError(403, "Only the owner can do this.");
 };
 const Month = z.string().regex(/^\d{4}-\d{2}$/, "use YYYY-MM");
 const Ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "use YYYY-MM-DD");
@@ -32,18 +33,56 @@ const StaffIn = z.object({
   shiftEnd: Time,
   joinedAt: Ymd.optional(),
   active: z.boolean().default(true),
+  // Signing in on their own phone: kitchen screens only, or billing manager (no money reports).
+  access: z.enum(["none", "kitchen", "manager"]).optional(),
 });
+
+export const defaultAccess = (role) => (role === "manager" || role === "waiter" ? "manager" : role === "cook" || role === "helper" ? "kitchen" : "none");
+const needsPin = (access, hasPin) => {
+  if (access && access !== "none" && !hasPin) throw new HttpError(400, "Give this worker a 4-digit PIN to let them sign in.");
+};
+
+// The shop's staff code (typed once on a worker's phone). A new code signs every staff phone out.
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const newCode = () => Array.from(crypto.randomBytes(6), (b) => CODE_CHARS[b % CODE_CHARS.length]).join("");
+async function setStaffCode(db, shopId, bump) {
+  for (let i = 0; i < 5; i++) {
+    try {
+      const r = await db.collection("shops").findOneAndUpdate({ _id: shopId }, { $set: { staffCode: newCode() }, ...(bump && { $inc: { staffCodeVersion: 1 } }) }, { returnDocument: "after" });
+      return r.staffCode;
+    } catch (err) {
+      if (err.code !== 11000) throw err; // taken by another shop: try another
+    }
+  }
+  throw new HttpError(500, "Couldn't make a code. Try again.");
+}
 
 const publicStaff = ({ _id, shopId, pinHash, ...s }) => ({ ...s, id: String(_id), hasPin: !!pinHash });
 
 export default [
   [
     "GET",
+    "/staff/code",
+    async ({ db, shop, user }) => {
+      ownerOnly(user);
+      return { code: shop.staffCode || (await setStaffCode(db, shop._id, false)) };
+    },
+  ],
+  [
+    "POST",
+    "/staff/code",
+    async ({ db, shop, user }) => {
+      ownerOnly(user);
+      return { code: await setStaffCode(db, shop._id, true) };
+    },
+  ],
+  [
+    "GET",
     "/staff",
     async ({ db, shop, user }) => {
       const list = await db.collection("staff").find({ shopId: shop._id }).sort({ active: -1, name: 1 }).toArray();
       // The kitchen phone only needs names (to pick who is using it).
-      if (user.role === "kitchen") return { staff: list.filter((s) => s.active && s.pinHash).map((s) => ({ id: String(s._id), name: s.name, role: s.role })) };
+      if (user.role === "kitchen" || user.role === "manager") return { staff: list.filter((s) => s.active && s.pinHash).map((s) => ({ id: String(s._id), name: s.name, role: s.role })) };
       return { staff: list.map(publicStaff) };
     },
     K,
@@ -54,7 +93,9 @@ export default [
     async ({ db, shop, user, body }) => {
       ownerOnly(user);
       const { pin, ...s } = StaffIn.parse(body);
-      const doc = { ...s, shopId: shop._id, ...(pin && { pinHash: await bcrypt.hash(pin, 8) }), createdAt: new Date() };
+      s.access = s.access ?? (pin ? defaultAccess(s.role) : "none");
+      needsPin(s.access, !!pin);
+      const doc = { ...s, shopId: shop._id, ...(pin && { pinHash: await bcrypt.hash(pin, 8) }), pinVersion: 0, createdAt: new Date() };
       doc._id = (await db.collection("staff").insertOne(doc)).insertedId;
       return publicStaff(doc);
     },
@@ -190,8 +231,13 @@ export default [
     async ({ db, shop, user, params, body }) => {
       ownerOnly(user);
       const { pin, ...s } = StaffIn.partial().parse(body);
+      const before = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
+      if (!before) throw new HttpError(404, "Worker not found.");
+      needsPin(s.access ?? before.access, !!(pin || before.pinHash));
       const $set = { ...s, updatedAt: new Date(), ...(pin && { pinHash: await bcrypt.hash(pin, 8) }) };
-      const r = await db.collection("staff").findOneAndUpdate({ _id: oid(params.id), shopId: shop._id }, { $set }, { returnDocument: "after" });
+      // A new PIN, less access or leaving the job ends that worker's sign-in on their phone.
+      const signOut = !!pin || (s.access !== undefined && s.access !== before.access) || s.active === false;
+      const r = await db.collection("staff").findOneAndUpdate({ _id: before._id }, { $set, ...(signOut && { $inc: { pinVersion: 1 } }) }, { returnDocument: "after" });
       if (!r) throw new HttpError(404, "Worker not found.");
       return publicStaff(r);
     },

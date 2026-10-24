@@ -41,7 +41,7 @@ const ROUTES = [
   const re = new RegExp(
     "^" + path.replace(/:(\w+)/g, (_, k) => (keys.push(k), "([^/]+)")) + "/?$"
   );
-  return { method, re, keys, handler, auth: opts.auth !== false, admin: !!opts.admin, kitchen: !!opts.kitchen };
+  return { method, re, keys, handler, auth: opts.auth !== false, admin: !!opts.admin, kitchen: !!opts.kitchen, manager: !!(opts.manager || opts.kitchen) };
 });
 
 export async function handle(req, res) {
@@ -92,6 +92,7 @@ export async function handle(req, res) {
       ctx.user = await requireUser(req, db);
       if (match.route.admin && ctx.user.role !== "admin") throw new HttpError(403, "Admins only.");
       if (ctx.user.role === "kitchen" && !match.route.kitchen) throw new HttpError(403, "This isn't available on the kitchen phone. Ask the owner.", { code: "KITCHEN_ONLY" });
+      if (ctx.user.role === "manager" && !match.route.manager) throw new HttpError(403, "Only the owner can see this.", { code: "OWNER_ONLY" });
       // Without the big pictures (logo, QR): most requests don't need them.
       ctx.shop = await db.collection("shops").findOne({ _id: ctx.user.shopId }, { projection: { logo: 0, qrImage: 0 } });
       if (!ctx.shop) throw new HttpError(401, "Shop not found. Please log in again.");
@@ -100,7 +101,8 @@ export async function handle(req, res) {
         throw new HttpError(401, blockedMessage(ctx.shop), { code: "BLOCKED" });
       }
       ctx.status = subscriptionStatus(ctx.shop, { isAdmin: ctx.user.role === "admin" });
-      ctx.staff = readStaffToken(req, ctx.shop._id); // who on the shared phone (PIN), if anyone
+      // Who: a worker signed in on their own phone, or the one who entered their PIN on the shared phone.
+      ctx.staff = ctx.user.staff || readStaffToken(req, ctx.shop._id);
     }
 
     const out = await match.route.handler(ctx);

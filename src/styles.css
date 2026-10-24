@@ -879,3 +879,7 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .edit-banner { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 14px; font-weight: 600; }
 .edit-reason { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); }
 .bill-changes.flagged { border-color: var(--danger); }
+.staff-code-input { font-size: 24px; letter-spacing: .3em; text-align: center; text-transform: uppercase; }
+.staff-login-btn { justify-content: center; }
+.staff-code-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.staff-code { font-size: 28px; font-weight: 800; letter-spacing: .25em; font-family: ui-monospace, monospace; }

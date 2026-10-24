@@ -39,7 +39,7 @@ export function AlertsButton({ count, onClick, open }) {
 }
 
 // The list: table requests first, then kitchen alerts. `sheet` = phone bottom sheet, else a dropdown.
-export function AlertsPanel({ onClose, isKitchen, sheet, onKitchenChange }) {
+export function AlertsPanel({ onClose, isKitchen, isOwner, sheet, onKitchenChange }) {
   const nav = useNavigate();
   const st = useOrders();
   const [kitchen, setKitchen] = useState(null);
@@ -48,7 +48,7 @@ export function AlertsPanel({ onClose, isKitchen, sheet, onKitchenChange }) {
   const load = () => get("/kitchen/alerts").then((r) => setKitchen(r.alerts), () => setKitchen([]));
   useEffect(() => {
     load();
-    if (!isKitchen) get(`/bills/changes?from=${todayYmd()}&to=${todayYmd()}`).then(setChanges, () => {});
+    if (isOwner) get(`/bills/changes?from=${todayYmd()}&to=${todayYmd()}`).then(setChanges, () => {});
     const onKey = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

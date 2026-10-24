@@ -57,7 +57,7 @@ function who(ctx) {
 }
 
 const ownerOnly = (ctx) => {
-  if (ctx.user.role === "kitchen") throw new HttpError(403, "Only the owner can see this.");
+  if (ctx.user.role === "kitchen" || ctx.user.role === "manager") throw new HttpError(403, "Only the owner can see this.");
 };
 
 export default [
@@ -404,7 +404,7 @@ export default [
     "GET",
     "/kitchen/brain",
     async ({ db, shop, user, query }) => {
-      const owner = user.role !== "kitchen";
+      const owner = user.role !== "kitchen" && user.role !== "manager";
       const b = await brainSummary(db, shop._id, { fresh: owner && query.fresh === "1" });
       if (owner) return b;
       // The kitchen phone gets the cooking plan, not money.

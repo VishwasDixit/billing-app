@@ -7,6 +7,9 @@ import { ATTENDANCE, STATUS_IDS } from "../../shared/salary.js";
 import { salarySlipPdf, monthSheetExcel } from "../lib/staffExport.js";
 
 const ROLES = ["cook", "helper", "waiter", "cleaner", "manager", "other"];
+const ACCESS = [["none", "No app"], ["kitchen", "Kitchen (cook)"], ["manager", "Billing manager"]];
+const ACCESS_TAG = { kitchen: "🍳 kitchen login", manager: "🧾 billing login" };
+const defaultAccess = (role) => (role === "manager" || role === "waiter" ? "manager" : role === "cook" || role === "helper" ? "kitchen" : "none");
 const thisMonth = () => todayYmd().slice(0, 7);
 const QUICK = ["present", "half", "absent", "leave", "weekoff"];
 
@@ -46,15 +49,16 @@ function Workers({ staff, onChange }) {
   const [edit, setEdit] = useState(null);
   return (
     <div className="stack">
+      <StaffCodeCard />
       <p className="small muted" style={{ margin: 0 }}>
-        Give each worker a 4-digit PIN to use the kitchen phone. Wages are used for the monthly salary.
+        Give each worker a 4-digit PIN and choose their <b>App access</b>: cooks see only kitchen screens; a billing manager runs billing and the kitchen but never sees profit, reports, salaries or settings. Wages are used for the monthly salary.
       </p>
       <button className="btn btn-primary" style={{ justifySelf: "start" }} onClick={() => setEdit({})}>+ Add worker</button>
       <div className="shop-list">
         {staff.map((w) => (
           <button key={w.id} className={"card shop-row" + (w.active ? "" : " is-off")} onClick={() => setEdit(w)}>
             <div className="shop-main">
-              <div className="shop-title"><b>{w.name}</b> <span className="tag">{w.role}</span> {!w.active && <span className="tag">left</span>} {w.hasPin && <span className="tag good">PIN set</span>}</div>
+              <div className="shop-title"><b>{w.name}</b> <span className="tag">{w.role}</span> {!w.active && <span className="tag">left</span>} {w.hasPin && <span className="tag good">PIN set</span>} {ACCESS_TAG[w.access] && <span className="tag">{ACCESS_TAG[w.access]}</span>}</div>
               <div className="small muted">
                 {w.wage ? `${money(w.wage)} ${w.wageType === "daily" ? "per day" : "per month"}` : "no wage set"}
                 {w.shiftStart ? ` · ${w.shiftStart}–${w.shiftEnd || ""}` : ""}
@@ -70,13 +74,49 @@ function Workers({ staff, onChange }) {
   );
 }
 
+// The shop's staff code: workers type it once on their phone (Login › Staff login).
+function StaffCodeCard() {
+  const { shop } = useApp();
+  const toast = useToast();
+  const [code, setCode] = useState("");
+  const { busy, error, run } = useAction();
+  useEffect(() => {
+    run(async () => setCode((await get("/staff/code")).code));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const link = `${location.origin}/staff-login`;
+  const text = `${shop.name} staff login\nOpen ${link}\nStaff code: ${code}\nThen tap your name and enter your 4-digit PIN.`;
+  const renew = () =>
+    confirm("Make a new staff code? Every staff phone will be signed out and will need the new code.") &&
+    run(async () => {
+      setCode((await post("/staff/code")).code);
+      toast("New code made. All staff phones are signed out.");
+    });
+  return (
+    <div className="card staff-code-card">
+      <div>
+        <div className="small muted">Staff code (for cooks and counter staff to sign in)</div>
+        <div className="staff-code">{code || "······"}</div>
+        <div className="small muted">On their phone: Login › <b>Staff login</b> › this code › their name › PIN.</div>
+      </div>
+      <div className="btn-row">
+        <button className="btn btn-sm" disabled={!code} onClick={() => navigator.clipboard?.writeText(code).then(() => toast("Code copied"), () => {})}>Copy</button>
+        <a className="btn btn-sm" href={`https://wa.me/?text=${encodeURIComponent(text)}`} target="_blank" rel="noopener noreferrer">💬 WhatsApp</a>
+        <button className="btn btn-sm btn-ghost" disabled={busy} onClick={renew}>New code</button>
+      </div>
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+
 function WorkerModal({ worker, onClose, onSaved }) {
   const isNew = !worker.id;
   const [f, setF] = useState({
     name: worker.name || "", phone: worker.phone || "", role: worker.role || "cook", pin: "",
     wageType: worker.wageType || "monthly", wage: worker.wage ?? "", otRate: worker.otRate ?? "",
     shiftStart: worker.shiftStart || "", shiftEnd: worker.shiftEnd || "", joinedAt: worker.joinedAt || "", active: worker.active !== false,
+    access: worker.access || (worker.id ? "none" : defaultAccess(worker.role || "cook")),
   });
+  const [accessTouched, setAccessTouched] = useState(!!worker.id);
   const { busy, error, run } = useAction();
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
   const save = (e) => {
@@ -84,7 +124,7 @@ function WorkerModal({ worker, onClose, onSaved }) {
     run(async () => {
       const body = {
         name: f.name, phone: f.phone, role: f.role, wageType: f.wageType, wage: Number(f.wage) || 0, otRate: Number(f.otRate) || 0,
-        shiftStart: f.shiftStart || null, shiftEnd: f.shiftEnd || null, active: f.active, ...(f.joinedAt && { joinedAt: f.joinedAt }), ...(f.pin && { pin: f.pin }),
+        shiftStart: f.shiftStart || null, shiftEnd: f.shiftEnd || null, active: f.active, access: f.access, ...(f.joinedAt && { joinedAt: f.joinedAt }), ...(f.pin && { pin: f.pin }),
       };
       if (isNew) await post("/staff", body);
       else await put(`/staff/${worker.id}`, body);
@@ -99,11 +139,14 @@ function WorkerModal({ worker, onClose, onSaved }) {
           <Field label="Phone"><input type="tel" maxLength={15} value={f.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
         </div>
         <div className="grid2">
-          <Field label="Work"><select value={f.role} onChange={(e) => set("role", e.target.value)}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></Field>
+          <Field label="Work"><select value={f.role} onChange={(e) => (set("role", e.target.value), !accessTouched && set("access", defaultAccess(e.target.value)))}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></Field>
           <Field label={worker.hasPin ? "New PIN (optional)" : "PIN for kitchen phone"} hint="4 digits">
             <input inputMode="numeric" pattern="\d{4}" maxLength={4} value={f.pin} onChange={(e) => set("pin", e.target.value.replace(/\D/g, ""))} autoComplete="off" />
           </Field>
         </div>
+        <Field label="App access (sign in on their own phone)" hint={f.access === "none" ? "Can still use the shared kitchen phone with the PIN." : f.access === "kitchen" ? "Kitchen board, stock, recipes and alerts only." : "Billing, orders, bills, udhar and kitchen. No dashboard, expenses, salaries or settings."}>
+          <Seg value={f.access} onChange={(v) => (set("access", v), setAccessTouched(true))} options={ACCESS} />
+        </Field>
         <Field label="Wage">
           <div style={{ display: "flex", gap: 8 }}>
             <input className="input" type="number" min="0" inputMode="numeric" value={f.wage} onChange={(e) => set("wage", e.target.value)} />

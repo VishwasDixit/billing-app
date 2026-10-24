@@ -6,6 +6,7 @@ import Login from "./pages/Login.jsx";
 import Register from "./pages/Register.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import FindEmail from "./pages/FindEmail.jsx";
+import StaffLogin from "./pages/StaffLogin.jsx";
 import Billing from "./pages/Billing.jsx";
 import Bills from "./pages/Bills.jsx";
 import Expenses from "./pages/Expenses.jsx";
@@ -50,6 +51,7 @@ export default function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/forgot" element={<ForgotPassword />} />
           <Route path="/find-email" element={<FindEmail />} />
+          <Route path="/staff-login" element={<StaffLogin />} />
           <Route path="*" element={<Login />} />
         </Routes>
       ) : (
@@ -61,6 +63,18 @@ export default function App() {
               <Route path="/kitchen-manage" element={<KitchenManage />} />
               <Route path="/orders" element={<Orders />} />
               <Route path="*" element={<Navigate to="/kitchen" replace />} />
+            </Routes>
+          ) : session.user.role === "manager" ? (
+            // Counter staff: billing, tables and the kitchen. No reports, money summaries or settings.
+            <Routes>
+              <Route path="/" element={<Billing />} />
+              <Route path="/bills" element={<Bills />} />
+              <Route path="/customers" element={<Customers />} />
+              <Route path="/customers/:id" element={<CustomerDetail />} />
+              <Route path="/orders" element={<Orders />} />
+              <Route path="/kitchen" element={<Kitchen />} />
+              <Route path="/kitchen-manage" element={<KitchenManage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           ) : (
           <Routes>
@@ -158,7 +172,17 @@ function useOrderAlerts(shop) {
 
 // Page links. `bottom` ones sit in the phone's bottom bar; the rest live in the ☰ More sheet
 // (on wide screens all `top` ones show in the top bar).
-function useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAlerts }) {
+function useNavLinks({ isAdmin, isKitchen, isManager, paid, waiting, helpUnread, kitchenAlerts }) {
+  if (isManager) {
+    return [
+      { to: "/", ico: "🧾", label: "Billing", bottom: true, top: true },
+      { to: "/orders", ico: waiting ? "🔔" : "🍽️", label: waiting ? `Orders (${waiting})` : "Orders", short: waiting ? `${waiting} new` : "Orders", bottom: true, top: true, alert: waiting > 0 },
+      { to: "/bills", ico: "📄", label: "Bills", bottom: true, top: true },
+      { to: "/customers", ico: "📒", label: "Udhar", top: true },
+      { to: "/kitchen-manage", ico: "🥫", label: kitchenAlerts ? `Kitchen stock (${kitchenAlerts})` : "Kitchen stock", topLabel: kitchenAlerts ? `Kitchen (${kitchenAlerts})` : "Kitchen", top: true, alert: kitchenAlerts > 0 },
+      { to: "/kitchen", ico: "🍳", label: "Kitchen screen" },
+    ];
+  }
   if (isKitchen) {
     return [
       { to: "/kitchen", ico: "🍳", label: "Board", bottom: true, top: true },
@@ -193,7 +217,8 @@ function Shell({ children }) {
   const access = accessState(shop);
   const isAdmin = user.role === "admin";
   const isKitchen = user.role === "kitchen";
-  const helpUnread = useHelpUnread(!isAdmin && !isKitchen);
+  const isManager = user.role === "manager";
+  const helpUnread = useHelpUnread(!isAdmin && !isKitchen && !isManager);
   const paid = access.state === "paid" || isAdmin;
   const [kitchenAlerts, recheckKitchen] = useKitchenAlerts(true);
   const alertCount = useAlertCount(kitchenAlerts, isKitchen);
@@ -215,7 +240,7 @@ function Shell({ children }) {
     }
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => (setMoreOpen(false), setAlertsOpen(null)), [loc.pathname]);
-  const links = useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAlerts });
+  const links = useNavLinks({ isAdmin, isKitchen, isManager, paid, waiting, helpUnread, kitchenAlerts });
   if (loc.pathname === "/kitchen") return <ToastFree>{children}<StaffGate /></ToastFree>;
   const onTop = links.some((l) => l.top && !l.bottom && (loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
   const inMore = !links.some((l) => l.bottom && (l.to === "/" ? loc.pathname === "/" : loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
@@ -247,14 +272,14 @@ function Shell({ children }) {
               </NavLink>
             ))}
           <AlertsButton count={alertCount} open={alertsOpen === "drop"} onClick={() => setAlertsOpen(alertsOpen ? null : "drop")} />
-          <button type="button" className={"more-btn" + (isKitchen ? " keep" : "") + (inMore || moreOpen ? " active" : "") + (onTop && !moreOpen ? " on-top" : "")} onClick={() => setMoreOpen(true)} aria-label="More pages">
+          <button type="button" className={"more-btn" + (isKitchen || isManager ? " keep" : "") + (inMore || moreOpen ? " active" : "") + (onTop && !moreOpen ? " on-top" : "")} onClick={() => setMoreOpen(true)} aria-label="More pages">
             <span className="ico" aria-hidden="true">☰</span>
             <span className="lbl">More</span>
             {(helpUnread || alertCount > 0) && <span className="dot" aria-hidden="true" />}
           </button>
         </nav>
       </header>
-      {!isKitchen && <AccessBanner access={access} blocked={sync.blocked} />}
+      {!isKitchen && !isManager && <AccessBanner access={access} blocked={sync.blocked} />}
       <main className="main">
         <Suspense fallback={<div className="empty">Loading…</div>}>{children}</Suspense>
       </main>
@@ -271,7 +296,7 @@ function Shell({ children }) {
           onLogout={logout}
         />
       )}
-      {alertsOpen && <AlertsPanel sheet={alertsOpen === "sheet"} isKitchen={isKitchen} onKitchenChange={recheckKitchen} onClose={() => setAlertsOpen(null)} />}
+      {alertsOpen && <AlertsPanel sheet={alertsOpen === "sheet"} isKitchen={isKitchen} isOwner={!isKitchen && !isManager} onKitchenChange={recheckKitchen} onClose={() => setAlertsOpen(null)} />}
     </div>
   );
 }
@@ -285,7 +310,7 @@ function MoreSheet({ links, shop, user, access, alertCount, onAlerts, onClose, o
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   const planLine =
-    user.role === "kitchen" ? "Kitchen phone (no sales or money)" : access.state === "admin" ? "Admin account" : access.state === "paid" ? `Plan active · ${access.daysLeft} days left` : access.state === "trial" ? `Free trial · ${access.daysLeft} days left` : "Plan ended";
+    user.staff ? `Signed in as ${user.staff.name} · ${user.role === "manager" ? "billing manager" : "kitchen"}` : user.role === "kitchen" ? "Kitchen phone (no sales or money)" : access.state === "admin" ? "Admin account" : access.state === "paid" ? `Plan active · ${access.daysLeft} days left` : access.state === "trial" ? `Free trial · ${access.daysLeft} days left` : "Plan ended";
   return (
     <div className="more-back" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="more-sheet" role="dialog" aria-label="More pages">
@@ -308,9 +333,9 @@ function MoreSheet({ links, shop, user, access, alertCount, onAlerts, onClose, o
             <div className="muted">{planLine}</div>
           </div>
           <div className="btn-row">
-            {user.role === "kitchen" && <button className="btn btn-sm" onClick={() => (signOutStaff(), onClose())}>Switch user</button>}
-            <button className="btn btn-sm btn-danger" onClick={() => confirm(user.role === "kitchen" ? "Exit kitchen mode? The owner will need to log in again on this phone." : "Log out of this device?") && onLogout()}>
-              {user.role === "kitchen" ? "Exit kitchen mode" : "Log out"}
+            {user.role === "kitchen" && !user.staff && <button className="btn btn-sm" onClick={() => (signOutStaff(), onClose())}>Switch user</button>}
+            <button className="btn btn-sm btn-danger" onClick={() => confirm(user.role === "kitchen" && !user.staff ? "Exit kitchen mode? The owner will need to log in again on this phone." : "Log out of this device?") && onLogout()}>
+              {user.role === "kitchen" && !user.staff ? "Exit kitchen mode" : "Log out"}
             </button>
           </div>
         </div>

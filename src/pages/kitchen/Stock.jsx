@@ -7,6 +7,7 @@ import { useApp } from "../../lib/store.jsx";
 import { fmtQty, unitChoices, useStaffCheck, DaysLeft } from "./common.jsx";
 import { UNIT_NAMES } from "../../../shared/kitchenUnits.js";
 import { fmtDate } from "../../lib/format.js";
+import { isOwner } from "../../lib/roles.js";
 
 const REASONS = [["spilled", "Spilled"], ["burnt", "Burnt"], ["spoiled", "Spoiled"], ["dropped", "Dropped"], ["other", "Other"]];
 
@@ -102,7 +103,7 @@ export default function Stock() {
           }}
         />
       )}
-      {editing && <ItemModal ing={editing} categories={data.categories} isOwner={user.role !== "kitchen"} onClose={() => setEditing(null)} onSaved={() => (setEditing(null), load())} />}
+      {editing && <ItemModal ing={editing} categories={data.categories} isOwner={isOwner(user)} onClose={() => setEditing(null)} onSaved={() => (setEditing(null), load())} />}
       {starter && <StarterModal starter={data.starter} have={new Set(list.map((i) => i.name.toLowerCase()))} onClose={() => setStarter(false)} onSaved={(n) => (setStarter(false), toast(`Added ${n} items`), load())} />}
     </div>
   );

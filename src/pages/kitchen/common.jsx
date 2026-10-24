@@ -9,7 +9,8 @@ export const unitChoices = (unit) => Object.keys(UNITS).filter((u) => UNITS[u].b
 // Kitchen phone: make sure a worker has entered their PIN before saving an entry.
 export function useStaffCheck() {
   const { user } = useApp();
-  return () => ensureStaff(user.role === "kitchen");
+  // A cook signed in on their own phone is already known; the shared phone asks for a PIN.
+  return () => ensureStaff(user.role === "kitchen" && !user.staff);
 }
 
 export function DaysLeft({ ing }) {

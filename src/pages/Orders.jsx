@@ -102,7 +102,7 @@ export default function Orders() {
             <li>Open the <b>Kitchen screen</b> on a tablet, and bill each table at the end.</li>
           </ol>
           <div className="btn-row">
-            {!isKitchen && <Link className="btn btn-primary" to="/settings#tables">Set up tables</Link>}
+            {(user.role === "owner" || user.role === "admin") && <Link className="btn btn-primary" to="/settings#tables">Set up tables</Link>}
             <Link className="btn" to="/kitchen">🍳 Kitchen screen</Link>
           </div>
         </div>

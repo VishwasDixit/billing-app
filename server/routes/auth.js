@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { HttpError, respond } from "../http.js";
-import { hashPassword, checkPassword, sessionCookie, clearCookie, publicUser, isAdminEmail, assertAuthConfigured } from "../auth.js";
+import { hashPassword, checkPassword, sessionCookie, staffSessionCookie, clearCookie, publicUser, isAdminEmail, assertAuthConfigured } from "../auth.js";
+import bcrypt from "bcryptjs";
+import { ObjectId } from "mongodb";
 import { trialDays, blockedMessage, planSettings, PLANS } from "../subscription.js";
 import { defaultMenu, GRILLHIVE_SHOP } from "../seed/grillhive-menu.js";
 import { createCode, verifyCode } from "../otp/codes.js";
@@ -115,7 +117,52 @@ async function sessionPayload(db, user) {
   return { user: publicUser(user), shop: publicShop(shop, isAdminEmail(user.email)) };
 }
 
+// ---------- Staff sign-in on their own phone: shop code + name + PIN ----------
+const StaffCodeIn = z.string().trim().toUpperCase().regex(/^[A-Z0-9]{6}$/, "Enter the 6-letter staff code from the owner.");
+async function shopByStaffCode(db, code) {
+  const shop = await db.collection("shops").findOne({ staffCode: code });
+  if (!shop) throw new HttpError(404, "No shop with this staff code. Check it with the owner.");
+  if (shop.blocked) throw new HttpError(403, blockedMessage(shop), { code: "BLOCKED" });
+  return shop;
+}
+
 export default [
+  [
+    "GET",
+    "/auth/staff-names",
+    async ({ db, query, req }) => {
+      const code = StaffCodeIn.parse(query.code || "");
+      const ip = clientIp(req);
+      if (ip) await rateLimit(db, `staffnames:ip:${ip}`, 30, "Too many tries. Please wait and try again.");
+      const shop = await shopByStaffCode(db, code);
+      const staff = await db.collection("staff").find({ shopId: shop._id, active: true, access: { $in: ["kitchen", "manager"] }, pinHash: { $exists: true } }).sort({ name: 1 }).toArray();
+      return { shop: { name: shop.name }, staff: staff.map((s) => ({ id: String(s._id), name: s.name, access: s.access })) };
+    },
+    { auth: false },
+  ],
+  [
+    "POST",
+    "/auth/staff-login",
+    async ({ db, body }) => {
+      const { code, staffId, pin } = z.object({ code: StaffCodeIn, staffId: z.string(), pin: z.string().regex(/^\d{4}$/, "Enter your 4-digit PIN.") }).parse(body);
+      const shop = await shopByStaffCode(db, code);
+      if (!ObjectId.isValid(staffId)) throw new HttpError(404, "Pick your name again.");
+      const key = `pin:${shop._id}:${staffId}`;
+      if ((await hitsOf(db, key)) >= 8) throw new HttpError(429, "Too many wrong PINs. Ask the owner, or try again in an hour.");
+      const staff = await db.collection("staff").findOne({ _id: new ObjectId(staffId), shopId: shop._id, active: true });
+      if (!staff || !["kitchen", "manager"].includes(staff.access)) throw new HttpError(403, "You don't have app access. Ask the owner.");
+      if (!staff.pinHash || !(await bcrypt.compare(pin, staff.pinHash))) {
+        await bump(db, key);
+        throw new HttpError(401, "Wrong PIN.");
+      }
+      await db.collection("rateLimits").deleteOne({ _id: key });
+      const owner = await db.collection("users").findOne({ shopId: shop._id }, { sort: { createdAt: 1 } });
+      if (!owner) throw new HttpError(404, "Shop not found.");
+      const user = { ...owner, role: staff.access === "manager" ? "manager" : "kitchen", staff: { id: String(staff._id), name: staff.name, role: staff.role }, name: staff.name };
+      return respond(200, { user: publicUser(user), shop: publicShop(shop) }, { "Set-Cookie": staffSessionCookie(owner, staff, shop) });
+    },
+    { auth: false },
+  ],
   // Which sign-in options the login screen should show.
   [
     "GET",

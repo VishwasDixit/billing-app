@@ -5,6 +5,7 @@ import { money } from "../../lib/format.js";
 import { useApp } from "../../lib/store.jsx";
 import { unitChoices, fmtQty } from "./common.jsx";
 import { convert } from "../../../shared/kitchenUnits.js";
+import { isOwner } from "../../lib/roles.js";
 
 export default function Recipes() {
   const toast = useToast();
@@ -77,7 +78,7 @@ export default function Recipes() {
             </span>
             {i.hasRecipe ? (
               <span className="small">
-                {user.role !== "kitchen" && Object.entries(i.cost || {}).map(([v, c]) => (c > 0 ? `${v || "Plate"} ${money(c, cur)}` : null)).filter(Boolean).join(" · ")}
+                {isOwner(user) && Object.entries(i.cost || {}).map(([v, c]) => (c > 0 ? `${v || "Plate"} ${money(c, cur)}` : null)).filter(Boolean).join(" · ")}
                 <span className="tag good" style={{ marginLeft: 6 }}>✓ {i.steps} steps</span>
               </span>
             ) : (
@@ -185,7 +186,7 @@ export function RecipeEditor({ itemId, onClose, onSaved }) {
           );
         })}
         <button className="btn btn-sm" style={{ justifySelf: "start" }} onClick={() => setVariants((v) => ({ ...v, [tab]: [...(v[tab] || []), { ingredientId: "", qty: "", unit: "g" }] }))}>+ Ingredient</button>
-        {user.role !== "kitchen" && plateCost > 0 && (
+        {isOwner(user) && plateCost > 0 && (
           <div className="pricing-preview small">
             Cost to make: <b>{money(plateCost, cur)}</b> · Sells for {money(price, cur)} · Margin <b>{Math.round((1 - plateCost / price) * 100)}%</b>
           </div>
