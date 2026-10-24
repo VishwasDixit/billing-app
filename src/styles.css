@@ -948,3 +948,11 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .salary-table th:first-child { width: 34%; }
 .salary-table .st-col { width: 1%; white-space: nowrap; padding-left: 16px; }
 .salary-table td.num, .salary-table th.num { padding-left: 16px; }
+.co-pay { margin-top: 8px; padding: 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); font-size: 14px; }
+.co-pay.paid { background: var(--good-soft, #dcfce7); color: var(--good); border-color: transparent; font-weight: 600; }
+.co-pay.wait { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.co-upi { margin-top: 6px; }
+.pay-chip-row { margin: 4px 0; }
+.order-card.refund { border-color: var(--danger); }
+.kot-paid { font-size: 11px; vertical-align: middle; }
+.prepaid-bar { background: var(--good-soft, #dcfce7); color: var(--good); }

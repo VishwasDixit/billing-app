@@ -173,8 +173,20 @@ export default [
           continue;
         }
         const t = computeTotals(b.items, b.discount, b.gstPercent);
+        // Table orders the customers already paid for (confirmed by staff) come off what's left to collect.
+        let prepaid = null;
+        if (b.orderIds?.length) {
+          const paidOrders = await db
+            .collection("orders")
+            .find({ shopId: shop._id, clientId: { $in: b.orderIds }, "pay.state": "paid" }, { projection: { orderNo: 1, "pay.amount": 1 } })
+            .toArray();
+          const amount = round2(paidOrders.reduce((sum, o) => sum + (o.pay.amount || 0), 0));
+          if (amount > 0) prepaid = { amount: Math.min(amount, t.total), orderNos: paidOrders.map((o) => o.orderNo) };
+        }
+        const fullyPrepaid = prepaid && prepaid.amount >= t.total - 0.009;
+        if (fullyPrepaid) b.paymentMode = "upi";
         const credit = b.paymentMode === "credit";
-        const paidNow = credit ? round2(Math.min(Math.max(b.paidNow || 0, 0), t.total)) : t.total;
+        const paidNow = credit ? round2(Math.min(Math.max(b.paidNow || 0, 0), t.total - (prepaid?.amount || 0))) : t.total;
         const doc = {
           shopId: shop._id,
           clientId: b.clientId,
@@ -193,7 +205,9 @@ export default [
           total: t.total,
           paymentMode: b.paymentMode,
           paidNow,
-          creditAmount: round2(t.total - paidNow),
+          creditAmount: credit ? round2(t.total - (prepaid?.amount || 0) - paidNow) : 0,
+          ...(prepaid && { prepaid }),
+          ...(fullyPrepaid && { paymentConfirmedAt: new Date(), paymentConfirmedBy: "Paid with order" }),
           ...(b.customer ? { customer: { clientId: b.customer.clientId, name: b.customer.name, phone: b.customer.phone } } : {}),
           status: "paid",
         };

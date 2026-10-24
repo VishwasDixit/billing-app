@@ -22,6 +22,7 @@ import {
 const pick = (s) => ({
   tables: (s.tables || []).map((t) => ({ ...t })),
   qrOrdering: !!s.qrOrdering,
+  qrPayment: s.qrPayment || "end",
   name: s.name || "",
   logo: s.logo || "",
   address: s.address || "",
@@ -325,6 +326,21 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
           <input type="checkbox" checked={f.qrOrdering} onChange={(e) => set("qrOrdering", e.target.checked)} />
           Let customers order by scanning the table QR code {!paid && <span className="tag warn">paid plan</span>}
         </label>
+      )}
+      {tables.length > 0 && f.qrOrdering && (
+        <div className="field">
+          When do customers pay?
+          <Seg value={f.qrPayment} onChange={(v) => set("qrPayment", v)} options={[["end", "At the end"], ["choose", "Customer chooses"], ["first", "Pay first, then cook"]]} />
+          <span className="hint">
+            {f.qrPayment === "end"
+              ? "They ask for the bill after eating and pay by UPI or at the counter."
+              : f.qrPayment === "choose"
+                ? "After ordering they can pay that order by UPI right away, or pay at the end. Food goes to the kitchen either way."
+                : "Orders wait until the payment is confirmed by staff (UPI or cash at the counter); only then they go to the kitchen."}
+            {f.qrPayment !== "end" && !f.upiId && " Add your shop UPI ID (Bill QR) so customers can pay from their phone; otherwise they pay at the counter."}
+            {f.qrPayment !== "end" && " Staff confirm each UPI payment after seeing it in the UPI app or soundbox."}
+          </span>
+        </div>
       )}
       {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save your tables.</p>}
 

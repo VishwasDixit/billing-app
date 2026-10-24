@@ -337,6 +337,12 @@ export default function Billing() {
             <button className="link-btn" onClick={() => (setTableBill(null), setCart(new Map()))}>Cancel</button>
           </div>
         )}
+        {tableBill?.prepaid > 0 && (
+          <div className="table-bill-bar prepaid-bar">
+            <span>💳 Paid with orders {tableBill.prepaidOrderNos.map((n) => `#${n}`).join(", ")}: <b>{money(tableBill.prepaid, cur)}</b></span>
+            <span>{t.total - tableBill.prepaid > 0.009 ? <>Collect <b>{money(t.total - tableBill.prepaid, cur)}</b></> : <b>Nothing to collect ✓</b>}</span>
+          </div>
+        )}
         {!editBill && <div className={"bill-date" + (pastDate ? " past" : "")}>
           <label htmlFor="bill-date">📅 Bill date</label>
           <input

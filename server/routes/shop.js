@@ -61,6 +61,8 @@ const ShopSettings = z
       .max(100)
       .refine((t) => new Set(t.map((x) => x.id)).size === t.length, "table ids must be different"),
     qrOrdering: z.boolean(),
+    // When QR customers pay: at the end, they choose (now or at the end), or before it's cooked.
+    qrPayment: z.enum(["end", "choose", "first"]),
     defaultDiscount: z.object({ type: z.enum(["percent", "flat"]), value: z.number().min(0).max(100000) }),
     printer: z.object({
       paperSize: z.union([z.literal(58), z.literal(80), z.literal(110)]),

@@ -69,7 +69,7 @@ export default function Kitchen() {
                   <div key={o.clientId} className={"kot-card" + (late ? " late" : "")}>
                     <div className="kot-top">
                       <b className="kot-no">#{o.orderNo}</b>
-                      <b className="kot-table">{o.tableName || o.table}</b>
+                      <b className="kot-table">{o.pay?.state === "paid" && <span className="tag good kot-paid">PAID</span>} {o.tableName || o.table}</b>
                     </div>
                     <div className="small muted">{ago(o.acceptedAt || o.createdAt)}{o.source === "qr" ? " · QR" : ""}</div>
                     <ul className="kot-items">

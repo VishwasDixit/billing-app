@@ -149,6 +149,7 @@ export default function CustomerOrder() {
                 </>
               )}
               <div className="small muted">{(o.items || []).map((i) => `${i.qty}× ${i.name}${i.variant ? ` (${i.variant})` : ""}`).join(", ")}</div>
+              <OrderPay token={token} order={o} cur={cur} upiOn={data.upi} onChange={refreshMine} />
             </div>
           ))}
           {mine.some((o) => o.status === "new") && (
@@ -245,6 +246,7 @@ export default function CustomerOrder() {
           total={total}
           setNote={(k, note) => setCart((prev) => new Map(prev).set(k, { ...prev.get(k), note }))}
           onClose={() => setReview(false)}
+          payRule={data.payRule}
           onPlaced={(o) => {
             const next = [...mine, o];
             setMine(next);
@@ -259,7 +261,7 @@ export default function CustomerOrder() {
   );
 }
 
-function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced }) {
+function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, payRule }) {
   const [note, setOrderNote] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -274,7 +276,7 @@ function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced })
         note,
         name,
       });
-      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
+      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
     } catch (err) {
       setError(err.offline ? "No internet on this phone. Please try again, or order with the staff." : err.message);
     } finally {
@@ -302,8 +304,85 @@ function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced })
         <div className="co-line-top"><b>Total</b><b>{money(total, cur)}</b></div>
         {error && <div className="error">{error}</div>}
         <button className="btn btn-primary btn-lg" disabled={busy} onClick={place}>{busy ? "Sending…" : "Place order"}</button>
-        <p className="small muted" style={{ margin: 0, textAlign: "center" }}>You pay at the counter after your meal.</p>
+        <p className="small muted" style={{ margin: 0, textAlign: "center" }}>
+          {payRule === "first" ? "Please pay after placing the order. It's cooked once the payment is confirmed." : payRule === "choose" ? "You can pay now by UPI, or at the end." : "You pay after your meal."}
+        </p>
       </div>
+    </div>
+  );
+}
+
+const upiLinkFor = (upi, amount, note) =>
+  "upi://pay?" +
+  new URLSearchParams({ pa: upi.id, pn: upi.name.slice(0, 40), am: Number(amount).toFixed(2), cu: "INR", tn: note })
+    .toString()
+    .replace(/\+/g, "%20");
+
+// Paying for one order while ordering (when the shop allows it): UPI now, at the counter, or at the end.
+function OrderPay({ token, order, cur, upiOn, onChange }) {
+  const p = order.pay;
+  const [open, setOpen] = useState(false);
+  const [utr, setUtr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!p || p.rule === "end") return null;
+  if (["rejected", "billed"].includes(order.status) && !["refundDue", "refunded"].includes(p.state)) return null;
+  const amount = money(p.amount ?? order.total, cur);
+  const send = async (method) => {
+    setBusy(true);
+    setError("");
+    try {
+      await post(`/public/shop/${token}/orders/${order.id}/pay`, { key: order.key, method, utr });
+      setOpen(false);
+      await onChange();
+    } catch (err) {
+      setError(err.offline ? "No internet on this phone. Please try again." : err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const link = order.upi && upiLinkFor(order.upi, p.amount ?? order.total, `Order #${order.orderNo} · ${order.tableName}`);
+  if (p.state === "paid") return <div className="co-pay paid">✅ Paid {amount}{p.method === "counter" ? " at the counter" : ""}</div>;
+  if (p.state === "claimed") return <div className="co-pay wait">⏳ Thanks! Waiting for the staff to confirm your {amount}.</div>;
+  if (p.state === "refundDue") return <div className="co-pay wait">↩️ This order was cancelled. The shop will return your {amount}.</div>;
+  if (p.state === "refunded") return <div className="co-pay">↩️ {amount} returned to you.</div>;
+  if (p.state === "end") {
+    return (
+      <div className="co-pay small">
+        You'll pay at the end.{" "}
+        {p.rule === "choose" && upiOn && <button className="link-btn" onClick={() => setOpen(true)}>Pay now instead</button>}
+        {open && <UpiPanel link={link} amount={amount} utr={utr} setUtr={setUtr} busy={busy} error={error} onPaid={() => send("upi")} />}
+      </div>
+    );
+  }
+  // choose (not decided) or due (pay first)
+  return (
+    <div className="co-pay stack">
+      {p.notReceived && <div className="error small">The staff couldn't find your payment. Please pay again or pay at the counter.</div>}
+      {p.state === "due" && <b className="small">💳 Please pay {amount} to send this order to the kitchen.</b>}
+      {p.state === "due" && p.method === "counter" && <div className="small">💵 Pay {amount} at the counter. Your order is cooked once the staff confirm it.</div>}
+      {upiOn && link && !open && <button className="btn btn-primary" disabled={busy} onClick={() => setOpen(true)}>📱 Pay {amount} now (UPI)</button>}
+      {open && <UpiPanel link={link} amount={amount} utr={utr} setUtr={setUtr} busy={busy} error={error} onPaid={() => send("upi")} />}
+      <div className="btn-row">
+        {p.state === "due" && p.method !== "counter" && <button className="btn btn-sm" disabled={busy} onClick={() => send("counter")}>💵 Pay at the counter</button>}
+        {p.state === "choose" && <button className="btn btn-sm" disabled={busy} onClick={() => send("end")}>Pay at the end</button>}
+      </div>
+      {!open && error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
+
+function UpiPanel({ link, amount, utr, setUtr, busy, error, onPaid }) {
+  return (
+    <div className="stack co-upi">
+      <a className="btn btn-primary" href={link}>Open UPI app · {amount}</a>
+      <details className="small">
+        <summary>Paying from another phone? Show QR</summary>
+        <div className="co-qr" dangerouslySetInnerHTML={{ __html: qrSvg(link, 200) }} />
+      </details>
+      <input className="input" placeholder="UPI reference no. (optional)" maxLength={30} value={utr} onChange={(e) => setUtr(e.target.value.replace(/\s/g, ""))} />
+      {error && <div className="error small">{error}</div>}
+      <button className="btn" disabled={busy} onClick={onPaid}>{busy ? "Sending…" : "✔️ I have paid"}</button>
     </div>
   );
 }
@@ -372,13 +451,15 @@ function BillAsk({ token, mine, onClose, onDone }) {
 
 function BillCard({ token, order, cur, onChange }) {
   const b = order.bill;
+  const prepaid = b.prepaid || 0;
+  const balance = Math.max(0, Math.round((b.total - prepaid) * 100) / 100);
   const [utr, setUtr] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const upiLink =
     order.upi &&
     "upi://pay?" +
-      new URLSearchParams({ pa: order.upi.id, pn: order.upi.name.slice(0, 40), am: Number(b.total).toFixed(2), cu: "INR", tn: `Bill ${b.billNo}` })
+      new URLSearchParams({ pa: order.upi.id, pn: order.upi.name.slice(0, 40), am: Number(balance).toFixed(2), cu: "INR", tn: `Bill ${b.billNo}` })
         .toString()
         .replace(/\+/g, "%20");
   const paidClaim = async () => {
@@ -416,15 +497,21 @@ function BillCard({ token, order, cur, onChange }) {
         </div>
       )}
       <div className="co-line-top co-bill-total"><b>Total</b><b>{money(b.total, cur)}</b></div>
+      {prepaid > 0 && (
+        <>
+          <div className="co-line-top small"><span>Already paid with your order{prepaid >= b.total ? "s" : ""}</span><span>−{money(prepaid, cur)}</span></div>
+          <div className="co-line-top"><b>To pay now</b><b>{money(balance, cur)}</b></div>
+        </>
+      )}
 
-      {b.paymentConfirmed ? (
+      {b.paymentConfirmed || balance <= 0 ? (
         <div className="co-paid">✅ Payment received. Thank you, visit again!</div>
       ) : upi && upiLink ? (
         b.customerPaid ? (
           <div className="co-note">⏳ Thanks! Waiting for the shop to confirm your payment.</div>
         ) : (
           <div className="stack">
-            <a className="btn btn-primary btn-lg" href={upiLink}>Pay {money(b.total, cur)} with UPI app</a>
+            <a className="btn btn-primary btn-lg" href={upiLink}>Pay {money(balance, cur)} with UPI app</a>
             <details className="small">
               <summary>Paying from another phone? Show QR</summary>
               <div className="co-qr" dangerouslySetInnerHTML={{ __html: qrSvg(upiLink, 200) }} />
@@ -435,7 +522,7 @@ function BillCard({ token, order, cur, onChange }) {
           </div>
         )
       ) : (
-        <div className="co-note">💵 Please pay {money(b.total, cur)} at the cash counter.</div>
+        <div className="co-note">💵 Please pay {money(balance, cur)} at the cash counter.</div>
       )}
     </div>
   );

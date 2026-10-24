@@ -4,7 +4,7 @@ import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Modal, useToast } from "../components/ui.jsx";
 import { ItemPicture } from "../components/ItemPicture.jsx";
-import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment } from "../lib/orders.js";
+import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment, orderPayment } from "../lib/orders.js";
 import { StockPanel } from "../components/Stock.jsx";
 import { printKot } from "../printer/index.js";
 import { explainPrintError } from "../printer/transports.js";
@@ -79,6 +79,16 @@ export default function Orders() {
       toast(err.message);
     }
   };
+  // A QR order's payment: confirm (pay-first orders go to the kitchen and print the KOT), reject, refund done.
+  const payAction = async (o, action) => {
+    try {
+      const saved = await orderPayment(o, action);
+      if (action === "confirm" && o.status === "new" && saved.status === "accepted") await kot(saved);
+      toast(action === "confirm" ? `₹${saved.pay.amount} for #${o.orderNo} confirmed` : action === "reject" ? `Told the customer the payment wasn't found` : "Refund noted");
+    } catch (err) {
+      toast(err.message);
+    }
+  };
   const reject = async (o) => {
     const reason = prompt(`Reject order #${o.orderNo}? Reason for the customer (optional):`, "");
     if (reason === null) return;
@@ -146,6 +156,33 @@ export default function Orders() {
         </section>
       )}
 
+      {st.orderPay.filter((o) => o.status !== "new" || o.pay.state !== "due").length > 0 && (
+        <section className="stack" style={{ marginBottom: 16 }}>
+          <h2>Order payments</h2>
+          {st.orderPay.filter((o) => o.status !== "new" || o.pay.state !== "due").map((o) => (
+            <div key={o.clientId} className={"card order-card " + (o.pay.state === "refundDue" ? "refund" : "new")}>
+              {o.pay.state === "refundDue" ? (
+                <>
+                  <div className="order-top"><b>↩️ Refund {money(o.pay.amount, cur)} · #{o.orderNo} · {o.tableName}</b><span className="small muted">{ago(o.updatedAt)}</span></div>
+                  <div className="small">This order was cancelled after the customer paid{o.pay.state === "refundDue" && o.pay.confirmedAt ? "" : " (check your UPI app first)"}. Give the money back, then mark it.</div>
+                  <div className="btn-row" style={{ justifyContent: "flex-end" }}><button className="btn btn-sm btn-primary" onClick={() => payAction(o, "refunded")}>Refund done</button></div>
+                </>
+              ) : (
+                <>
+                  <div className="order-top"><b>#{o.orderNo} · {o.tableName} says paid {money(o.pay.amount, cur)} by UPI</b><span className="small muted">{ago(o.pay.claimedAt || o.updatedAt)}</span></div>
+                  {o.pay.utr && <div className="small">UPI reference: <b>{o.pay.utr}</b></div>}
+                  <div className="small muted">Check your UPI app or soundbox for this amount, then confirm.</div>
+                  <div className="btn-row" style={{ justifyContent: "flex-end" }}>
+                    <button className="btn btn-sm" onClick={() => payAction(o, "reject")}>Not received</button>
+                    <button className="btn btn-sm btn-primary" onClick={() => payAction(o, "confirm")}>✅ Received{o.pay.rule === "first" && o.status === "new" ? " → send to kitchen" : ""}</button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+
       {waiting.length > 0 && (
         <section className="stack" style={{ marginBottom: 16 }}>
           <h2>New QR orders ({waiting.length})</h2>
@@ -163,11 +200,18 @@ export default function Orders() {
                   ))}
                 </ul>
                 {o.note && <div className="small">📝 {o.note}</div>}
+                <PayChip o={o} cur={cur} />
                 <div className="order-top">
                   <b>{money(o.total, cur)}</b>
                   <div className="btn-row">
                     <button className="btn btn-sm btn-danger" onClick={() => reject(o)}>Reject</button>
-                    <button className="btn btn-sm btn-primary" onClick={() => accept(o)}>Accept &amp; send to kitchen</button>
+                    {o.pay?.rule === "first" && o.pay.state !== "paid" ? (
+                      <button className="btn btn-sm btn-primary" onClick={() => payAction(o, "confirm")}>
+                        {o.pay.state === "claimed" ? "✅ UPI received" : "💵 Cash received"} → send to kitchen
+                      </button>
+                    ) : (
+                      <button className="btn btn-sm btn-primary" onClick={() => accept(o)}>Accept &amp; send to kitchen</button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -219,6 +263,10 @@ export default function Orders() {
                 lines.set(k, l ? { ...l, qty: l.qty + i.qty } : { itemId: i.itemId || i.name, name: i.name, variant: i.variant || "", category: i.category || "", rate: i.rate, qty: i.qty });
               }
             const req = list.find((o) => o.billRequest)?.billRequest;
+            // Orders already paid while ordering come off what's left to collect.
+            const paid = list.filter((o) => o.pay?.state === "paid");
+            const claimed = list.filter((o) => o.pay?.state === "claimed");
+            if (claimed.length && !confirm(`${claimed.map((o) => `#${o.orderNo}`).join(", ")} say they paid by UPI but it isn't confirmed yet. Bill anyway? (It will be collected again unless you confirm it first.)`)) return;
             nav("/", {
               state: {
                 tableBill: {
@@ -228,6 +276,8 @@ export default function Orders() {
                   orderNos: list.map((o) => o.orderNo),
                   lines: [...lines.values()],
                   payMode: req?.method === "upi" ? "upi" : req ? "cash" : undefined,
+                  prepaid: Math.round(paid.reduce((s, o) => s + (o.pay.amount || 0), 0) * 100) / 100,
+                  prepaidOrderNos: paid.map((o) => o.orderNo),
                 },
               },
             });
@@ -278,6 +328,7 @@ function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
               <span className="small muted">{o.source === "qr" ? "QR" : "Staff"} · {ago(o.createdAt)} · {money(o.total, cur)}</span>
             </div>
             <div className="small">{itemsText(o)}</div>
+            <PayChip o={o} cur={cur} />
             <div className="btn-row">
               {o.status !== "served" && <button className="btn btn-sm" onClick={() => move(o, "served")}>Mark served</button>}
               <button className="btn btn-sm btn-ghost" onClick={() => onReprint(o)}>🖨️ Reprint KOT</button>
@@ -385,4 +436,21 @@ function OrderPicker({ table, onClose, onPlaced }) {
       </div>
     </Modal>
   );
+}
+
+// How a QR order is being paid, for staff.
+function PayChip({ o, cur }) {
+  const p = o.pay;
+  if (!p || p.rule === "end" || (p.state === "end" && p.rule !== "choose")) return null;
+  const amt = money(p.amount ?? o.total, cur);
+  const [cls, text] = {
+    paid: ["good", `💳 Paid ${amt}${p.method === "counter" ? " (counter)" : ""}`],
+    claimed: ["warn", `⏳ Says paid ${amt} by UPI`],
+    due: ["bad", p.method === "counter" ? `🕒 Will pay ${amt} at the counter` : `🕒 Waiting for payment ${amt}`],
+    choose: ["", "Not paid yet"],
+    end: ["", "Pays at the end"],
+    refundDue: ["bad", `↩️ Refund ${amt}`],
+    refunded: ["", `↩️ Refunded ${amt}`],
+  }[p.state] || ["", ""];
+  return text ? <div className="pay-chip-row"><span className={"tag " + cls}>{text}</span></div> : null;
 }

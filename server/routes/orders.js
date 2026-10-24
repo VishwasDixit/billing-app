@@ -106,6 +106,17 @@ async function customerOrder(db, shop, id, key) {
 
 export const orderTotal = (items) => round2(items.reduce((s, i) => s + i.qty * i.rate, 0));
 
+// When QR customers pay (Settings › Tables & QR ordering):
+// "end" = at the end with the bill · "choose" = pay now or at the end · "first" = pay before it's cooked.
+// Order pay states: end · choose (not decided) · due (waiting for payment) · claimed (says paid by UPI)
+// · paid · refundDue (paid, then the order was rejected) · refunded.
+export const payRuleOf = (shop) => (["choose", "first"].includes(shop.qrPayment) ? shop.qrPayment : "end");
+const initialPay = (rule, total) => ({ rule, state: rule === "first" ? "due" : rule === "choose" ? "choose" : "end", amount: total });
+const publicPay = (o) => {
+  const p = o.pay || { rule: "end", state: "end", amount: o.total };
+  return { rule: p.rule, state: p.state, amount: p.amount ?? o.total, method: p.method || "", notReceived: !!p.notReceivedAt, confirmedAt: p.confirmedAt || null };
+};
+
 export default [
   // ---------- Public: the customer's phone after scanning a table QR ----------
   [
@@ -121,6 +132,8 @@ export default [
         shop: { name: shop.name, logo: shop.logo || "", currency: shop.currency || "₹", address: shop.address || "" },
         tables: tablesOf(shop).map(({ id, name }) => ({ id, name })),
         ordering: state,
+        payRule: payRuleOf(shop),
+        upi: !!shop.upiId,
         menu: menu.map((m) => ({
           id: String(m._id),
           name: m.name,
@@ -174,12 +187,13 @@ export default [
         items,
         total: orderTotal(items),
         status: "new",
+        pay: initialPay(payRuleOf(shop), orderTotal(items)),
         customerKey: crypto.randomBytes(12).toString("base64url"),
         createdAt: now,
         updatedAt: now,
       };
       doc._id = (await db.collection("orders").insertOne(doc)).insertedId;
-      return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status };
+      return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, pay: publicPay(doc) };
     },
     { auth: false },
   ],
@@ -200,6 +214,7 @@ export default [
         total: o.total,
         createdAt: o.createdAt,
         billRequest: o.billRequest || null,
+        pay: publicPay(o),
         upi: shop.upiId ? { id: shop.upiId, name: shop.name } : null,
         bill: bill && {
           id: bill.clientId,
@@ -210,6 +225,7 @@ export default [
           gst: bill.gst,
           total: bill.total,
           paymentMode: bill.paymentMode,
+          prepaid: bill.prepaid?.amount || 0,
           status: bill.status,
           customerPaid: !!bill.customerPaid,
           paymentConfirmed: !!bill.paymentConfirmedAt,
@@ -258,7 +274,67 @@ export default [
     { auth: false },
   ],
 
+  // The customer pays an order now (UPI, says they've paid), will pay at the counter, or at the end.
+  [
+    "POST",
+    "/public/shop/:token/orders/:id/pay",
+    async ({ db, params, body }) => {
+      const shop = await shopByToken(db, params.token);
+      const { key, method, utr } = z
+        .object({ key: z.string(), method: z.enum(["upi", "counter", "end"]), utr: z.string().trim().max(30).optional().default("") })
+        .parse(body);
+      const o = await customerOrder(db, shop, params.id, key);
+      await rateLimit(db, `qr-pay:${o.clientId}`, 10, "Too many tries. Please ask the staff.");
+      const pay = o.pay || initialPay("end", o.total);
+      if (!OPEN.includes(o.status)) throw new HttpError(409, o.status === "rejected" ? "This order was cancelled." : "This order is already billed. Please pay the bill.");
+      if (pay.rule === "end") throw new HttpError(400, "Please pay at the end with your bill.");
+      if (!["choose", "due", "end"].includes(pay.state)) return { ok: true, pay: publicPay(o) };
+      if (method === "upi" && !shop.upiId) throw new HttpError(400, "Online payment isn't set up here. Please pay at the counter.");
+      if (method === "end" && pay.rule !== "choose") throw new HttpError(400, "Please pay before your food is cooked.");
+      const next =
+        method === "upi"
+          ? { ...pay, state: "claimed", method: "upi", utr, claimedAt: new Date(), amount: o.total }
+          : method === "counter"
+            ? { ...pay, state: "due", method: "counter", amount: o.total }
+            : { ...pay, state: "end", method: "" };
+      const u = await db.collection("orders").findOneAndUpdate({ _id: o._id }, { $set: { pay: next, updatedAt: new Date() } }, { returnDocument: "after" });
+      return { ok: true, pay: publicPay(u) };
+    },
+    { auth: false },
+  ],
+
   // ---------- Staff ----------
+  // Staff check a QR order's payment: received (pay-first orders then go to the kitchen),
+  // not received, or a refund handed back for a paid order that was cancelled.
+  [
+    "POST",
+    "/orders/:id/payment",
+    async ({ db, shop, params, body, user }) => {
+      const { action } = z.object({ action: z.enum(["confirm", "reject", "refunded"]) }).parse(body);
+      const o = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id });
+      if (!o) throw new HttpError(404, "Order not found.");
+      const pay = o.pay || initialPay("end", o.total);
+      const now = new Date();
+      let $set;
+      if (action === "confirm") {
+        if (!["claimed", "due", "choose"].includes(pay.state)) throw new HttpError(409, pay.state === "paid" ? "Already marked paid." : "Nothing to confirm.");
+        if (!OPEN.includes(o.status)) throw new HttpError(409, "This order is closed.");
+        $set = { pay: { ...pay, state: "paid", method: pay.method || "counter", amount: o.total, confirmedAt: now, confirmedBy: user.name }, updatedAt: now };
+        // Pay first: the payment sends the order to the kitchen.
+        if (pay.rule === "first" && o.status === "new") Object.assign($set, { status: "accepted", acceptedAt: now, acceptedBy: user.name });
+      } else if (action === "reject") {
+        if (pay.state !== "claimed") throw new HttpError(409, "Nothing to reject.");
+        $set = { pay: { ...pay, state: pay.rule === "first" ? "due" : "choose", method: "", notReceivedAt: now }, updatedAt: now };
+      } else {
+        if (pay.state !== "refundDue") throw new HttpError(409, "No refund is due.");
+        $set = { pay: { ...pay, state: "refunded", refundedAt: now, refundedBy: user.name }, updatedAt: now };
+      }
+      const u = await db.collection("orders").findOneAndUpdate({ _id: o._id }, { $set }, { returnDocument: "after" });
+      if ($set.status === "accepted") await takeStock(db, shop._id, u.items, { orderId: u.clientId });
+      return publicOrder(u);
+    },
+    { manager: true },
+  ],
   // Open orders (and those closed in the last 12 hours), newest last.
   [
     "GET",
@@ -338,9 +414,21 @@ export default [
         served: ["accepted", "preparing", "ready"],
       }[status];
       const now = new Date();
+      const cur0 = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id }, { projection: { pay: 1, status: 1 } });
+      if (status === "accepted" && cur0?.pay?.rule === "first" && cur0.pay.state !== "paid") {
+        throw new HttpError(409, "This table pays first. Confirm the payment to send it to the kitchen.", { code: "PAY_FIRST" });
+      }
+      const refund = status === "rejected" && ["paid", "claimed"].includes(cur0?.pay?.state);
       const o = await db.collection("orders").findOneAndUpdate(
         { shopId: shop._id, clientId: params.id, status: { $in: allowedFrom } },
-        { $set: { status, updatedAt: now, [`${status}At`]: now, [`${status}By`]: user.name, ...(status === "rejected" && { rejectReason: reason }) } },
+        {
+          $set: {
+            status, updatedAt: now, [`${status}At`]: now, [`${status}By`]: user.name,
+            ...(status === "rejected" && { rejectReason: reason }),
+            // Money taken for a cancelled order must go back.
+            ...(refund && { "pay.state": "refundDue" }), // check the UPI app and hand the money back
+          },
+        },
         { returnDocument: "after" }
       );
       if (o && status === "accepted") await takeStock(db, shop._id, o.items, { orderId: o.clientId });
