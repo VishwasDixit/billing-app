@@ -71,6 +71,7 @@ export default function App() {
               <Route path="/bills" element={<Bills />} />
               <Route path="/customers" element={<Customers />} />
               <Route path="/customers/:id" element={<CustomerDetail />} />
+              <Route path="/expenses" element={<Expenses />} />
               <Route path="/orders" element={<Orders />} />
               <Route path="/kitchen" element={<Kitchen />} />
               <Route path="/kitchen-manage" element={<KitchenManage />} />
@@ -179,6 +180,7 @@ function useNavLinks({ isAdmin, isKitchen, isManager, paid, waiting, helpUnread,
       { to: "/orders", ico: waiting ? "🔔" : "🍽️", label: waiting ? `Orders (${waiting})` : "Orders", short: waiting ? `${waiting} new` : "Orders", bottom: true, top: true, alert: waiting > 0 },
       { to: "/bills", ico: "📄", label: "Bills", bottom: true, top: true },
       { to: "/customers", ico: "📒", label: "Udhar", top: true },
+      { to: "/expenses", ico: "💸", label: "Expenses", top: true },
       { to: "/kitchen-manage", ico: "🥫", label: kitchenAlerts ? `Kitchen stock (${kitchenAlerts})` : "Kitchen stock", topLabel: kitchenAlerts ? `Kitchen (${kitchenAlerts})` : "Kitchen", top: true, alert: kitchenAlerts > 0 },
       { to: "/kitchen", ico: "🍳", label: "Kitchen screen" },
     ];

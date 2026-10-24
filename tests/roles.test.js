@@ -88,7 +88,7 @@ describe("staff roles", () => {
     }
     expect((await k("PUT", "/shop", { name: "Hacked" })).status).toBe(403);
 
-    for (const path of ["/analytics", "/expenses", "/staff/attendance?month=2026-10", "/bills/changes", "/kitchen/report", "/staff/code"]) {
+    for (const path of ["/analytics", "/staff/attendance?month=2026-10", "/bills/changes", "/kitchen/report", "/staff/code"]) {
       expect((await m("GET", path)).status, `manager ${path}`).toBe(403);
     }
     expect((await m("PUT", "/shop", { name: "Hacked" })).status).toBe(403);
@@ -156,5 +156,38 @@ describe("staff roles", () => {
     expect((await owner("GET", "/bills")).status).toBe(403);
     const v = await owner("POST", "/staff/verify-pin", { staffId: cook.id, pin: "1111" });
     expect(v.status).toBe(200);
+  });
+
+  it("managers write expenses under their name; salaries and others' entries stay with the owner", async () => {
+    const { owner, cook, mgr, login } = await shopWithStaff("expense@test.local");
+    const { c: m } = await login(mgr.id, "2222");
+    const { c: k } = await login(cook.id, "1111");
+    const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+    const old = new Date(Date.now() + 5.5 * 3600e3 - 10 * 864e5).toISOString().slice(0, 10);
+
+    expect((await k("GET", "/expenses")).status).toBe(403);
+    const added = await m("POST", "/expenses", { date: today, category: "Gas", amount: 950, note: "cylinder" });
+    expect(added.status).toBe(200);
+    expect(added.body.addedBy).toBe("Sita");
+    expect((await m("POST", "/expenses", { date: today, category: "Salary", amount: 5000 })).status).toBe(403);
+    expect((await m("POST", "/expenses", { date: old, category: "Gas", amount: 100 })).status).toBe(400);
+
+    const sal = (await owner("POST", "/expenses", { date: today, category: "Salary", amount: 15000 })).body;
+    const rent = (await owner("POST", "/expenses", { date: today, category: "Rent", amount: 8000 })).body;
+    expect(sal.addedBy).toBe("Owner");
+    const list = (await m("GET", "/expenses")).body;
+    expect(list.expenses.map((e) => e.category).sort()).toEqual(["Gas", "Rent"]); // no salaries
+    expect(list.categories).not.toContain("Salary");
+
+    // Own entry: can fix it; the owner's entries are read-only.
+    expect((await m("PUT", `/expenses/${added.body.id}`, { date: today, category: "Gas", amount: 900 })).body.amount).toBe(900);
+    expect((await m("PUT", `/expenses/${rent.id}`, { date: today, category: "Rent", amount: 1 })).status).toBe(403);
+    expect((await m("DELETE", `/expenses/${sal.id}`)).status).toBe(403);
+    // After a day, their own entry is locked too.
+    const db = await getDb();
+    const { ObjectId } = await import("mongodb");
+    await db.collection("expenses").updateOne({ _id: new ObjectId(added.body.id) }, { $set: { createdAt: new Date(Date.now() - 2 * 864e5) } });
+    expect((await m("DELETE", `/expenses/${added.body.id}`)).status).toBe(403);
+    expect((await owner("DELETE", `/expenses/${added.body.id}`)).status).toBe(200);
   });
 });

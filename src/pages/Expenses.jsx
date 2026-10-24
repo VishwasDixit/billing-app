@@ -9,8 +9,12 @@ const lastDay = (ym) => {
   return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
 };
 
+// A billing manager can add expenses and fix their own for 24 hours; salaries stay with the owner.
+const canChange = (user, e) => !e.id || user.role !== "manager" || (e.addedById === user.staff?.id && Date.now() - new Date(e.createdAt) < 864e5);
+
 export default function Expenses() {
-  const { shop } = useApp();
+  const { shop, user } = useApp();
+  const manager = user.role === "manager";
   const cur = shop.currency || "₹";
   const [month, setMonth] = useState(todayYmd().slice(0, 7));
   const [list, setList] = useState([]);
@@ -46,6 +50,7 @@ export default function Expenses() {
         </div>
       </div>
 
+      {manager && <p className="hint" style={{ marginTop: 0 }}>Expenses you add are recorded under your name. You can fix or delete your own entries for 24 hours; after that, ask the owner.</p>}
       <div className="stats">
         <div className="stat"><div className="label">Total this month</div><div className="value">{money(total, cur)}</div></div>
         {byCat.slice(0, 4).map(([c, a]) => (
@@ -57,7 +62,7 @@ export default function Expenses() {
       <div className="card table-wrap" style={{ padding: 0 }}>
         <table className="table">
           <thead>
-            <tr><th>Date</th><th>Category</th><th>Note</th><th>Paid by</th><th className="num">Amount</th></tr>
+            <tr><th>Date</th><th>Category</th><th>Note</th><th>Paid by</th><th>Added by</th><th className="num">Amount</th></tr>
           </thead>
           <tbody>
             {list.map((e) => (
@@ -66,6 +71,7 @@ export default function Expenses() {
                 <td>{e.category}</td>
                 <td className="muted">{e.note}</td>
                 <td>{e.paymentMode?.toUpperCase()}</td>
+                <td className="muted small">{e.addedBy || ""}</td>
                 <td className="num">{money(e.amount, cur)}</td>
               </tr>
             ))}
@@ -74,12 +80,12 @@ export default function Expenses() {
         {!busy && list.length === 0 && <div className="empty">No expenses this month. Add rent, salaries, raw material and other costs to see your real profit.</div>}
       </div>
 
-      {editing && <ExpenseEditor expense={editing} categories={categories} onClose={() => setEditing(null)} onSaved={load} />}
+      {editing && <ExpenseEditor expense={editing} categories={categories} locked={!canChange(user, editing)} manager={manager} onClose={() => setEditing(null)} onSaved={load} />}
     </div>
   );
 }
 
-function ExpenseEditor({ expense, categories, onClose, onSaved }) {
+function ExpenseEditor({ expense, categories, locked, manager, onClose, onSaved }) {
   const toast = useToast();
   const [f, setF] = useState({ ...expense });
   const { busy, error, run } = useAction();
@@ -98,10 +104,12 @@ function ExpenseEditor({ expense, categories, onClose, onSaved }) {
   };
 
   return (
-    <Modal title={f.id ? "Edit expense" : "Add expense"} onClose={onClose}>
+    <Modal title={locked ? "Expense" : f.id ? "Edit expense" : "Add expense"} onClose={onClose}>
       <form className="stack" onSubmit={save}>
+        {locked && <p className="hint" style={{ margin: 0 }}>Added by {f.addedBy || "the owner"}. Only the owner can change it now.</p>}
+        <fieldset disabled={locked} className="plain-fieldset stack">
         <div className="grid2">
-          <Field label="Date"><input type="date" required value={f.date} max={todayYmd()} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+          <Field label="Date"><input type="date" required value={f.date} max={todayYmd()} min={manager ? todayYmd(-7) : undefined} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
           <Field label="Amount"><input type="number" required min="0.01" step="0.01" inputMode="decimal" autoFocus value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
         </div>
         <Field label="Category">
@@ -113,9 +121,10 @@ function ExpenseEditor({ expense, categories, onClose, onSaved }) {
           Paid by
           <Seg value={f.paymentMode} onChange={(v) => setF({ ...f, paymentMode: v })} options={[["cash", "Cash"], ["upi", "UPI"], ["card", "Card"], ["bank", "Bank"]]} />
         </div>
+        </fieldset>
         {error && <div className="error">{error}</div>}
         <div className="modal-actions">
-          {f.id && (
+          {f.id && !locked && (
             <button
               type="button"
               className="btn btn-danger"
@@ -127,7 +136,7 @@ function ExpenseEditor({ expense, categories, onClose, onSaved }) {
           )}
           <span className="spacer" />
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy}>Save</button>
+          {!locked && <button className="btn btn-primary" disabled={busy}>Save</button>}
         </div>
       </form>
     </Modal>
