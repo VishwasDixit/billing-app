@@ -51,7 +51,7 @@ async function paidShop(email, extra = {}) {
   return { c, token, a: single[0], b: single[1] };
 }
 const pub = client();
-const order = (token, items) => pub("POST", `/public/shop/${token}/orders`, { table: "T1", items });
+const order = (token, items) => pub("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items });
 
 describe("menu stock", () => {
   it("hides sold-out dishes from customers and refuses them", async () => {

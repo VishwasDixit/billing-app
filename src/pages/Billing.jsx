@@ -111,6 +111,7 @@ export default function Billing() {
     setTableBill(tb);
     setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant), { ...l }])));
     if (tb.payMode) setPaymentMode(tb.payMode);
+    if (tb.customer) setCustomer(tb.customer);
     setCartOpen(true);
     nav(".", { replace: true, state: null });
   }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -165,7 +166,8 @@ export default function Billing() {
   const paidNowClamped = Math.min(Math.max(Number(paidNow) || 0, 0), t.total);
   const udharThisBill = Math.round((t.total - paidNowClamped) * 100) / 100;
   const currentDue = customer ? customers.find((c) => c.clientId === customer.clientId)?.due || 0 : 0;
-  const needCustomer = credit && !customer;
+  const askCustomer = shop.askCustomer || "optional";
+  const needCustomer = (credit || askCustomer === "required") && !customer;
   const access = accessState(shop);
   const today = todayYmd();
   const pastDate = billDate && billDate < today ? billDate : "";
@@ -176,7 +178,7 @@ export default function Billing() {
   // Saves the bill, then prints / shares it. The bill is kept even if printing fails.
   async function finish(kind) {
     if (!cart.size || busy) return;
-    if (needCustomer) return toast("Choose the customer for this udhar bill.");
+    if (needCustomer) return toast(credit ? "Choose the customer for this udhar bill." : "Add the customer's name and phone for this bill.");
     if (editBill) return saveEdit(kind);
     if (!access.active) {
       toast(owner ? "Your plan has ended. Choose a plan to keep billing." : "The shop's plan has ended. Ask the owner to renew it.");
@@ -400,6 +402,12 @@ export default function Billing() {
           <span className="muted">Payment</span>
           <Seg value={paymentMode} onChange={setPaymentMode} options={[["cash", "Cash"], ["upi", "UPI"], ["card", "Card"], ["credit", "Udhar"]]} />
         </div>
+        {!credit && askCustomer !== "off" && (
+          <div className="cust-box">
+            <span className="muted small">Customer{askCustomer === "required" ? " *" : " (optional)"}</span>
+            <CustomerPicker value={customer} onChange={setCustomer} currency={cur} />
+          </div>
+        )}
         {credit && (
           <div className="udhar-box">
             <CustomerPicker value={customer} onChange={setCustomer} currency={cur} />

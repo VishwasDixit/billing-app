@@ -71,7 +71,7 @@ export default function Kitchen() {
                       <b className="kot-no">#{o.orderNo}</b>
                       <b className="kot-table">{o.pay?.state === "paid" && <span className="tag good kot-paid">PAID</span>} {o.tableName || o.table}</b>
                     </div>
-                    <div className="small muted">{ago(o.acceptedAt || o.createdAt)}{o.source === "qr" ? " · QR" : ""}</div>
+                    <div className="small muted">{ago(o.acceptedAt || o.createdAt)}{o.source === "qr" ? " · QR" : ""}{o.customerName ? ` · ${o.customerName}` : ""}</div>
                     <ul className="kot-items">
                       {o.items.map((i, k) => (
                         <li key={k}>

@@ -67,7 +67,7 @@ describe("QR table ordering", () => {
     const one = menu.find((m) => m.variants.length === 1);
     const two = menu.find((m) => m.variants.length > 1);
     const placed = await p("POST", `/public/shop/${token}/orders`, {
-      table: "T2",
+      name: "Ravi", phone: "9876500001", table: "T2",
       items: [
         { itemId: one.id, qty: 2, rate: 1 }, // a rate sent by the phone is ignored
         { itemId: two.id, variant: two.variants[1].label, qty: 1, note: "less spicy" },
@@ -95,7 +95,7 @@ describe("QR table ordering", () => {
     expect((await c("GET", "/orders/summary")).body.waiting).toBe(0);
 
     // Numbers count up for the day.
-    const second = await p("POST", `/public/shop/${token}/orders`, { table: "T1", items: [{ itemId: one.id, qty: 1 }] });
+    const second = await p("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items: [{ itemId: one.id, qty: 1 }] });
     expect(second.body.orderNo).toBe("Q2");
     const rej = await c("POST", `/orders/${second.body.orderId}/status`, { status: "rejected", reason: "Item finished" });
     expect(rej.body).toMatchObject({ status: "rejected", rejectReason: "Item finished" });
@@ -106,13 +106,13 @@ describe("QR table ordering", () => {
     const { c, token, menu } = await shopWithTables("qr2@x.test");
     const p = pub();
     const one = menu.find((m) => m.variants.length === 1);
-    expect((await p("POST", `/public/shop/${token}/orders`, { table: "T9", items: [{ itemId: one.id, qty: 1 }] })).status).toBe(400);
-    expect((await p("POST", `/public/shop/${token}/orders`, { table: "T1", items: [{ itemId: "nope", qty: 1 }] })).status).toBe(400);
-    expect((await p("POST", `/public/shop/${token}/orders`, { table: "T1", items: [] })).status).toBe(400);
+    expect((await p("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T9", items: [{ itemId: one.id, qty: 1 }] })).status).toBe(400);
+    expect((await p("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items: [{ itemId: "nope", qty: 1 }] })).status).toBe(400);
+    expect((await p("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items: [] })).status).toBe(400);
     expect((await p("GET", `/public/shop/not-a-real-token-123456`)).status).toBe(404);
 
     await c("PUT", `/menu/${one.id}`, { active: false });
-    expect((await p("POST", `/public/shop/${token}/orders`, { table: "T1", items: [{ itemId: one.id, qty: 1 }] })).body.error).toMatch(/no longer on the menu/);
+    expect((await p("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items: [{ itemId: one.id, qty: 1 }] })).body.error).toMatch(/no longer on the menu/);
 
     await c("PUT", "/shop", { qrOrdering: false });
     expect((await p("GET", `/public/shop/${token}`)).body.ordering.open).toBe(false);
@@ -126,7 +126,7 @@ describe("QR table ordering", () => {
     const trial = await shopWithTables("qr-trial@x.test", { paid: false });
     const tp = await p("GET", `/public/shop/${trial.token}`);
     expect(tp.body.ordering).toMatchObject({ open: false });
-    expect((await p("POST", `/public/shop/${trial.token}/orders`, { table: "T1", items: [{ itemId: trial.menu[0].id, qty: 1 }] })).status).toBe(403);
+    expect((await p("POST", `/public/shop/${trial.token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items: [{ itemId: trial.menu[0].id, qty: 1 }] })).status).toBe(403);
   });
 
   it("limits orders per table", async () => {
@@ -134,7 +134,7 @@ describe("QR table ordering", () => {
     const p = pub();
     const item = { itemId: menu.find((m) => m.variants.length === 1).id, qty: 1 };
     const statuses = [];
-    for (let i = 0; i < 26; i++) statuses.push((await p("POST", `/public/shop/${token}/orders`, { table: "T1", items: [item] })).status);
+    for (let i = 0; i < 26; i++) statuses.push((await p("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items: [item] })).status);
     expect(statuses.slice(0, 25).every((s) => s === 200)).toBe(true);
     expect(statuses[25]).toBe(429);
   });
@@ -155,7 +155,7 @@ describe("staff orders and billing a table", () => {
     const up = await c("POST", "/orders", { orders: [order, order] });
     expect(up.body.results.map((r) => r.ok)).toEqual([true, true]);
     expect(up.body.results[1].duplicate).toBe(true);
-    const qr = await pub()("POST", `/public/shop/${token}/orders`, { table: "T1", items: [{ itemId: item.id, qty: 1 }] });
+    const qr = await pub()("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items: [{ itemId: item.id, qty: 1 }] });
     await c("POST", `/orders/${qr.body.orderId}/status`, { status: "accepted" });
 
     let open = (await c("GET", "/orders")).body.orders.filter((o) => o.table === "T1");

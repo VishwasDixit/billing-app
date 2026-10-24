@@ -23,6 +23,7 @@ const pick = (s) => ({
   tables: (s.tables || []).map((t) => ({ ...t })),
   qrOrdering: !!s.qrOrdering,
   qrPayment: s.qrPayment || "end",
+  askCustomer: s.askCustomer || "optional",
   name: s.name || "",
   logo: s.logo || "",
   address: s.address || "",
@@ -141,6 +142,17 @@ export default function Settings() {
                 <Seg value={f.defaultDiscount.type} onChange={(v) => set("defaultDiscount", { ...f.defaultDiscount, type: v })} options={[["percent", "%"], ["flat", "Flat"]]} />
               </div>
               <span className="hint">You can still change discount and GST on any single bill.</span>
+            </div>
+            <div className="field">
+              Ask for customer name and phone
+              <Seg value={f.askCustomer} onChange={(v) => set("askCustomer", v)} options={[["optional", "Optional"], ["required", "Required"], ["off", "Off"]]} />
+              <span className="hint">
+                {f.askCustomer === "required"
+                  ? "A bill can't be saved or printed without the customer. Builds a complete customer list."
+                  : f.askCustomer === "off"
+                    ? "Only asked for udhar bills."
+                    : "The customer box is on every bill; skip it when busy. Name and phone print on the bill and go to your customer list."}
+              </span>
             </div>
           </section>
 

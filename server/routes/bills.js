@@ -110,7 +110,7 @@ const EditIn = z.object({
   pin: Pin,
 });
 
-async function deleteBill(db, shop, user, b, { reason, note, foodMade, cancelOrders }) {
+export async function deleteBill(db, shop, user, b, { reason, note, foodMade, cancelOrders }) {
   const at = new Date();
   await db.collection("bills").updateOne(
     { _id: b._id },
@@ -178,7 +178,7 @@ export default [
         if (b.orderIds?.length) {
           const paidOrders = await db
             .collection("orders")
-            .find({ shopId: shop._id, clientId: { $in: b.orderIds }, "pay.state": "paid" }, { projection: { orderNo: 1, "pay.amount": 1 } })
+            .find({ shopId: shop._id, clientId: { $in: b.orderIds }, "pay.state": "paid", billClientId: { $exists: false } }, { projection: { orderNo: 1, "pay.amount": 1 } })
             .toArray();
           const amount = round2(paidOrders.reduce((sum, o) => sum + (o.pay.amount || 0), 0));
           if (amount > 0) prepaid = { amount: Math.min(amount, t.total), orderNos: paidOrders.map((o) => o.orderNo) };

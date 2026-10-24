@@ -165,6 +165,13 @@ export async function orderPayment(order, action) {
   return saved;
 }
 
+// A table whose orders were all paid (each with its own bill): free it without a new bill.
+export async function closeTable(table) {
+  await post("/orders/close-table", { table });
+  set({ orders: state.orders.map((o) => (o.table === table && OPEN.includes(o.status) ? { ...o, status: "billed" } : o)) });
+  await kvSet(key("orders"), state.orders);
+}
+
 // Staff confirm a customer's "I have paid" (UPI).
 export async function confirmPayment(claim, mode = "upi") {
   await post(`/bills/${claim.clientId}/confirm-payment`, { mode });

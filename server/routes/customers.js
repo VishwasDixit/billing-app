@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError } from "../http.js";
@@ -33,6 +34,21 @@ const oid = (id) => {
   if (!ObjectId.isValid(id)) throw new HttpError(404, "Customer not found.");
   return new ObjectId(id);
 };
+
+// Indian mobile numbers: 10 digits starting 6–9 (a leading +91 / 0 / spaces are dropped).
+export const cleanMobile = (p) => {
+  const d = String(p || "").replace(/\D/g, "").replace(/^(91|0)(?=\d{10}$)/, "");
+  return /^[6-9]\d{9}$/.test(d) ? d : null;
+};
+
+// The customer with this mobile number, or a new one (QR orders and order bills).
+export async function upsertCustomerByPhone(db, shopId, { name, phone }) {
+  const found = await db.collection("customers").findOne({ shopId, phone: { $in: [phone, `+91${phone}`, `+91 ${phone}`, `0${phone}`] } });
+  if (found) return { clientId: found.clientId, name: found.name, phone: found.phone };
+  const c = { clientId: crypto.randomUUID(), name, phone };
+  await upsertCustomer(db, shopId, c);
+  return c;
+}
 
 // Creates the customer the first time a device sends it (offline-safe), never overwriting later edits.
 export async function upsertCustomer(db, shopId, c) {

@@ -8,7 +8,9 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import { HttpError } from "../http.js";
-import { round2 } from "../../shared/totals.js";
+import { round2, computeTotals } from "../../shared/totals.js";
+import { cleanMobile, upsertCustomerByPhone } from "./customers.js";
+import { deleteBill } from "./bills.js";
 import { isAdminEmail } from "../auth.js";
 import { subscriptionStatus, hasPaidFeatures } from "../subscription.js";
 import { rateLimit, clientIp } from "../limits.js";
@@ -105,6 +107,46 @@ async function customerOrder(db, shop, id, key) {
 }
 
 export const orderTotal = (items) => round2(items.reduce((s, i) => s + i.qty * i.rate, 0));
+// What the customer pays for one order on its own: items plus the shop's GST.
+const payableTotal = (shop, items) => computeTotals(items, { type: "percent", value: 0 }, shop.gstPercent || 0).total;
+
+// A paid QR order becomes a saved bill right away (P-1, P-2, … per shop), so the books are complete
+// even before the table is closed. The order already took stock when it went to the kitchen.
+async function createOrderBill(db, shop, o, user) {
+  if (o.billClientId) return db.collection("bills").findOne({ shopId: shop._id, clientId: o.billClientId });
+  const r = await db.collection("counters").findOneAndUpdate({ _id: `bills:${shop._id}:P` }, { $inc: { n: 1 } }, { upsert: true, returnDocument: "after" });
+  const t = computeTotals(o.items, { type: "percent", value: 0 }, shop.gstPercent || 0);
+  const now = new Date();
+  const mode = o.pay?.method === "upi" ? "upi" : "cash";
+  const bill = {
+    shopId: shop._id,
+    clientId: crypto.randomUUID(),
+    billNo: `P-${r.n}`,
+    deviceCode: "P",
+    createdAt: now,
+    syncedAt: now,
+    source: "qr",
+    orderNo: o.orderNo,
+    table: o.tableName || o.table,
+    orderIds: [o.clientId],
+    items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount }) => ({ itemId, name, variant, category, qty, rate, amount })),
+    itemCount: t.itemCount,
+    subtotal: t.subtotal,
+    discount: t.discount,
+    gst: t.gst,
+    total: t.total,
+    paymentMode: mode,
+    paidNow: t.total,
+    creditAmount: 0,
+    ...(o.customer && { customer: { clientId: o.customer.clientId, name: o.customer.name, phone: o.customer.phone || "" } }),
+    status: "paid",
+    paymentConfirmedAt: now,
+    paymentConfirmedBy: user.name,
+  };
+  await db.collection("bills").insertOne(bill);
+  await db.collection("orders").updateOne({ _id: o._id }, { $set: { billClientId: bill.clientId, billNo: bill.billNo } });
+  return bill;
+}
 
 // When QR customers pay (Settings › Tables & QR ordering):
 // "end" = at the end with the bill · "choose" = pay now or at the end · "first" = pay before it's cooked.
@@ -157,7 +199,9 @@ export default [
           table: z.string().max(20),
           items: z.array(LineIn).min(1, "add at least one item").max(MAX_LINES),
           note: z.string().trim().max(160).optional().default(""),
-          name: z.string().trim().max(40).optional().default(""),
+          // Name and mobile are asked before ordering: fewer prank orders, and the shop can call back.
+          name: z.string().trim().min(2, "Please enter your name.").max(40),
+          phone: z.string().trim().max(16).transform((p, ctx) => cleanMobile(p) || (ctx.addIssue({ code: "custom", message: "Please enter a 10-digit mobile number." }), z.NEVER)),
         })
         .parse(body);
       const state = await orderingState(db, shop);
@@ -175,6 +219,7 @@ export default [
       const stockProblem = checkAvailable(menuById, items);
       if (stockProblem) throw new HttpError(409, stockProblem, { code: "STOCK" });
       const now = new Date();
+      const customer = await upsertCustomerByPhone(db, shop._id, { name: input.name, phone: input.phone });
       const doc = {
         shopId: shop._id,
         clientId: crypto.randomUUID(),
@@ -183,11 +228,13 @@ export default [
         table: table.id,
         tableName: table.name,
         customerName: input.name,
+        customerPhone: input.phone,
+        customer: { ...customer, name: input.name },
         note: input.note,
         items,
         total: orderTotal(items),
         status: "new",
-        pay: initialPay(payRuleOf(shop), orderTotal(items)),
+        pay: initialPay(payRuleOf(shop), payableTotal(shop, items)),
         customerKey: crypto.randomBytes(12).toString("base64url"),
         createdAt: now,
         updatedAt: now,
@@ -329,9 +376,14 @@ export default [
         if (pay.state !== "refundDue") throw new HttpError(409, "No refund is due.");
         $set = { pay: { ...pay, state: "refunded", refundedAt: now, refundedBy: user.name }, updatedAt: now };
       }
-      const u = await db.collection("orders").findOneAndUpdate({ _id: o._id }, { $set }, { returnDocument: "after" });
+      let u = await db.collection("orders").findOneAndUpdate({ _id: o._id }, { $set }, { returnDocument: "after" });
       if ($set.status === "accepted") await takeStock(db, shop._id, u.items, { orderId: u.clientId });
-      return publicOrder(u);
+      let bill = null;
+      if (action === "confirm") {
+        bill = await createOrderBill(db, shop, u, user);
+        u = await db.collection("orders").findOne({ _id: o._id });
+      }
+      return { ...publicOrder(u), ...(bill && { bill: { ...bill, _id: undefined, shopId: undefined, id: String(bill._id) } }) };
     },
     { manager: true },
   ],
@@ -359,6 +411,19 @@ export default [
       };
     },
     { kitchen: true },
+  ],
+  // Free a table whose orders were all paid (and billed) while ordering.
+  [
+    "POST",
+    "/orders/close-table",
+    async ({ db, shop, body }) => {
+      const { table } = z.object({ table: z.string().max(20) }).parse(body);
+      const unpaid = await db.collection("orders").countDocuments({ shopId: shop._id, table, status: { $in: OPEN }, billClientId: { $exists: false } });
+      if (unpaid) throw new HttpError(409, "Some orders on this table aren't paid yet. Bill the table instead.");
+      const r = await db.collection("orders").updateMany({ shopId: shop._id, table, status: { $in: OPEN } }, { $set: { status: "billed", billedAt: new Date(), updatedAt: new Date() } });
+      return { ok: true, closed: r.modifiedCount };
+    },
+    { manager: true },
   ],
   // Just the count of QR orders waiting, for the badge and sound on every screen.
   ["GET", "/orders/summary", async ({ db, shop }) => ({ waiting: await db.collection("orders").countDocuments({ shopId: shop._id, status: "new" }) }), { kitchen: true }],
@@ -414,7 +479,7 @@ export default [
         served: ["accepted", "preparing", "ready"],
       }[status];
       const now = new Date();
-      const cur0 = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id }, { projection: { pay: 1, status: 1 } });
+      const cur0 = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id }, { projection: { pay: 1, status: 1, billClientId: 1 } });
       if (status === "accepted" && cur0?.pay?.rule === "first" && cur0.pay.state !== "paid") {
         throw new HttpError(409, "This table pays first. Confirm the payment to send it to the kitchen.", { code: "PAY_FIRST" });
       }
@@ -432,6 +497,11 @@ export default [
         { returnDocument: "after" }
       );
       if (o && status === "accepted") await takeStock(db, shop._id, o.items, { orderId: o.clientId });
+      // A paid order that's cancelled: its bill goes to the Deleted bin (stock back if it was cooking).
+      if (o && refund && cur0.billClientId) {
+        const b = await db.collection("bills").findOne({ shopId: shop._id, clientId: cur0.billClientId, status: "paid" });
+        if (b) await deleteBill(db, shop, user, b, { reason: "cancelled", note: `Order #${o.orderNo} cancelled · refund due`, foodMade: cur0.status !== "accepted", cancelOrders: false });
+      }
       if (!o) {
         const cur = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id }, { projection: { status: 1 } });
         if (!cur) throw new HttpError(404, "Order not found.");
@@ -447,7 +517,12 @@ export default [
 export async function markOrdersBilled(db, shopId, orderIds, billClientId) {
   if (!orderIds?.length) return;
   await db.collection("orders").updateMany(
-    { shopId, clientId: { $in: orderIds }, status: { $in: OPEN } },
+    { shopId, clientId: { $in: orderIds }, status: { $in: OPEN }, billClientId: { $exists: false } },
     { $set: { status: "billed", billedAt: new Date(), billClientId, updatedAt: new Date() } }
+  );
+  // Orders already paid with their own bill are just closed with the table.
+  await db.collection("orders").updateMany(
+    { shopId, clientId: { $in: orderIds }, status: { $in: OPEN }, billClientId: { $exists: true } },
+    { $set: { status: "billed", billedAt: new Date(), updatedAt: new Date() } }
   );
 }

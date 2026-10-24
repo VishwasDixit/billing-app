@@ -4,7 +4,9 @@ import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Modal, useToast } from "../components/ui.jsx";
 import { ItemPicture } from "../components/ItemPicture.jsx";
-import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment, orderPayment } from "../lib/orders.js";
+import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment, orderPayment, closeTable } from "../lib/orders.js";
+import { printBill } from "../printer/index.js";
+import { shareBillPdf } from "../printer/pdf.js";
 import { StockPanel } from "../components/Stock.jsx";
 import { printKot } from "../printer/index.js";
 import { explainPrintError } from "../printer/transports.js";
@@ -84,6 +86,18 @@ export default function Orders() {
     try {
       const saved = await orderPayment(o, action);
       if (action === "confirm" && o.status === "new" && saved.status === "accepted") await kot(saved);
+      // The paid order is now a saved bill: print it for the customer and the records.
+      if (action === "confirm" && saved.bill) {
+        try {
+          await printBill(shop, saved.bill);
+          toast(`₹${saved.pay.amount} confirmed · Bill ${saved.bill.billNo} saved and printed`);
+        } catch (err) {
+          const msg = explainPrintError(err);
+          toast(`Bill ${saved.bill.billNo} saved${msg ? ` (not printed: ${msg})` : ""}. Reprint or share it from Bills.`);
+          if (msg && confirm(`Printer not ready. Share bill ${saved.bill.billNo} as PDF instead?`)) await shareBillPdf(shop, saved.bill);
+        }
+        return;
+      }
       toast(action === "confirm" ? `₹${saved.pay.amount} for #${o.orderNo} confirmed` : action === "reject" ? `Told the customer the payment wasn't found` : "Refund noted");
     } catch (err) {
       toast(err.message);
@@ -193,7 +207,12 @@ export default function Orders() {
                   <b>#{o.orderNo} · {o.tableName}</b>
                   <span className="small muted">{ago(o.createdAt)}</span>
                 </div>
-                {o.customerName && <div className="small">For {o.customerName}</div>}
+                {o.customerName && (
+                  <div className="small">
+                    For <b>{o.customerName}</b>
+                    {o.customerPhone && <> · <a href={`tel:${o.customerPhone}`}>📞 {o.customerPhone}</a></>}
+                  </div>
+                )}
                 <ul className="order-items">
                   {o.items.map((i, k) => (
                     <li key={k}><b>{i.qty}×</b> {i.name}{i.variant ? ` (${i.variant})` : ""}{i.note && <div className="small muted">↳ {i.note}</div>}</li>
@@ -255,17 +274,21 @@ export default function Orders() {
           onAdd={() => (setAdding(openTable), setTableId(null))}
           onReprint={(o) => kot(o, { force: true, reprint: true })}
           onBill={isKitchen ? null : (list) => {
+            const req = list.find((o) => o.billRequest)?.billRequest;
+            // Orders paid while ordering already have their own bill: they're closed with the table, not billed again.
+            const billed = list.filter((o) => o.billClientId);
+            const toBill = list.filter((o) => !o.billClientId);
+            if (!toBill.length) return;
             const lines = new Map();
-            for (const o of list)
+            for (const o of toBill)
               for (const i of o.items) {
                 const k = `${i.itemId || i.name}|${i.variant || ""}|${i.rate}`;
                 const l = lines.get(k);
                 lines.set(k, l ? { ...l, qty: l.qty + i.qty } : { itemId: i.itemId || i.name, name: i.name, variant: i.variant || "", category: i.category || "", rate: i.rate, qty: i.qty });
               }
-            const req = list.find((o) => o.billRequest)?.billRequest;
-            // Orders already paid while ordering come off what's left to collect.
-            const paid = list.filter((o) => o.pay?.state === "paid");
-            const claimed = list.filter((o) => o.pay?.state === "claimed");
+            // Orders paid but without their own bill (older ones) come off what's left to collect.
+            const paid = toBill.filter((o) => o.pay?.state === "paid");
+            const claimed = toBill.filter((o) => o.pay?.state === "claimed");
             if (claimed.length && !confirm(`${claimed.map((o) => `#${o.orderNo}`).join(", ")} say they paid by UPI but it isn't confirmed yet. Bill anyway? (It will be collected again unless you confirm it first.)`)) return;
             nav("/", {
               state: {
@@ -273,9 +296,10 @@ export default function Orders() {
                   table: openTable.id,
                   tableName: openTable.name,
                   orderIds: list.map((o) => o.clientId),
-                  orderNos: list.map((o) => o.orderNo),
+                  orderNos: toBill.map((o) => o.orderNo),
                   lines: [...lines.values()],
                   payMode: req?.method === "upi" || req?.method === "paid" ? "upi" : req ? "cash" : undefined,
+                  customer: toBill.find((o) => o.customer)?.customer || billed.find((o) => o.customer)?.customer || null,
                   prepaid: Math.round(paid.reduce((s, o) => s + (o.pay.amount || 0), 0) * 100) / 100,
                   prepaidOrderNos: paid.map((o) => o.orderNo),
                 },
@@ -301,7 +325,9 @@ export default function Orders() {
 
 function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
   const toast = useToast();
-  const total = orders.reduce((s, o) => s + (o.total || 0), 0);
+  const unbilled = orders.filter((o) => !o.billClientId);
+  const total = unbilled.reduce((s, o) => s + (o.total || 0), 0);
+  const allPaid = orders.length > 0 && !unbilled.length;
   const move = async (o, status) => {
     try {
       await setOrderStatus(o, status);
@@ -339,11 +365,23 @@ function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
         ))}
         <div className="btn-row" style={{ justifyContent: "space-between" }}>
           <button className="btn" onClick={onAdd}>+ Add order</button>
-          {onBill && (
-            <button className="btn btn-primary" disabled={!orders.length} onClick={() => onBill(orders)}>
-              Bill {table.name} · {money(total, cur)}
-            </button>
-          )}
+          {onBill &&
+            (allPaid ? (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const cooking = orders.filter((o) => o.status !== "served");
+                  if (cooking.length && !confirm(`${cooking.map((o) => `#${o.orderNo}`).join(", ")} ${cooking.length === 1 ? "isn't" : "aren't"} served yet. Closing removes ${cooking.length === 1 ? "it" : "them"} from the kitchen screen. Close anyway?`)) return;
+                  closeTable(table.id).then(() => (toast(`${table.name} closed`), onClose()), (e) => toast(e.message));
+                }}
+              >
+                Everything is paid ✓ · Close table
+              </button>
+            ) : (
+              <button className="btn btn-primary" disabled={!orders.length} onClick={() => onBill(orders)}>
+                Bill {table.name} · {money(total, cur)}
+              </button>
+            ))}
         </div>
       </div>
     </Modal>

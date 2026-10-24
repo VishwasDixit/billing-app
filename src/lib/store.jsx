@@ -325,6 +325,8 @@ export function AppProvider({ children }) {
           total: t.total,
           paymentMode,
           status: "paid",
+          // The customer on any bill (name and phone print on it and build the customer list).
+          ...(!credit && customer ? { customer: { clientId: customer.clientId, name: customer.name, phone: customer.phone || "", address: customer.address || "", note: customer.note || "", language: customer.language || "" } } : {}),
           ...(credit
             ? {
                 customer: { clientId: customer.clientId, name: customer.name, phone: customer.phone || "", address: customer.address || "", note: customer.note || "", language: customer.language || "" },

@@ -48,7 +48,7 @@ async function shop(email, qrPayment) {
   const tea = menu.find((m) => m.name === "Tea");
   await c("PUT", `/menu/${tea.id}/stock`, { stock: 50 });
   const p = client();
-  const order = async (qty = 2) => (await p("POST", `/public/shop/${token}/orders`, { table: "T1", items: [{ itemId: tea.id, qty }] })).body;
+  const order = async (qty = 2) => (await p("POST", `/public/shop/${token}/orders`, { name: "Ravi", phone: "9876500001", table: "T1", items: [{ itemId: tea.id, qty }] })).body;
   const pay = (o, method, extra = {}) => p("POST", `/public/shop/${token}/orders/${o.orderId}/pay`, { key: o.key, method, ...extra });
   const status = async (o) => (await p("GET", `/public/shop/${token}/orders/${o.orderId}?k=${o.key}`)).body;
   const teaStock = async () => (await c("GET", "/menu")).body.find((m) => m.id === tea.id).stock;
@@ -83,25 +83,50 @@ describe("paying for QR orders", () => {
     await c("POST", `/orders/${o.orderId}/status`, { status: "accepted" });
     await c("POST", `/orders/${later.orderId}/status`, { status: "accepted" });
 
-    // The table's bill: ₹45 total, ₹30 already paid.
+    // Confirming made bill P-1 for the paid order, with the customer on it.
+    const bills = async () => (await c("GET", "/bills")).body.bills;
+    const p1 = (await bills()).find((b) => b.billNo === "P-1");
+    expect(p1).toMatchObject({ total: 30, paymentMode: "upi", orderIds: [o.orderId], customer: { name: "Ravi", phone: "9876500001" }, paymentConfirmedBy: "Owner" });
+    expect(conf.body.bill.billNo).toBe("P-1");
+    expect((await status(o)).bill).toMatchObject({ billNo: "P-1", paymentConfirmed: true });
+
+    // The table's bill covers only the unpaid order; the paid one is closed with it.
     const clientId = crypto.randomUUID();
-    await c("POST", "/bills", { bills: [{ clientId, billNo: "T-1", createdAt: new Date().toISOString(), paymentMode: "cash", orderIds: [o.orderId, later.orderId], items: [{ itemId: tea.id, name: "Tea", qty: 3, rate: 15 }] }] });
-    const bill = (await c("GET", "/bills")).body.bills.find((b) => b.clientId === clientId);
-    expect(bill.prepaid).toMatchObject({ amount: 30, orderNos: [o.orderNo] });
-    expect(bill.total).toBe(45);
-    expect((await status(o)).bill.prepaid).toBe(30);
+    await c("POST", "/bills", { bills: [{ clientId, billNo: "T-1", createdAt: new Date().toISOString(), paymentMode: "cash", orderIds: [o.orderId, later.orderId], items: [{ itemId: tea.id, name: "Tea", qty: 1, rate: 15 }] }] });
+    const tb = (await bills()).find((b) => b.clientId === clientId);
+    expect(tb.total).toBe(15);
+    expect(tb.prepaid).toBeUndefined();
+    const orders = (await c("GET", "/orders")).body.orders;
+    expect(orders.find((x) => x.clientId === o.orderId)).toMatchObject({ status: "billed", billNo: "P-1" });
+    expect(orders.find((x) => x.clientId === later.orderId)).toMatchObject({ status: "billed", billClientId: clientId });
   });
 
-  it("a fully prepaid table bill closes as paid", async () => {
-    const { c, tea, order, pay } = await shop("full@test.local", "choose");
+  it("a table where everything was paid can be closed without a new bill", async () => {
+    const { c, order, pay } = await shop("full@test.local", "choose");
     const o = await order(2);
+    const unpaid = await order(1);
     await pay(o, "upi");
     await c("POST", `/orders/${o.orderId}/payment`, { action: "confirm" });
     await c("POST", `/orders/${o.orderId}/status`, { status: "accepted" });
-    const clientId = crypto.randomUUID();
-    await c("POST", "/bills", { bills: [{ clientId, billNo: "T-2", createdAt: new Date().toISOString(), paymentMode: "cash", orderIds: [o.orderId], items: [{ itemId: tea.id, name: "Tea", qty: 2, rate: 15 }] }] });
-    const bill = (await c("GET", "/bills")).body.bills.find((b) => b.clientId === clientId);
-    expect(bill).toMatchObject({ paymentMode: "upi", paymentConfirmedBy: "Paid with order" });
+    await c("POST", `/orders/${unpaid.orderId}/status`, { status: "accepted" });
+    expect((await c("POST", "/orders/close-table", { table: "T1" })).status).toBe(409); // one still unpaid
+    await c("POST", `/orders/${unpaid.orderId}/status`, { status: "rejected" });
+    const r = await c("POST", "/orders/close-table", { table: "T1" });
+    expect(r.body.closed).toBe(1);
+  });
+
+  it("asks QR customers for their name and mobile, and adds them to the customer list", async () => {
+    const { c, token, tea } = await shop("contact@test.local", "end");
+    const p = client();
+    const send = (extra) => p("POST", `/public/shop/${token}/orders`, { table: "T1", items: [{ itemId: tea.id, qty: 1 }], ...extra });
+    expect((await send({ phone: "9876500001" })).status).toBe(400);
+    expect((await send({ name: "Ravi", phone: "12345" })).body.error).toMatch(/10-digit mobile/);
+    expect((await send({ name: "Ravi", phone: "+91 98765 00002" })).status).toBe(200);
+    expect((await send({ name: "Ravi K", phone: "09876500002" })).status).toBe(200);
+    const list = (await c("GET", "/customers")).body.customers.filter((x) => x.phone === "9876500002");
+    expect(list).toHaveLength(1); // matched by mobile, not added twice
+    const staff = (await c("GET", "/orders")).body.orders;
+    expect(staff[0]).toMatchObject({ customerName: "Ravi", customerPhone: "9876500002" });
   });
 
   it("pay first: held (no stock, can't be accepted) until the payment is confirmed", async () => {
@@ -118,8 +143,9 @@ describe("paying for QR orders", () => {
     expect((await pay(o, "counter")).body.pay).toMatchObject({ state: "due", method: "counter" });
     const conf = await c("POST", `/orders/${o.orderId}/payment`, { action: "confirm" });
     expect(conf.body).toMatchObject({ status: "accepted", pay: { state: "paid", method: "counter" } });
-    expect(await teaStock()).toBe(48);
+    expect(await teaStock()).toBe(48); // stock taken once, not again by the bill
     expect((await status(o)).status).toBe("accepted");
+    expect(conf.body.bill).toMatchObject({ billNo: "P-1", paymentMode: "cash" });
   });
 
   it("cancelling a paid order flags a refund until it's handed back", async () => {
@@ -129,6 +155,9 @@ describe("paying for QR orders", () => {
     await c("POST", `/orders/${o.orderId}/payment`, { action: "confirm" });
     const rej = await c("POST", `/orders/${o.orderId}/status`, { status: "rejected", reason: "Tea finished" });
     expect(rej.body.pay.state).toBe("refundDue");
+    const bin = (await c("GET", "/bills?bin=1")).body.bills;
+    expect(bin[0]).toMatchObject({ billNo: "P-1", deleteReason: "cancelled" });
+    expect(bin[0].deleteNote).toMatch(/refund due/);
     expect((await c("POST", `/orders/${o.orderId}/payment`, { action: "refunded" })).body.pay.state).toBe("refunded");
     expect((await pay(o, "upi")).status).toBe(409); // closed
   });

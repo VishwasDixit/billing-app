@@ -963,3 +963,7 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .upi-app.phonepe { border-color: #5f259f; }
 .upi-app.paytm { border-color: #00baf2; }
 .upi-copy { justify-self: start; }
+.co-contact { display: grid; gap: 6px; }
+.co-mini-bill { margin-top: 6px; color: var(--text); font-weight: 400; }
+.co-mini-bill .co-line-top { padding: 2px 0; }
+.cust-box { display: grid; gap: 4px; padding: 6px 0; }

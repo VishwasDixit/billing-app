@@ -279,18 +279,36 @@ export default function CustomerOrder() {
 
 function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, payRule }) {
   const [note, setOrderNote] = useState("");
-  const [name, setName] = useState("");
+  // Name and mobile are needed to order; remembered on this phone for next time.
+  const saved = (() => {
+    try {
+      return JSON.parse(localStorage.getItem("coContact") || "{}");
+    } catch {
+      return {};
+    }
+  })();
+  const [name, setName] = useState(saved.name || "");
+  const [phone, setPhone] = useState(saved.phone || "");
+  const mobile = phone.replace(/\D/g, "").replace(/^(91|0)(?=\d{10}$)/, "");
+  const contactOk = name.trim().length >= 2 && /^[6-9]\d{9}$/.test(mobile);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const place = async () => {
+    if (!contactOk) return setError(name.trim().length < 2 ? "Please enter your name." : "Please enter a 10-digit mobile number.");
     setBusy(true);
     setError("");
+    try {
+      localStorage.setItem("coContact", JSON.stringify({ name: name.trim(), phone: mobile }));
+    } catch {
+      /* private mode */
+    }
     try {
       const r = await post(`/public/shop/${token}/orders`, {
         table: table.id,
         items: lines.map((l) => ({ itemId: l.itemId, variant: l.variant, qty: l.qty, note: l.note })),
         note,
-        name,
+        name: name.trim(),
+        phone: mobile,
       });
       onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
     } catch (err) {
@@ -316,10 +334,14 @@ function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, p
           </div>
         ))}
         <input className="input" placeholder="Any other request (optional)" maxLength={160} value={note} onChange={(e) => setOrderNote(e.target.value)} />
-        <input className="input" placeholder="Your name (optional)" maxLength={40} value={name} onChange={(e) => setName(e.target.value)} />
+        <div className="co-contact">
+          <input className="input" placeholder="Your name *" autoComplete="name" maxLength={40} value={name} onChange={(e) => setName(e.target.value)} required />
+          <input className="input" placeholder="Mobile number *" type="tel" inputMode="tel" autoComplete="tel" maxLength={16} value={phone} onChange={(e) => setPhone(e.target.value)} required />
+          <span className="small muted">So the restaurant can reach you about your order.</span>
+        </div>
         <div className="co-line-top"><b>Total</b><b>{money(total, cur)}</b></div>
         {error && <div className="error">{error}</div>}
-        <button className="btn btn-primary btn-lg" disabled={busy} onClick={place}>{busy ? "Sending…" : "Place order"}</button>
+        <button className="btn btn-primary btn-lg" disabled={busy || !contactOk} onClick={place}>{busy ? "Sending…" : "Place order"}</button>
         <p className="small muted" style={{ margin: 0, textAlign: "center" }}>
           {payRule === "first" ? "Please pay after placing the order. It's cooked once the payment is confirmed." : payRule === "choose" ? "You can pay now by UPI, or at the end." : "You pay after your meal."}
         </p>
@@ -403,7 +425,22 @@ function OrderPay({ token, order, cur, upiOn, onChange }) {
     }
   };
   const link = order.upi && upiLinkFor(order.upi, p.amount ?? order.total, `Order #${order.orderNo} · ${order.tableName}`);
-  if (p.state === "paid") return <div className="co-pay paid">✅ Paid {amount}{p.method === "counter" ? " at the counter" : ""}</div>;
+  if (p.state === "paid")
+    return (
+      <div className="co-pay paid">
+        ✅ Paid {amount}{p.method === "counter" ? " at the counter" : ""}{order.bill ? ` · Bill ${order.bill.billNo}` : ""}
+        {order.bill && (
+          <details className="small co-mini-bill">
+            <summary>See bill</summary>
+            {order.bill.items.map((i, k) => (
+              <div key={k} className="co-line-top"><span>{i.qty}× {i.name}{i.variant ? ` (${i.variant})` : ""}</span><span>{money(i.amount, cur)}</span></div>
+            ))}
+            {order.bill.gst?.amount > 0 && <div className="co-line-top"><span>GST</span><span>{money(order.bill.gst.amount, cur)}</span></div>}
+            <div className="co-line-top"><b>Total</b><b>{money(order.bill.total, cur)}</b></div>
+          </details>
+        )}
+      </div>
+    );
   if (p.state === "claimed") return <div className="co-pay wait">⏳ Thanks! Waiting for the staff to confirm your {amount}.</div>;
   if (p.state === "refundDue") return <div className="co-pay wait">↩️ This order was cancelled. The shop will return your {amount}.</div>;
   if (p.state === "refunded") return <div className="co-pay">↩️ {amount} returned to you.</div>;
