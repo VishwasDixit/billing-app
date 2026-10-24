@@ -358,7 +358,14 @@ export default [
   [
     "GET",
     "/kitchen/alerts/count",
-    async ({ db, shop }) => ({ count: await db.collection("kitchenAlerts").countDocuments({ shopId: shop._id, resolvedAt: null, dismissedAt: { $exists: false }, level: { $in: ["high", "warn"] } }) }),
+    async ({ db, shop }) => {
+      const filter = { shopId: shop._id, resolvedAt: null, dismissedAt: { $exists: false }, level: { $in: ["high", "warn"] } };
+      const [count, latest] = await Promise.all([
+        db.collection("kitchenAlerts").countDocuments(filter),
+        db.collection("kitchenAlerts").findOne(filter, { sort: { updatedAt: -1 }, projection: { message: 1, type: 1 } }),
+      ]);
+      return { count, latest: latest && { message: latest.message, type: latest.type } };
+    },
     K,
   ],
   [

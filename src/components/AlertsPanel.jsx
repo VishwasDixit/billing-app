@@ -1,0 +1,101 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { get, post } from "../lib/api.js";
+import { useOrders, chime } from "../lib/orders.js";
+import { money, fmtDateTime } from "../lib/format.js";
+import { usePref } from "../lib/prefs.js";
+
+const ICON = { out: "🔴", low: "🟠", expiring: "⏳", expired: "⛔", waste: "🗑️", variance: "🔍" };
+const OPEN = ["new", "accepted", "preparing", "ready", "served"];
+
+// Things waiting on the counter: new QR orders, tables asking for the bill, UPI payments to confirm.
+function orderItems(st, isKitchen) {
+  const out = st.orders
+    .filter((o) => o.status === "new")
+    .map((o) => ({ key: "o" + o.clientId, icon: "🍽️", at: o.createdAt, text: `${o.tableName || o.table}: new ${o.source === "qr" ? "QR " : ""}order #${o.orderNo} (${o.items.reduce((s, i) => s + i.qty, 0)} items)`, to: "/orders" }));
+  if (isKitchen) return out;
+  const asked = new Map();
+  for (const o of st.orders) if (o.billRequest && OPEN.includes(o.status) && !asked.has(o.table)) asked.set(o.table, o);
+  for (const o of asked.values())
+    out.push({ key: "b" + o.table, icon: "🧾", at: o.billRequest.at, text: `${o.tableName || o.table} asks for the bill · will pay ${o.billRequest.method === "upi" ? "by UPI" : "at the counter"}`, to: "/orders" });
+  for (const c of st.paymentClaims) out.push({ key: "p" + c.clientId, icon: "💰", at: c.customerPaid?.at, text: `${c.table || "A table"} says paid ${money(c.total)} by UPI: confirm`, to: "/orders" });
+  return out;
+}
+
+export function useAlertCount(kitchenCount, isKitchen) {
+  const st = useOrders();
+  return (isKitchen ? st.waiting : st.attention) + (kitchenCount || 0);
+}
+
+// 🔔 in the top bar on wide screens.
+export function AlertsButton({ count, onClick, open }) {
+  return (
+    <button type="button" className={"alerts-btn" + (open ? " active" : "") + (count ? " has" : "")} onClick={onClick} aria-label={`Alerts${count ? `: ${count}` : ""}`}>
+      <span aria-hidden="true">🔔</span>
+      <span className="alerts-lbl">Alerts</span>
+      {count > 0 && <span className="alerts-badge">{count > 99 ? "99+" : count}</span>}
+    </button>
+  );
+}
+
+// The list: table requests first, then kitchen alerts. `sheet` = phone bottom sheet, else a dropdown.
+export function AlertsPanel({ onClose, isKitchen, sheet, onKitchenChange }) {
+  const nav = useNavigate();
+  const st = useOrders();
+  const [kitchen, setKitchen] = useState(null);
+  const [sound, setSound] = usePref("alertSound", true);
+  const load = () => get("/kitchen/alerts").then((r) => setKitchen(r.alerts), () => setKitchen([]));
+  useEffect(() => {
+    load();
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const go = (to) => (onClose(), nav(to));
+  const seen = async (a) => {
+    await post(`/kitchen/alerts/${a.id}/dismiss`).catch(() => {});
+    load();
+    onKitchenChange?.();
+  };
+  const orders = orderItems(st, isKitchen);
+
+  return (
+    <div className={sheet ? "more-back" : "alerts-back"} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={sheet ? "more-sheet alerts-sheet" : "alerts-drop"} role="dialog" aria-label="Alerts">
+        {sheet && <div className="more-grab" aria-hidden="true" />}
+        <div className="alerts-head">
+          <b>🔔 Alerts</b>
+          <button className="link-btn" onClick={onClose}>Close</button>
+        </div>
+        <div className="alerts-list">
+          {orders.length > 0 && <div className="alerts-group">Tables &amp; orders</div>}
+          {orders.map((i) => (
+            <button key={i.key} className="alerts-item" onClick={() => go(i.to)}>
+              <span aria-hidden="true">{i.icon}</span>
+              <span className="alerts-text">{i.text}</span>
+            </button>
+          ))}
+          {kitchen?.length > 0 && <div className="alerts-group">Kitchen</div>}
+          {kitchen?.map((a) => (
+            <div key={a.id} className={"alerts-item " + (a.level === "high" ? "bad" : a.level === "warn" ? "warn" : "")}>
+              <span aria-hidden="true">{ICON[a.type] || "•"}</span>
+              <button className="alerts-text link-like" onClick={() => go("/kitchen-manage?tab=alerts")}>
+                {a.message}
+                <span className="small muted"> · {fmtDateTime(a.updatedAt)}</span>
+              </button>
+              <button className="btn btn-sm btn-ghost" onClick={() => seen(a)}>Seen</button>
+            </div>
+          ))}
+          {kitchen && !kitchen.length && !orders.length && <div className="empty small">✅ All clear. Nothing needs you right now.</div>}
+          {!kitchen && <div className="empty small">Loading…</div>}
+        </div>
+        <div className="alerts-foot">
+          <label className="check small">
+            <input type="checkbox" checked={sound} onChange={(e) => (setSound(e.target.checked), e.target.checked && chime())} /> 🔊 Sound on this device
+          </label>
+          <button className="link-btn small" onClick={() => go("/kitchen-manage?tab=alerts")}>All kitchen alerts →</button>
+        </div>
+      </div>
+    </div>
+  );
+}

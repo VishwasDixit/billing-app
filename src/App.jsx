@@ -19,7 +19,8 @@ import Help from "./pages/Help.jsx";
 import CustomerOrder from "./pages/CustomerOrder.jsx";
 import Orders from "./pages/Orders.jsx";
 import Kitchen from "./pages/Kitchen.jsx";
-import { initOrders, refreshOrders, useOrders, beep } from "./lib/orders.js";
+import { initOrders, refreshOrders, useOrders, beep, chime, unlockAudio } from "./lib/orders.js";
+import { AlertsButton, AlertsPanel, useAlertCount } from "./components/AlertsPanel.jsx";
 import { useToast } from "./components/ui.jsx";
 import { signOutStaff } from "./lib/kitchen.js";
 import { get } from "./lib/api.js";
@@ -101,14 +102,33 @@ function useHelpUnread(enabled) {
 }
 
 // Number of open kitchen alerts (low stock, expiring, waste) for the More menu.
+// Checked every minute; a new one plays a chime and shows its message.
 function useKitchenAlerts(enabled) {
   const loc = useLocation();
+  const toast = useToast();
   const [n, setN] = useState(0);
+  const prev = useRef(null);
+  const check = () =>
+    get("/kitchen/alerts/count").then(
+      (r) => {
+        if (prev.current !== null && r.count > prev.current) {
+          chime();
+          if (r.latest) toast(`🔔 Kitchen: ${r.latest.message}`);
+        }
+        prev.current = r.count;
+        setN(r.count);
+      },
+      () => {}
+    );
+  useEffect(() => {
+    if (enabled) check();
+  }, [enabled, loc.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!enabled) return;
-    get("/kitchen/alerts/count").then((r) => setN(r.count), () => {});
-  }, [enabled, loc.pathname]);
-  return n;
+    const t = setInterval(() => document.visibilityState === "visible" && check(), 60000);
+    return () => clearInterval(t);
+  }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  return [n, check];
 }
 
 // Keeps table orders fresh on every screen and rings when a QR order is waiting.
@@ -142,10 +162,9 @@ function useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAle
   if (isKitchen) {
     return [
       { to: "/kitchen", ico: "🍳", label: "Board", bottom: true, top: true },
-      { to: "/kitchen-manage", ico: kitchenAlerts ? "🔔" : "🥫", label: kitchenAlerts ? `Kitchen (${kitchenAlerts})` : "Kitchen", bottom: true, top: true, alert: kitchenAlerts > 0 },
+      { to: "/kitchen-manage", ico: "🥫", label: kitchenAlerts ? `Kitchen (${kitchenAlerts})` : "Kitchen", bottom: true, top: true, alert: kitchenAlerts > 0 },
       { to: "/orders", ico: waiting ? "🔔" : "🍽️", label: waiting ? `Orders (${waiting})` : "Orders", short: waiting ? `${waiting} new` : "Orders", bottom: true, top: true, alert: waiting > 0 },
       { to: "/kitchen-manage?tab=shopping", ico: "🛒", label: "Shopping list" },
-      { to: "/kitchen-manage?tab=alerts", ico: "🔔", label: kitchenAlerts ? `Alerts (${kitchenAlerts})` : "Alerts" },
       { to: "/kitchen-manage?tab=recipes", ico: "📖", label: "Recipes" },
     ];
   }
@@ -158,7 +177,7 @@ function useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAle
     { to: "/dashboard", ico: paid ? "📊" : "🔒", label: "Dashboard", top: true },
     { to: "/expenses", ico: "💸", label: "Expenses", top: true },
     { to: "/kitchen", ico: "🍳", label: "Kitchen screen" },
-    { to: "/kitchen-manage", ico: kitchenAlerts ? "🔔" : "🥫", label: kitchenAlerts ? `Kitchen stock (${kitchenAlerts})` : "Kitchen stock", topLabel: kitchenAlerts ? `Kitchen (${kitchenAlerts})` : "Kitchen", top: true, alert: kitchenAlerts > 0 },
+    { to: "/kitchen-manage", ico: "🥫", label: kitchenAlerts ? `Kitchen stock (${kitchenAlerts})` : "Kitchen stock", topLabel: kitchenAlerts ? `Kitchen (${kitchenAlerts})` : "Kitchen", top: true, alert: kitchenAlerts > 0 },
     ...(isAdmin ? [] : [{ to: "/staff", ico: "👥", label: "Staff & salary", topLabel: "Staff", top: true }]),
     { to: "/menu", ico: "🍔", label: "Menu & stock" },
     { to: "/plans", ico: "💳", label: "Plans" },
@@ -176,7 +195,15 @@ function Shell({ children }) {
   const isKitchen = user.role === "kitchen";
   const helpUnread = useHelpUnread(!isAdmin && !isKitchen);
   const paid = access.state === "paid" || isAdmin;
-  const kitchenAlerts = useKitchenAlerts(true);
+  const [kitchenAlerts, recheckKitchen] = useKitchenAlerts(true);
+  const alertCount = useAlertCount(kitchenAlerts, isKitchen);
+  const [alertsOpen, setAlertsOpen] = useState(null); // "drop" (wide screens) | "sheet" (phones)
+  // Browsers only play sound after a tap: unlock it on the first one.
+  useEffect(() => {
+    const once = () => (unlockAudio(), window.removeEventListener("pointerdown", once));
+    window.addEventListener("pointerdown", once);
+    return () => window.removeEventListener("pointerdown", once);
+  }, []);
   const { waiting } = useOrderAlerts(shop);
   const loc = useLocation();
   const nav = useNavigate();
@@ -187,7 +214,7 @@ function Shell({ children }) {
       if (loc.pathname === "/") nav("/admin", { replace: true });
     }
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => setMoreOpen(false), [loc.pathname]);
+  useEffect(() => (setMoreOpen(false), setAlertsOpen(null)), [loc.pathname]);
   const links = useNavLinks({ isAdmin, isKitchen, paid, waiting, helpUnread, kitchenAlerts });
   if (loc.pathname === "/kitchen") return <ToastFree>{children}<StaffGate /></ToastFree>;
   const onTop = links.some((l) => l.top && !l.bottom && (loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
@@ -219,10 +246,11 @@ function Shell({ children }) {
                 </span>
               </NavLink>
             ))}
-          <button type="button" className={"more-btn" + (inMore || moreOpen ? " active" : "") + (onTop && !moreOpen ? " on-top" : "")} onClick={() => setMoreOpen(true)} aria-label="More pages">
+          <AlertsButton count={alertCount} open={alertsOpen === "drop"} onClick={() => setAlertsOpen(alertsOpen ? null : "drop")} />
+          <button type="button" className={"more-btn" + (isKitchen ? " keep" : "") + (inMore || moreOpen ? " active" : "") + (onTop && !moreOpen ? " on-top" : "")} onClick={() => setMoreOpen(true)} aria-label="More pages">
             <span className="ico" aria-hidden="true">☰</span>
             <span className="lbl">More</span>
-            {(helpUnread || (kitchenAlerts > 0 && !isKitchen)) && <span className="dot" aria-hidden="true" />}
+            {(helpUnread || alertCount > 0) && <span className="dot" aria-hidden="true" />}
           </button>
         </nav>
       </header>
@@ -231,13 +259,25 @@ function Shell({ children }) {
         <Suspense fallback={<div className="empty">Loading…</div>}>{children}</Suspense>
       </main>
       <StaffGate />
-      {moreOpen && <MoreSheet links={links.filter((l) => !l.bottom)} shop={shop} user={user} access={access} onClose={() => setMoreOpen(false)} onLogout={logout} />}
+      {moreOpen && (
+        <MoreSheet
+          links={links.filter((l) => !l.bottom)}
+          shop={shop}
+          user={user}
+          access={access}
+          alertCount={alertCount}
+          onAlerts={() => (setMoreOpen(false), setAlertsOpen("sheet"))}
+          onClose={() => setMoreOpen(false)}
+          onLogout={logout}
+        />
+      )}
+      {alertsOpen && <AlertsPanel sheet={alertsOpen === "sheet"} isKitchen={isKitchen} onKitchenChange={recheckKitchen} onClose={() => setAlertsOpen(null)} />}
     </div>
   );
 }
 
 // ☰ More: every other page as big tiles, plus the account and Log out.
-function MoreSheet({ links, shop, user, access, onClose, onLogout }) {
+function MoreSheet({ links, shop, user, access, alertCount, onAlerts, onClose, onLogout }) {
   const loc = useLocation();
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -251,6 +291,10 @@ function MoreSheet({ links, shop, user, access, onClose, onLogout }) {
       <div className="more-sheet" role="dialog" aria-label="More pages">
         <div className="more-grab" aria-hidden="true" />
         <div className="more-grid">
+          <button type="button" className={"more-tile" + (alertCount ? " alert-tile" : "")} onClick={onAlerts}>
+            <span className="more-ico" aria-hidden="true">🔔</span>
+            <span>{alertCount ? `Alerts (${alertCount})` : "Alerts"}</span>
+          </button>
           {links.map((l) => (
             <Link key={l.to} to={l.to} className={"more-tile" + (loc.pathname === l.to || loc.pathname.startsWith(l.to + "/") ? " active" : "")} onClick={onClose}>
               <span className="more-ico" aria-hidden="true">{l.ico}</span>
