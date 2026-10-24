@@ -940,8 +940,8 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .loan-card.done { opacity: .7; }
 .loan-bar { height: 8px; border-radius: 4px; background: var(--bg); overflow: hidden; }
 .loan-bar span { display: block; height: 100%; background: var(--good); }
-.pay-rows { display: grid; gap: 6px; }
-.pay-row { display: grid; grid-template-columns: auto 1fr 120px; gap: 10px; align-items: center; }
+.payall-rows { display: grid; gap: 6px; }
+.payall-row { display: grid; grid-template-columns: auto 1fr 120px; gap: 10px; align-items: center; }
 .sheet-body { min-height: min(440px, 70vh); align-content: start; }
 @media (max-width: 560px) { .stats.salary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .salary-stats .stat .value { font-size: 18px; } }
 @media (max-width: 560px) { .salary-table .hide-sm { display: none; } }
@@ -967,3 +967,7 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .co-mini-bill { margin-top: 6px; color: var(--text); font-weight: 400; }
 .co-mini-bill .co-line-top { padding: 2px 0; }
 .cust-box { display: grid; gap: 4px; padding: 6px 0; }
+/* Billing: the four payment buttons (Cash · UPI · Card · Udhar) always fit the bill panel. */
+.cart-panel .pay-row { align-items: center; flex-wrap: nowrap; }
+.cart-panel .pay-row .seg { display: flex; flex: 1; min-width: 0; max-width: 300px; }
+.cart-panel .pay-row .seg button { flex: 1 1 0; min-width: 0; padding: 7px 4px; white-space: nowrap; }

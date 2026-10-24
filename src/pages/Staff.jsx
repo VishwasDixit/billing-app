@@ -826,9 +826,9 @@ function PayAllModal({ workers, data, month, onClose, onDone }) {
   return (
     <Modal title={`Pay salaries · ${monthLabel(month)}`} onClose={onClose}>
       <div className="stack">
-        <div className="pay-rows">
+        <div className="payall-rows">
           {rows.map((r, i) => (
-            <label key={r.id} className="pay-row">
+            <label key={r.id} className="payall-row">
               <input type="checkbox" checked={r.on} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, on: e.target.checked } : x)))} />
               <span>{r.name}</span>
               <input className="input" type="number" min="0" value={r.amount} disabled={!r.on} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
