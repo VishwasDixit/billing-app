@@ -37,6 +37,19 @@ const StaffIn = z.object({
   access: z.enum(["none", "kitchen", "manager"]).optional(),
 });
 
+const Adjustment = z.object({
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  amount: z.number().refine((n) => n !== 0 && Math.abs(n) <= 1e7, "enter an amount"), // + bonus, − deduction
+  note: z.string().trim().min(2, "write a reason").max(80),
+});
+
+// The Salary expense made with a payment (linked since this version; older ones matched by details).
+async function paymentExpense(db, shop, p) {
+  if (p.expenseId) return db.collection("expenses").findOne({ _id: p.expenseId, shopId: shop._id });
+  if (p.addExpense === false) return null;
+  return db.collection("expenses").findOne({ shopId: shop._id, category: "Salary", amount: p.amount, date: p.date, note: `${p.staffName} · salary ${p.month}` });
+}
+
 export const defaultAccess = (role) => (role === "manager" || role === "waiter" ? "manager" : role === "cook" || role === "helper" ? "kitchen" : "none");
 const needsPin = (access, hasPin) => {
   if (access && access !== "none" && !hasPin) throw new HttpError(400, "Give this worker a 4-digit PIN to let them sign in.");
@@ -126,11 +139,12 @@ export default [
     async ({ db, shop, user, query }) => {
       ownerOnly(user);
       const month = Month.parse(query.month);
-      const [staff, records, advances, payments] = await Promise.all([
+      const [staff, records, advances, payments, adjustments] = await Promise.all([
         db.collection("staff").find({ shopId: shop._id }).sort({ active: -1, name: 1 }).toArray(),
         db.collection("attendance").find({ shopId: shop._id, date: { $regex: `^${month}` } }).toArray(),
         db.collection("staffAdvances").find({ shopId: shop._id, date: { $regex: `^${month}` } }).sort({ date: 1 }).toArray(),
-        db.collection("salaryPayments").find({ shopId: shop._id, month }).toArray(),
+        db.collection("salaryPayments").find({ shopId: shop._id, month }).sort({ date: 1 }).toArray(),
+        db.collection("salaryAdjustments").find({ shopId: shop._id, month }).sort({ createdAt: 1 }).toArray(),
       ]);
       const clean = ({ _id, shopId, ...x }) => ({ ...x, id: String(_id) });
       return {
@@ -139,10 +153,12 @@ export default [
         records: records.map(clean),
         advances: advances.map(clean),
         payments: payments.map(clean),
+        adjustments: adjustments.map(clean),
         salary: Object.fromEntries(
           staff.map((s) => {
             const id = String(s._id);
-            return [id, salaryFor(s, month, records.filter((r) => r.staffId === id), advances.filter((a) => a.staffId === id), payments.filter((p) => p.staffId === id))];
+            const mine = (list) => list.filter((x) => x.staffId === id);
+            return [id, salaryFor(s, month, mine(records), mine(advances), mine(payments), mine(adjustments))];
           })
         ),
       };
@@ -177,6 +193,51 @@ export default [
     },
   ],
 
+  // Many days at once: from–to for one or more workers (keeps in/out times already entered).
+  [
+    "PUT",
+    "/staff/attendance/bulk",
+    async ({ db, shop, user, body }) => {
+      ownerOnly(user);
+      const b = z
+        .object({
+          staffIds: z.array(z.string()).min(1, "choose at least one worker").max(100),
+          from: Ymd,
+          to: Ymd,
+          status: z.enum([...STATUS_IDS, "none"]),
+          skipSundays: z.boolean().optional().default(false),
+          onlyEmpty: z.boolean().optional().default(false),
+        })
+        .parse(body);
+      if (b.to < b.from) throw new HttpError(400, "The end date is before the start date.");
+      const dates = [];
+      for (let t = Date.parse(b.from + "T00:00:00Z"); t <= Date.parse(b.to + "T00:00:00Z"); t += 864e5) {
+        if (b.skipSundays && new Date(t).getUTCDay() === 0) continue;
+        dates.push(new Date(t).toISOString().slice(0, 10));
+      }
+      if (dates.length > 62) throw new HttpError(400, "Mark up to 62 days at a time.");
+      const ids = b.staffIds.filter((id) => ObjectId.isValid(id));
+      const workers = await db.collection("staff").find({ shopId: shop._id, _id: { $in: ids.map((id) => new ObjectId(id)) } }, { projection: { _id: 1 } }).toArray();
+      if (workers.length !== b.staffIds.length) throw new HttpError(404, "Worker not found.");
+      const existing = b.onlyEmpty
+        ? new Set((await db.collection("attendance").find({ shopId: shop._id, staffId: { $in: ids }, date: { $in: dates } }, { projection: { staffId: 1, date: 1 } }).toArray()).map((r) => `${r.staffId}|${r.date}`))
+        : new Set();
+      const ops = [];
+      for (const staffId of ids)
+        for (const date of dates) {
+          if (existing.has(`${staffId}|${date}`)) continue;
+          const filter = { shopId: shop._id, staffId, date };
+          ops.push(
+            b.status === "none"
+              ? { deleteOne: { filter } }
+              : { updateOne: { filter, update: { $set: { status: b.status, markedBy: user.name, updatedAt: new Date() } }, upsert: true } }
+          );
+        }
+      if (ops.length) await db.collection("attendance").bulkWrite(ops, { ordered: false });
+      return { ok: true, marked: ops.length, skipped: ids.length * dates.length - ops.length };
+    },
+  ],
+
   // ---------- Advances and salary ----------
   [
     "POST",
@@ -203,6 +264,82 @@ export default [
       return { ok: true };
     },
   ],
+  [
+    "PUT",
+    "/staff/advances/:id",
+    async ({ db, shop, user, params, body }) => {
+      ownerOnly(user);
+      const a = z
+        .object({ amount: z.number().positive().max(1e7), date: Ymd, note: z.string().trim().max(80).optional().default(""), mode: z.enum(["cash", "upi", "bank"]).default("cash") })
+        .parse(body);
+      const r = await db.collection("staffAdvances").findOneAndUpdate({ _id: oid(params.id, "Advance"), shopId: shop._id }, { $set: { ...a, updatedAt: new Date() } });
+      if (!r) throw new HttpError(404, "Advance not found.");
+      return { ok: true };
+    },
+  ],
+  // Bonus (+) or deduction (−) for a month, with a reason.
+  [
+    "POST",
+    "/staff/:id/adjustments",
+    async ({ db, shop, user, params, body }) => {
+      ownerOnly(user);
+      const a = Adjustment.parse(body);
+      const s = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
+      if (!s) throw new HttpError(404, "Worker not found.");
+      const doc = { ...a, shopId: shop._id, staffId: params.id, staffName: s.name, createdAt: new Date() };
+      doc._id = (await db.collection("salaryAdjustments").insertOne(doc)).insertedId;
+      return { ok: true, id: String(doc._id) };
+    },
+  ],
+  [
+    "PUT",
+    "/staff/adjustments/:id",
+    async ({ db, shop, user, params, body }) => {
+      ownerOnly(user);
+      const { month, ...a } = Adjustment.parse(body);
+      const r = await db.collection("salaryAdjustments").findOneAndUpdate({ _id: oid(params.id, "Adjustment"), shopId: shop._id }, { $set: { ...a, updatedAt: new Date() } });
+      if (!r) throw new HttpError(404, "Adjustment not found.");
+      return { ok: true };
+    },
+  ],
+  [
+    "DELETE",
+    "/staff/adjustments/:id",
+    async ({ db, shop, user, params }) => {
+      ownerOnly(user);
+      const { deletedCount } = await db.collection("salaryAdjustments").deleteOne({ _id: oid(params.id, "Adjustment"), shopId: shop._id });
+      if (!deletedCount) throw new HttpError(404, "Adjustment not found.");
+      return { ok: true };
+    },
+  ],
+  // Fix or remove a salary payment; its Salary expense follows.
+  [
+    "PUT",
+    "/staff/payments/:id",
+    async ({ db, shop, user, params, body }) => {
+      ownerOnly(user);
+      const p = z.object({ amount: z.number().positive().max(1e7), date: Ymd, mode: z.enum(["cash", "upi", "bank"]).default("cash") }).parse(body);
+      const before = await db.collection("salaryPayments").findOne({ _id: oid(params.id, "Payment"), shopId: shop._id });
+      if (!before) throw new HttpError(404, "Payment not found.");
+      await db.collection("salaryPayments").updateOne({ _id: before._id }, { $set: { ...p, updatedAt: new Date() } });
+      const exp = await paymentExpense(db, shop, before);
+      if (exp) await db.collection("expenses").updateOne({ _id: exp._id }, { $set: { amount: p.amount, date: p.date, paymentMode: p.mode, updatedAt: new Date() } });
+      return { ok: true, expenseUpdated: !!exp };
+    },
+  ],
+  [
+    "DELETE",
+    "/staff/payments/:id",
+    async ({ db, shop, user, params }) => {
+      ownerOnly(user);
+      const before = await db.collection("salaryPayments").findOne({ _id: oid(params.id, "Payment"), shopId: shop._id });
+      if (!before) throw new HttpError(404, "Payment not found.");
+      const exp = await paymentExpense(db, shop, before);
+      await db.collection("salaryPayments").deleteOne({ _id: before._id });
+      if (exp) await db.collection("expenses").deleteOne({ _id: exp._id });
+      return { ok: true, expenseRemoved: !!exp };
+    },
+  ],
   // Records a salary payment for the month; optionally adds it to Expenses so profit includes it.
   [
     "POST",
@@ -214,13 +351,16 @@ export default [
         .parse(body);
       const s = await db.collection("staff").findOne({ _id: oid(params.id), shopId: shop._id });
       if (!s) throw new HttpError(404, "Worker not found.");
-      await db.collection("salaryPayments").insertOne({ ...p, shopId: shop._id, staffId: params.id, staffName: s.name, createdAt: new Date() });
+      let expenseId;
       if (p.addExpense) {
-        await db.collection("expenses").insertOne({
-          shopId: shop._id, date: p.date, category: "Salary", amount: p.amount, note: `${s.name} · salary ${p.month}`,
-          paymentMode: p.mode === "bank" ? "bank" : p.mode, createdAt: new Date(),
-        });
+        expenseId = (
+          await db.collection("expenses").insertOne({
+            shopId: shop._id, date: p.date, category: "Salary", amount: p.amount, note: `${s.name} · salary ${p.month}`,
+            paymentMode: p.mode === "bank" ? "bank" : p.mode, createdAt: new Date(), addedBy: user.name,
+          })
+        ).insertedId;
       }
+      await db.collection("salaryPayments").insertOne({ ...p, shopId: shop._id, staffId: params.id, staffName: s.name, createdAt: new Date(), ...(expenseId && { expenseId }) });
       return { ok: true };
     },
   ],

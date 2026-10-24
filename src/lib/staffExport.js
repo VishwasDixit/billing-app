@@ -3,7 +3,7 @@ import { ATTENDANCE, daysInMonth } from "../../shared/salary.js";
 
 const monthName = (m) => new Date(m + "-01T12:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
-export async function salarySlipPdf(shop, worker, s, records) {
+export async function salarySlipPdf(shop, worker, s, records, adjustments = []) {
   const [{ jsPDF }, { autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
   const doc = new jsPDF({ unit: "mm", format: "a5" });
   doc.setFontSize(14);
@@ -30,6 +30,7 @@ export async function salarySlipPdf(shop, worker, s, records) {
       ["Paid days", `${s.paidDays} of ${s.daysInMonth}`],
       ["Earned", rs(s.earned)],
       ["Overtime", `${s.otHours} h · ${rs(s.overtime)}`],
+      ...adjustments.map((a) => [a.amount > 0 ? `Bonus: ${a.note}` : `Deduction: ${a.note}`, `${a.amount > 0 ? "+" : "-"} ${rs(Math.abs(a.amount))}`]),
       ["Advances taken", `- ${rs(s.advance)}`],
       ["Already paid", `- ${rs(s.paid)}`],
       [{ content: "Payable", styles: { fontStyle: "bold" } }, { content: rs(s.payable), styles: { fontStyle: "bold" } }],
@@ -46,7 +47,7 @@ export async function salarySlipPdf(shop, worker, s, records) {
   doc.save(`${worker.name.replace(/\W+/g, "-")}-salary-${s.month}.pdf`);
 }
 
-export async function monthSheetExcel(shop, month, staff, records, salary) {
+export async function monthSheetExcel(shop, month, staff, records, salary, adjustments = []) {
   const { default: writeExcelFile } = await import("write-excel-file/browser");
   const dim = daysInMonth(month);
   const days = Array.from({ length: dim }, (_, i) => String(i + 1));
@@ -58,14 +59,24 @@ export async function monthSheetExcel(shop, month, staff, records, salary) {
     }),
   ];
   const pay = [
-    ["Worker", "Role", "Wage", "Type", "Paid days", "Earned", "OT hours", "Overtime", "Advances", "Paid", "Payable"].map((v) => ({ value: v, fontWeight: "bold" })),
+    ["Worker", "Role", "Wage", "Type", "Paid days", "Earned", "OT hours", "Overtime", "Bonus", "Deductions", "Advances", "Paid", "Payable"].map((v) => ({ value: v, fontWeight: "bold" })),
     ...staff.map((w) => {
       const s = salary[w.id];
-      return [w.name, w.role, w.wage, w.wageType, s.paidDays, s.earned, s.otHours, s.overtime, s.advance, s.paid, s.payable];
+      return [w.name, w.role, w.wage, w.wageType, s.paidDays, s.earned, s.otHours, s.overtime, s.bonus || 0, s.deduction || 0, s.advance, s.paid, s.payable];
     }),
   ];
   await writeExcelFile([
     { sheet: "Attendance", data: att, stickyRowsCount: 1, columns: [{ width: 16 }, ...days.map(() => ({ width: 4 })), { width: 10 }] },
     { sheet: "Salary", data: pay, stickyRowsCount: 1, columns: pay[0].map(() => ({ width: 12 })) },
+    ...(adjustments.length
+      ? [{
+          sheet: "Bonus & deductions",
+          data: [
+            ["Worker", "Type", "Reason", "Amount"].map((v) => ({ value: v, fontWeight: "bold" })),
+            ...adjustments.map((a) => [staff.find((w) => w.id === a.staffId)?.name || a.staffName, a.amount > 0 ? "Bonus" : "Deduction", a.note, a.amount]),
+          ],
+          columns: [{ width: 16 }, { width: 12 }, { width: 28 }, { width: 12 }],
+        }]
+      : []),
   ]).toFile(`${shop.name.replace(/\W+/g, "-")}-staff-${month}.xlsx`);
 }

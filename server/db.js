@@ -59,6 +59,7 @@ async function ensureIndexes(db) {
     db.collection("attendance").createIndex({ shopId: 1, date: 1 }),
     db.collection("staffAdvances").createIndex({ shopId: 1, staffId: 1, date: 1 }),
     db.collection("salaryPayments").createIndex({ shopId: 1, staffId: 1, month: 1 }),
+    db.collection("salaryAdjustments").createIndex({ shopId: 1, staffId: 1, month: 1 }),
     db.collection("counters").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     db.collection("shops").createIndex({ orderToken: 1 }, { unique: true, partialFilterExpression: { orderToken: { $type: "string" } } }),
     db.collection("helpThreads").createIndex({ unreadByAdmin: -1, updatedAt: -1 }),

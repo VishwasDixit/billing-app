@@ -884,3 +884,40 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .staff-code-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .staff-code { font-size: 28px; font-weight: 800; letter-spacing: .25em; font-family: ui-monospace, monospace; }
 .plain-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+/* ---------- Attendance timeline ---------- */
+.month-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.month-bar b { min-width: 130px; text-align: center; font-size: 16px; }
+.brush-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.brush { min-width: 40px; height: 36px; padding: 0 10px; border-radius: 10px; border: 1.5px solid var(--border); background: var(--panel); color: var(--text); font: inherit; font-weight: 700; font-size: 13px; cursor: pointer; }
+.brush.on { outline: 3px solid var(--accent); outline-offset: 1px; }
+.brush.present, .tl-cell.present { background: #dcfce7; color: #166534; border-color: #86efac; }
+.brush.half, .tl-cell.half { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.brush.absent, .tl-cell.absent { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.brush.leave, .tl-cell.leave { background: #ede9fe; color: #5b21b6; border-color: #c4b5fd; }
+.brush.paidleave, .tl-cell.paidleave { background: #e0f2fe; color: #075985; border-color: #7dd3fc; }
+.brush.weekoff, .tl-cell.weekoff { background: #e5e7eb; color: #374151; border-color: #d1d5db; }
+:root[data-theme="dark"] .tl-cell.present, :root[data-theme="dark"] .brush.present { background: #14532d; color: #bbf7d0; }
+:root[data-theme="dark"] .tl-cell.half, :root[data-theme="dark"] .brush.half { background: #78350f; color: #fde68a; }
+:root[data-theme="dark"] .tl-cell.absent, :root[data-theme="dark"] .brush.absent { background: #7f1d1d; color: #fecaca; }
+:root[data-theme="dark"] .tl-cell.leave, :root[data-theme="dark"] .brush.leave { background: #4c1d95; color: #ddd6fe; }
+:root[data-theme="dark"] .tl-cell.paidleave, :root[data-theme="dark"] .brush.paidleave { background: #0c4a6e; color: #bae6fd; }
+:root[data-theme="dark"] .tl-cell.weekoff, :root[data-theme="dark"] .brush.weekoff { background: #374151; color: #e5e7eb; }
+.timeline-wrap { padding: 0; overflow-x: auto; -webkit-user-select: none; user-select: none; }
+.timeline-wrap.drag .tl-cell { touch-action: none; }
+.timeline { border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+.timeline th { font-weight: 600; color: var(--muted); padding: 4px 0; min-width: 30px; text-align: center; line-height: 1.2; }
+.timeline th.sun { color: var(--danger); }
+.timeline th.today { color: var(--accent); }
+.tl-wd { display: block; font-size: 10px; font-weight: 500; }
+.tl-name { position: sticky; left: 0; z-index: 2; background: var(--panel); text-align: left !important; padding: 4px 8px !important; min-width: 96px; max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-cell { width: 30px; height: 32px; text-align: center; font-weight: 700; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); cursor: pointer; position: relative; }
+.tl-cell.sun:not(.present):not(.half):not(.absent):not(.leave):not(.paidleave):not(.weekoff) { background: repeating-linear-gradient(135deg, var(--bg), var(--bg) 4px, var(--border) 4px, var(--border) 5px); }
+.tl-cell.today { box-shadow: inset 0 0 0 2px var(--accent); }
+.tl-cell.future { opacity: .35; cursor: default; }
+.tl-cell sup { position: absolute; top: 1px; right: 3px; font-size: 10px; }
+.tl-sum { padding: 4px 8px !important; white-space: nowrap; text-align: left !important; }
+/* Salary entries you can tap to fix */
+.money-list { display: grid; gap: 4px; }
+.money-item { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.money-item:hover { border-color: var(--accent); }

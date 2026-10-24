@@ -17,7 +17,8 @@ const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 // staff: { wageType: "monthly" | "daily", wage, otRate }
 // records: that worker's attendance for the month; advances / payments: amounts given that month.
-export function salaryFor(staff, month, records, advances = [], payments = []) {
+// adjustments: bonus (+) or deduction (−) entries for the month.
+export function salaryFor(staff, month, records, advances = [], payments = [], adjustments = []) {
   const count = Object.fromEntries(STATUS_IDS.map((s) => [s, 0]));
   let otHours = 0;
   for (const r of records) {
@@ -35,6 +36,8 @@ export function salaryFor(staff, month, records, advances = [], payments = []) {
   const overtime = r2(otHours * (Number(staff.otRate) || 0));
   const advance = r2(advances.reduce((s, a) => s + (Number(a.amount) || 0), 0));
   const paid = r2(payments.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+  const bonus = r2(adjustments.filter((a) => a.amount > 0).reduce((s, a) => s + a.amount, 0));
+  const deduction = r2(adjustments.filter((a) => a.amount < 0).reduce((s, a) => s - a.amount, 0));
   return {
     month,
     daysInMonth: dim,
@@ -46,9 +49,11 @@ export function salaryFor(staff, month, records, advances = [], payments = []) {
     earned,
     otHours,
     overtime,
-    gross: r2(earned + overtime),
+    gross: r2(earned + overtime + bonus - deduction),
+    bonus,
+    deduction,
     advance,
     paid,
-    payable: r2(earned + overtime - advance - paid),
+    payable: r2(earned + overtime + bonus - deduction - advance - paid),
   };
 }
