@@ -416,6 +416,10 @@ function QrSettings({ f, set, toast }) {
       <Field label="Shop UPI ID" hint="Used for the bill QR and in udhar reminders so customers can pay you directly.">
         <input maxLength={60} placeholder="e.g. grillhive@okaxis" value={f.upiId} onChange={(e) => set("upiId", e.target.value.trim())} />
       </Field>
+      <p className="hint" style={{ margin: "-6px 0 0" }}>
+        💡 Use a <b>business UPI ID</b> (PhonePe Business, Paytm for Business or Google Pay for Business). Payment apps often block or limit
+        payments with the amount filled in when they go to a personal UPI ID ("declined for security reasons"). Business IDs also work with a soundbox.
+      </p>
       <Seg
         value={f.qrMode}
         onChange={(v) => set("qrMode", v)}

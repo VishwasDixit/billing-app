@@ -318,6 +318,51 @@ const upiLinkFor = (upi, amount, note) =>
     .toString()
     .replace(/\+/g, "%20");
 
+// One button per UPI app. The plain upi:// link lets the phone pick, and phones often stick to one
+// app (WhatsApp, or on iPhone whichever installed last), so each app gets its own button.
+const isIOS = () => !/Android/i.test(navigator.userAgent) && (/iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+function upiApps(link) {
+  const q = link.slice(link.indexOf("?") + 1);
+  return [
+    { id: "gpay", label: "Google Pay", icon: "🟢", href: `${isIOS() ? "gpay" : "tez"}://upi/pay?${q}` },
+    { id: "phonepe", label: "PhonePe", icon: "🟣", href: `phonepe://pay?${q}` },
+    { id: "paytm", label: "Paytm", icon: "🔵", href: `paytmmp://pay?${q}` },
+    { id: "other", label: "Other UPI app", icon: "📱", href: link },
+  ];
+}
+
+function PayWithApps({ link, amount, upiId }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () =>
+    navigator.clipboard?.writeText(upiId).then(
+      () => (setCopied(true), setTimeout(() => setCopied(false), 2000)),
+      () => {}
+    );
+  return (
+    <div className="stack">
+      <div className="small"><b>Pay {amount} with</b></div>
+      <div className="upi-apps">
+        {upiApps(link).map((a) => (
+          <a key={a.id} className={"upi-app " + a.id} href={a.href}>
+            <span aria-hidden="true">{a.icon}</span>
+            {a.label}
+          </a>
+        ))}
+      </div>
+      <div className="small muted">Nothing opened? Try another app, scan the QR, or pay to the UPI ID.</div>
+      <details className="small">
+        <summary>Paying from another phone? Show QR</summary>
+        <div className="co-qr" dangerouslySetInnerHTML={{ __html: qrSvg(link, 200) }} />
+      </details>
+      {upiId && (
+        <button type="button" className="btn btn-sm btn-ghost upi-copy" onClick={copy}>
+          {copied ? "✓ Copied" : `📋 Copy UPI ID · ${upiId}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Paying for one order while ordering (when the shop allows it): UPI now, at the counter, or at the end.
 function OrderPay({ token, order, cur, upiOn, onChange }) {
   const p = order.pay;
@@ -351,7 +396,7 @@ function OrderPay({ token, order, cur, upiOn, onChange }) {
       <div className="co-pay small">
         You'll pay at the end.{" "}
         {p.rule === "choose" && upiOn && <button className="link-btn" onClick={() => setOpen(true)}>Pay now instead</button>}
-        {open && <UpiPanel link={link} amount={amount} utr={utr} setUtr={setUtr} busy={busy} error={error} onPaid={() => send("upi")} />}
+        {open && <UpiPanel link={link} upiId={order.upi?.id} amount={amount} utr={utr} setUtr={setUtr} busy={busy} error={error} onPaid={() => send("upi")} />}
       </div>
     );
   }
@@ -362,7 +407,7 @@ function OrderPay({ token, order, cur, upiOn, onChange }) {
       {p.state === "due" && <b className="small">💳 Please pay {amount} to send this order to the kitchen.</b>}
       {p.state === "due" && p.method === "counter" && <div className="small">💵 Pay {amount} at the counter. Your order is cooked once the staff confirm it.</div>}
       {upiOn && link && !open && <button className="btn btn-primary" disabled={busy} onClick={() => setOpen(true)}>📱 Pay {amount} now (UPI)</button>}
-      {open && <UpiPanel link={link} amount={amount} utr={utr} setUtr={setUtr} busy={busy} error={error} onPaid={() => send("upi")} />}
+      {open && <UpiPanel link={link} upiId={order.upi?.id} amount={amount} utr={utr} setUtr={setUtr} busy={busy} error={error} onPaid={() => send("upi")} />}
       <div className="btn-row">
         {p.state === "due" && p.method !== "counter" && <button className="btn btn-sm" disabled={busy} onClick={() => send("counter")}>💵 Pay at the counter</button>}
         {p.state === "choose" && <button className="btn btn-sm" disabled={busy} onClick={() => send("end")}>Pay at the end</button>}
@@ -372,14 +417,10 @@ function OrderPay({ token, order, cur, upiOn, onChange }) {
   );
 }
 
-function UpiPanel({ link, amount, utr, setUtr, busy, error, onPaid }) {
+function UpiPanel({ link, upiId, amount, utr, setUtr, busy, error, onPaid }) {
   return (
     <div className="stack co-upi">
-      <a className="btn btn-primary" href={link}>Open UPI app · {amount}</a>
-      <details className="small">
-        <summary>Paying from another phone? Show QR</summary>
-        <div className="co-qr" dangerouslySetInnerHTML={{ __html: qrSvg(link, 200) }} />
-      </details>
+      <PayWithApps link={link} amount={amount} upiId={upiId} />
       <input className="input" placeholder="UPI reference no. (optional)" maxLength={30} value={utr} onChange={(e) => setUtr(e.target.value.replace(/\s/g, ""))} />
       {error && <div className="error small">{error}</div>}
       <button className="btn" disabled={busy} onClick={onPaid}>{busy ? "Sending…" : "✔️ I have paid"}</button>
@@ -511,11 +552,7 @@ function BillCard({ token, order, cur, onChange }) {
           <div className="co-note">⏳ Thanks! Waiting for the shop to confirm your payment.</div>
         ) : (
           <div className="stack">
-            <a className="btn btn-primary btn-lg" href={upiLink}>Pay {money(balance, cur)} with UPI app</a>
-            <details className="small">
-              <summary>Paying from another phone? Show QR</summary>
-              <div className="co-qr" dangerouslySetInnerHTML={{ __html: qrSvg(upiLink, 200) }} />
-            </details>
+            <PayWithApps link={upiLink} amount={money(balance, cur)} upiId={order.upi?.id} />
             <input className="input" placeholder="UPI reference no. (optional)" maxLength={30} value={utr} onChange={(e) => setUtr(e.target.value.replace(/\s/g, ""))} />
             {error && <div className="error">{error}</div>}
             <button className="btn btn-lg" disabled={busy} onClick={paidClaim}>{busy ? "Sending…" : "✔️ I have paid"}</button>
