@@ -95,19 +95,20 @@ export function salaryFor(staff, month, records, advances = [], payments = [], a
     ? STATUS_IDS.reduce((s, k) => s + count[k] * (basis === 26 && k === "weekoff" ? 0 : ATTENDANCE[k].pay), 0)
     : count.present + count.half * 0.5;
   const perDay = monthly ? wage / basis : wage;
-  const earned = r2(monthly && basis !== dim ? Math.min(wage, perDay * paidDays) : perDay * paidDays);
+  // Salaries are paid in whole rupees, so paise never pile up month after month.
+  const earned = Math.round(monthly && basis !== dim ? Math.min(wage, perDay * paidDays) : perDay * paidDays);
   const shiftHours = staff.shiftStart && staff.shiftEnd ? (((Date.parse(`2000-01-01T${staff.shiftEnd}`) - Date.parse(`2000-01-01T${staff.shiftStart}`)) / 36e5 + 24) % 24) || 8 : 8;
   const otRate = Number(staff.otRate) || (settings.otAuto ? perDay / shiftHours : 0);
-  const overtime = r2(otHours * otRate);
+  const overtime = Math.round(otHours * otRate);
   const advance = r2(advances.reduce((s, a) => s + (Number(a.amount) || 0), 0));
   const paid = r2(payments.reduce((s, p) => s + (Number(p.amount) || 0), 0));
   const bonus = r2(adjustments.filter((a) => a.amount > 0).reduce((s, a) => s + a.amount, 0));
   const deduction = r2(adjustments.filter((a) => a.amount < 0).reduce((s, a) => s - a.amount, 0));
   const loans = (opts.loans || []).map((l) => ({ id: l.id, note: l.note, ...loanFor(l, month) })).filter((l) => l.cut > 0);
   const loanCut = r2(loans.reduce((s, l) => s + l.cut, 0));
-  const previousBalance = r2(opts.previousBalance || 0);
+  const previousBalance = Math.round(opts.previousBalance || 0) || 0;
   // This month on its own (what moves the running balance), and what's left to pay including earlier months.
-  const net = r2(earned + overtime + bonus - deduction - loanCut - advance - paid);
+  const net = Math.round(earned + overtime + bonus - deduction - loanCut - advance - paid) || 0; // whole rupees (no −0)
   return {
     month,
     wage,
@@ -132,6 +133,6 @@ export function salaryFor(staff, month, records, advances = [], payments = [], a
     paid,
     net,
     previousBalance,
-    payable: r2(previousBalance + net),
+    payable: Math.round(previousBalance + net) || 0,
   };
 }

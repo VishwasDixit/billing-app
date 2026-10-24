@@ -115,6 +115,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .table tr.click { cursor: pointer; }
 .table tr.click:hover td { background: #fafbfc; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table th.num { text-align: right; } /* headings line up with their numbers */
 .table-wrap { overflow-x: auto; }
 
 /* ---------- Modal ---------- */
@@ -944,3 +945,6 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .sheet-body { min-height: min(440px, 70vh); align-content: start; }
 @media (max-width: 560px) { .stats.salary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .salary-stats .stat .value { font-size: 18px; } }
 @media (max-width: 560px) { .salary-table .hide-sm { display: none; } }
+.salary-table th:first-child { width: 34%; }
+.salary-table .st-col { width: 1%; white-space: nowrap; padding-left: 16px; }
+.salary-table td.num, .salary-table th.num { padding-left: 16px; }

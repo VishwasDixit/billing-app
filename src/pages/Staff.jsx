@@ -570,7 +570,7 @@ function Salary({ data, month, onChange }) {
         <div className="card table-wrap" style={{ padding: 0 }}>
           <table className="table salary-table">
             <thead>
-              <tr><th>Worker</th><th className="num">Days</th><th className="num hide-sm">Earned</th><th className="num hide-sm">Cuts</th><th className="num hide-sm">Earlier</th><th className="num">Payable</th><th></th></tr>
+              <tr><th>Worker</th><th className="num">Days</th><th className="num hide-sm">Earned</th><th className="num hide-sm">Cuts</th><th className="num hide-sm">Earlier</th><th className="num">Payable</th><th className="st-col">Status</th></tr>
             </thead>
             <tbody>
               {workers.map((w) => {
@@ -585,7 +585,7 @@ function Salary({ data, month, onChange }) {
                     <td className="num hide-sm">{cuts ? `− ${money(cuts)}` : "—"}</td>
                     <td className="num hide-sm">{s.previousBalance ? money(s.previousBalance) : "—"}</td>
                     <td className="num"><b>{money(s.payable)}</b>{s.paid ? <div className="small muted">paid {money(s.paid)}</div> : null}</td>
-                    <td><span className={"tag " + cls}>{label}</span></td>
+                    <td className="st-col"><span className={"tag " + cls}>{label}</span></td>
                   </tr>
                 );
               })}

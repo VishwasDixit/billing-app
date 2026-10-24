@@ -2,7 +2,9 @@ export const num2 = (n) => (Math.round((Number(n) + Number.EPSILON) * 100) / 100
 
 export function money(n, currency = "₹") {
   const v = Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-  return currency + v.toLocaleString("en-IN", { minimumFractionDigits: v % 1 ? 2 : 0, maximumFractionDigits: 2 });
+  const a = Math.abs(v);
+  // Minus before the ₹ sign: −₹250, not ₹-250.
+  return (v < 0 ? "−" : "") + currency + a.toLocaleString("en-IN", { minimumFractionDigits: a % 1 ? 2 : 0, maximumFractionDigits: 2 });
 }
 
 // Today's date in India as YYYY-MM-DD.
