@@ -971,3 +971,28 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .cart-panel .pay-row { align-items: center; flex-wrap: nowrap; }
 .cart-panel .pay-row .seg { display: flex; flex: 1; min-width: 0; max-width: 300px; }
 .cart-panel .pay-row .seg button { flex: 1 1 0; min-width: 0; padding: 7px 4px; white-space: nowrap; }
+
+/* Promo codes (Settings) */
+.promo-list { display: grid; gap: 8px; }
+.promo-row { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.promo-main { display: grid; gap: 2px; min-width: 0; }
+.promo-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.promo-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
+.promo-row .btn-row { flex-wrap: nowrap; flex: none; }
+.day-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 520px) { .promo-row { flex-direction: column; } }
+
+/* Promo codes on the customer page */
+.co-offers { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; scrollbar-width: none; }
+.co-offer { flex: 0 0 auto; max-width: 240px; display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); color: var(--text); cursor: pointer; font: inherit; }
+.co-offer[aria-pressed="true"] { border-style: solid; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+.co-offer span { font-size: 13px; }
+.co-offer small { font-size: 12px; color: var(--muted); }
+.co-offer .co-offer-use { color: var(--accent); font-weight: 600; }
+.co-promo { display: grid; gap: 6px; }
+.co-promo-row { display: flex; gap: 6px; }
+.co-promo-row .input { flex: 1; min-width: 0; text-transform: uppercase; }
+.table-tools { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.table-tools .input { flex: 1 1 200px; max-width: 320px; }
+.pay-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.bill-opts .promo-on { align-items: center; }

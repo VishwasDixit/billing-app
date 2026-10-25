@@ -8,6 +8,8 @@ import { dayRange } from "./analytics.js";
 import { markOrdersBilled } from "./orders.js";
 import { takeStock, putBackStock } from "../stock.js";
 import { bump, hitsOf } from "../limits.js";
+import { reservePromo } from "./promos.js";
+import { cleanCode } from "../../shared/promo.js";
 import bcrypt from "bcryptjs";
 
 const BillIn = z.object({
@@ -39,9 +41,17 @@ const BillIn = z.object({
   // Billing a table: which table, and the orders this bill pays for.
   table: z.string().trim().max(30).optional(),
   orderIds: z.array(z.string().uuid()).max(100).optional(),
+  // The promo code behind the discount: applied at Billing, or from the table's QR orders.
+  promo: z.object({ code: z.string().trim().max(60), source: z.enum(["billing", "orders", "qr"]).default("billing") }).optional(),
 });
 
 export const MAX_BACKDATE_DAYS = 90;
+
+// The staff already gave the discount (maybe offline), so the use is counted even past a limit.
+async function countBillPromo(db, shop, bill) {
+  const p = await db.collection("promos").findOne({ shopId: shop._id, code: cleanCode(bill.promo.code), archived: { $ne: true } });
+  if (p) await reservePromo(db, p, { ref: bill.clientId, phone: bill.customer?.phone || "", amount: bill.discount.amount, force: true });
+}
 
 // ---------- Changing saved bills ----------
 // Nothing disappears silently: every edit, delete and restore is kept on the bill and in a
@@ -209,6 +219,7 @@ export default [
           ...(prepaid && { prepaid }),
           ...(fullyPrepaid && { paymentConfirmedAt: new Date(), paymentConfirmedBy: "Paid with order" }),
           ...(b.customer ? { customer: { clientId: b.customer.clientId, name: b.customer.name, phone: b.customer.phone } } : {}),
+          ...(b.promo && t.discount.amount > 0 && { promo: b.promo }),
           status: "paid",
         };
         if (b.customer) await upsertCustomer(db, shop._id, b.customer);
@@ -217,6 +228,8 @@ export default [
           await markOrdersBilled(db, shop._id, b.orderIds, b.clientId);
           // Counter bills take stock now; table bills already did when their orders went to the kitchen.
           if (!b.orderIds?.length && b.status !== "void") await takeStock(db, shop._id, b.items, { billId: b.clientId });
+          // A code applied at Billing counts one use (QR order codes were counted with the order).
+          if (doc.promo?.source === "billing") await countBillPromo(db, shop, doc);
           results.push({ clientId: b.clientId, ok: true });
         } catch (err) {
           if (err.code === 11000) results.push({ clientId: b.clientId, ok: true, duplicate: true });
@@ -289,7 +302,8 @@ export default [
       };
       const updated = await db.collection("bills").findOneAndUpdate(
         { _id: b._id, status: "paid" },
-        { $set: next, $push: { revisions: { at, by: user.name, action: "edit", reason: e.reason, reasonLabel: EDIT_REASONS[e.reason], note: e.note, before: snapshot(b) } } },
+        // A promo label only while there's still a discount.
+        { $set: next, ...(!(t.discount.amount > 0) && b.promo && { $unset: { promo: "" } }), $push: { revisions: { at, by: user.name, action: "edit", reason: e.reason, reasonLabel: EDIT_REASONS[e.reason], note: e.note, before: snapshot(b) } } },
         { returnDocument: "after" }
       );
       if (!updated) throw new HttpError(409, "This bill was already changed. Refresh and try again.");

@@ -1,8 +1,9 @@
 import { useEffect, useReducer, useState } from "react";
 import { Link } from "react-router-dom";
 import { useApp, accessState } from "../lib/store.jsx";
-import { post, put } from "../lib/api.js";
-import { fmtDate } from "../lib/format.js";
+import { del, get, post, put } from "../lib/api.js";
+import { fmtDate, money } from "../lib/format.js";
+import { promoSummary, DAY_NAMES, cleanCode } from "../../shared/promo.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { PAPER } from "../printer/receipt.js";
 import { printTest, warmLogo } from "../printer/index.js";
@@ -192,6 +193,7 @@ export default function Settings() {
 
           {user.role !== "admin" && <KitchenStaffCard />}
           <BillSafetyCard />
+          <PromosCard />
 
           <section className="card stack">
             <h2>Appearance</h2>
@@ -291,6 +293,10 @@ async function checkForUpdate(toast) {
   }
 }
 
+const MAX_TABLES = 1000;
+const PAGE = 50;
+const QR_BATCH = 60; // 10 pages of QR codes per PDF, so big shops don't freeze the phone
+
 // Tables for table orders, the customer QR codes, and KOT printing on this device.
 function TablesCard({ f, set, shop, saveShop, dirty, access }) {
   const toast = useToast();
@@ -298,16 +304,25 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
   const [kotCopies, setKotCopies] = usePref("kotCopies", 1);
   const { busy, error, run } = useAction();
   const tables = f.tables;
-  const nextId = () => `T${Math.max(0, ...tables.map((t) => Number(String(t.id).replace(/\D/g, "")) || 0)) + 1}`;
+  const [q, setQ] = useState("");
+  const [shown, setShown] = useState(PAGE);
+  const [range, setRange] = useState(0);
+  const idNum = (t) => Number(String(t.id).replace(/\D/g, "")) || 0;
+  const nextId = () => `T${tables.reduce((m, t) => Math.max(m, idNum(t)), 0) + 1}`;
   const setCount = (n) => {
-    n = Math.max(0, Math.min(100, Math.floor(Number(n) || 0)));
+    n = Math.max(0, Math.min(MAX_TABLES, Math.floor(Number(n) || 0)));
     const next = tables.slice(0, n);
+    let last = next.reduce((m, t) => Math.max(m, idNum(t)), 0);
     while (next.length < n) {
-      const id = `T${Math.max(0, ...next.map((t) => Number(String(t.id).replace(/\D/g, "")) || 0)) + 1}`;
-      next.push({ id, name: `Table ${id.slice(1)}` });
+      last += 1;
+      next.push({ id: `T${last}`, name: `Table ${last}` });
     }
     set("tables", next);
   };
+  // Many tables: search, and 50 at a time.
+  const listed = tables.map((t, i) => [t, i]).filter(([t]) => !q || t.name.toLowerCase().includes(q.toLowerCase()) || t.id.toLowerCase() === q.toLowerCase());
+  const qrBatches = [];
+  for (let i = 0; i < (shop.tables || []).length; i += QR_BATCH) qrBatches.push([i, Math.min(i + QR_BATCH, shop.tables.length)]);
   const rename = (i, name) => set("tables", tables.map((t, j) => (j === i ? { ...t, name } : t)));
   const remove = (i) => set("tables", tables.filter((_, j) => j !== i));
   const paid = access.state === "paid" || access.state === "admin";
@@ -319,18 +334,28 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
       <p className="small muted" style={{ margin: 0 }}>Take orders by table, print KOTs for the kitchen, and bill each table at the end. Works offline too.</p>
       <div className="grid2">
         <Field label="Number of tables">
-          <input type="number" min="0" max="100" inputMode="numeric" value={tables.length} onChange={(e) => setCount(e.target.value)} />
+          <input type="number" min="0" max={MAX_TABLES} inputMode="numeric" value={tables.length} onChange={(e) => setCount(e.target.value)} />
         </Field>
+        {tables.length > PAGE && (
+          <Field label="Find a table">
+            <input type="search" placeholder="Name or number" value={q} onChange={(e) => (setQ(e.target.value), setShown(PAGE))} />
+          </Field>
+        )}
       </div>
       {tables.length > 0 && (
         <div className="table-names">
-          {tables.map((t, i) => (
+          {listed.slice(0, shown).map(([t, i]) => (
             <div key={t.id} className="table-name">
               <input className="input" maxLength={30} value={t.name} onChange={(e) => rename(i, e.target.value)} aria-label={`Name of ${t.id}`} />
               <button className="btn btn-sm btn-ghost" onClick={() => remove(i)} aria-label={`Remove ${t.name}`}>✕</button>
             </div>
           ))}
-          <button className="btn btn-sm" onClick={() => set("tables", [...tables, { id: nextId(), name: `Table ${nextId().slice(1)}` }])}>+ Add table</button>
+          {listed.length > shown && (
+            <button className="btn btn-sm btn-ghost" onClick={() => setShown((n) => n + PAGE)}>Show more ({listed.length - shown} left)</button>
+          )}
+          {!q && tables.length < MAX_TABLES && (
+            <button className="btn btn-sm" onClick={() => (set("tables", [...tables, { id: nextId(), name: `Table ${nextId().slice(1)}` }]), setShown((n) => Math.max(n, tables.length + 1)))}>+ Add table</button>
+          )}
         </div>
       )}
       {tables.length > 0 && (
@@ -362,7 +387,16 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
           {shop.orderToken ? (
             <>
               <div className="btn-row">
-                <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => run(() => downloadTableQrs(shop, shop.tables))}>⬇️ Download table QR codes (PDF)</button>
+                {qrBatches.length > 1 && (
+                  <select value={range} onChange={(e) => setRange(Number(e.target.value))} aria-label="Which tables">
+                    {qrBatches.map(([a, b], k) => (
+                      <option key={k} value={k}>{shop.tables[a].name} – {shop.tables[b - 1].name}</option>
+                    ))}
+                  </select>
+                )}
+                <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => run(() => downloadTableQrs(shop, shop.tables.slice(...(qrBatches[range] || qrBatches[0])), { part: qrBatches.length > 1 ? range + 1 : 0 }))}>
+                  ⬇️ Download table QR codes (PDF)
+                </button>
                 <a className="btn btn-sm" href={orderUrl(shop, shop.tables[0].id)} target="_blank" rel="noopener noreferrer">👀 See customer page</a>
               </div>
               <div className="order-link">
@@ -704,6 +738,185 @@ function Diagnostics({ slowMode, onClose }) {
           ))}
         <pre className="diag-log">{log.join("\n")}</pre>
       </div>
+    </Modal>
+  );
+}
+
+// ---------- Promo codes ----------
+const BLANK_PROMO = {
+  code: "", description: "", type: "percent", value: 10, maxDiscount: 0, minOrder: 0, validFrom: "", validTo: "", active: true,
+  days: [], timeFrom: "", timeTo: "", maxUses: 0, onePerPhone: false, where: "both", showOnMenu: false,
+};
+const todayIST = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+function promoStatus(p) {
+  if (!p.active) return ["Paused", ""];
+  if (p.validTo && p.validTo < todayIST()) return ["Expired", "bad"];
+  if (p.validFrom && p.validFrom > todayIST()) return [`Starts ${fmtDate(p.validFrom)}`, "warn"];
+  if (p.maxUses > 0 && p.uses >= p.maxUses) return ["Used up", "warn"];
+  return ["Active", "good"];
+}
+const WHERE = { both: "Table QR + Billing", qr: "Table QR only", billing: "Billing only" };
+
+function PromosCard() {
+  const { shop } = useApp();
+  const toast = useToast();
+  const cur = shop.currency || "₹";
+  const [list, setList] = useState(null);
+  const [edit, setEdit] = useState(null); // promo being edited, or BLANK_PROMO
+  const { busy, error, run } = useAction();
+  const load = () => run(async () => setList((await get("/promos")).promos));
+  useEffect(() => {
+    load();
+  }, []);
+  const remove = (p) =>
+    confirm(p.uses ? `Delete ${p.code}? It was used ${p.uses} time${p.uses === 1 ? "" : "s"}; old bills keep showing it.` : `Delete ${p.code}?`) &&
+    run(async () => {
+      await del(`/promos/${p.id}`);
+      toast(`${p.code} deleted`);
+      await load();
+    });
+  return (
+    <section className="card stack" id="promos">
+      <h2>Promo codes</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        Discount codes customers type when ordering from the table QR, or staff apply on the Billing screen. Set when they work, the minimum order and how many times they can be used.
+      </p>
+      {error && <div className="error">{error}</div>}
+      {list === null ? (
+        <p className="muted small">Loading…</p>
+      ) : list.length === 0 ? (
+        <p className="muted small" style={{ margin: 0 }}>No codes yet. Try one like <b>WELCOME10</b>: 10% off up to {money(100, cur)}, once per mobile.</p>
+      ) : (
+        <div className="promo-list">
+          {list.map((p) => {
+            const [label, tone] = promoStatus(p);
+            return (
+              <div key={p.id} className="promo-row">
+                <div className="promo-main">
+                  <div className="promo-head">
+                    <b className="promo-code">{p.code}</b>
+                    <span className={"tag " + tone}>{label}</span>
+                    {p.showOnMenu && <span className="tag">On menu</span>}
+                  </div>
+                  {p.description && <div className="small">{p.description}</div>}
+                  <div className="small muted">{promoSummary(p, cur)} · {WHERE[p.where]}</div>
+                  <div className="small muted">
+                    Used {p.uses}{p.maxUses > 0 ? ` of ${p.maxUses}` : ""} time{p.uses === 1 && !p.maxUses ? "" : "s"} · {money(p.discountGiven, cur)} given
+                    {(p.validFrom || p.validTo) && ` · ${p.validFrom ? fmtDate(p.validFrom) : "now"} to ${p.validTo ? fmtDate(p.validTo) : "no end"}`}
+                  </div>
+                </div>
+                <div className="btn-row">
+                  <button className="btn btn-sm" onClick={() => setEdit(p)}>Edit</button>
+                  <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => remove(p)} aria-label={`Delete ${p.code}`}>🗑</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <button className="btn btn-sm" style={{ justifySelf: "start" }} onClick={() => setEdit(BLANK_PROMO)}>+ New code</button>
+      {edit && (
+        <PromoModal
+          promo={edit}
+          cur={cur}
+          onClose={() => setEdit(null)}
+          onSaved={(p) => {
+            toast(`${p.code} saved`);
+            setEdit(null);
+            load();
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function PromoModal({ promo, cur, onClose, onSaved }) {
+  const [p, setP] = useState(() => ({ ...BLANK_PROMO, ...promo }));
+  const { busy, error, run } = useAction();
+  const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
+  const num = (v) => Math.max(0, Number(v) || 0);
+  const toggleDay = (d) => set("days", p.days.includes(d) ? p.days.filter((x) => x !== d) : [...p.days, d]);
+  const save = (e) => {
+    e.preventDefault();
+    run(async () => {
+      const body = { ...p, code: cleanCode(p.code), value: num(p.value), maxDiscount: p.type === "percent" ? num(p.maxDiscount) : 0, minOrder: num(p.minOrder), maxUses: Math.floor(num(p.maxUses)) };
+      for (const k of ["id", "uses", "discountGiven", "createdAt", "updatedAt", "archived"]) delete body[k];
+      const r = promo.id ? await put(`/promos/${promo.id}`, body) : await post("/promos", body);
+      onSaved(r.promo);
+    });
+  };
+  return (
+    <Modal title={promo.id ? `Edit ${promo.code}` : "New promo code"} onClose={onClose} wide>
+      <form className="stack" onSubmit={save}>
+        <div className="grid2">
+          <Field label="Code" hint="Letters and numbers, like WELCOME10">
+            <input required autoFocus={!promo.id} maxLength={20} pattern="[A-Za-z0-9]{3,20}" value={p.code} onChange={(e) => set("code", e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} style={{ textTransform: "uppercase", fontWeight: 700 }} />
+          </Field>
+          <Field label="Description for customers" hint="Optional">
+            <input maxLength={80} placeholder="10% off your first order" value={p.description} onChange={(e) => set("description", e.target.value)} />
+          </Field>
+        </div>
+        <div className="field">
+          Discount
+          <Seg value={p.type} onChange={(v) => set("type", v)} options={[["percent", "% off"], ["flat", `${cur} off`]]} />
+        </div>
+        <div className="grid2">
+          <Field label={p.type === "percent" ? "Percent off" : `Amount off (${cur})`}>
+            <input type="number" required min="0.01" max={p.type === "percent" ? 100 : undefined} step="0.01" inputMode="decimal" value={p.value} onChange={(e) => set("value", e.target.value)} />
+          </Field>
+          {p.type === "percent" && (
+            <Field label={`Up to (${cur})`} hint="Biggest discount. 0 = no cap">
+              <input type="number" min="0" step="1" inputMode="numeric" value={p.maxDiscount} onChange={(e) => set("maxDiscount", e.target.value)} />
+            </Field>
+          )}
+          <Field label={`Minimum order (${cur})`} hint="Before discount and GST. 0 = any order">
+            <input type="number" min="0" step="1" inputMode="numeric" value={p.minOrder} onChange={(e) => set("minOrder", e.target.value)} />
+          </Field>
+          <Field label="Total uses" hint="0 = no limit">
+            <input type="number" min="0" step="1" inputMode="numeric" value={p.maxUses} onChange={(e) => set("maxUses", e.target.value)} />
+          </Field>
+        </div>
+        <div className="field">
+          Works on
+          <Seg value={p.where} onChange={(v) => set("where", v)} options={[["both", "Table QR + Billing"], ["qr", "Table QR"], ["billing", "Billing"]]} />
+        </div>
+        <div className="grid2">
+          <Field label="Valid from" hint="Optional">
+            <input type="date" value={p.validFrom} onChange={(e) => set("validFrom", e.target.value)} />
+          </Field>
+          <Field label="Valid until" hint="Optional (last day it works)">
+            <input type="date" min={p.validFrom || undefined} value={p.validTo} onChange={(e) => set("validTo", e.target.value)} />
+          </Field>
+        </div>
+        <div className="field">
+          Days <span className="hint">None selected = every day</span>
+          <div className="day-chips">
+            {[1, 2, 3, 4, 5, 6, 0].map((d) => (
+              <button type="button" key={d} className={"chip" + (p.days.includes(d) ? " on" : "")} aria-pressed={p.days.includes(d)} onClick={() => toggleDay(d)}>{DAY_NAMES[d]}</button>
+            ))}
+          </div>
+        </div>
+        <div className="grid2">
+          <Field label="From time" hint="Optional, e.g. happy hours">
+            <input type="time" value={p.timeFrom} onChange={(e) => set("timeFrom", e.target.value)} />
+          </Field>
+          <Field label="To time">
+            <input type="time" value={p.timeTo} onChange={(e) => set("timeTo", e.target.value)} />
+          </Field>
+        </div>
+        <label className="check"><input type="checkbox" checked={p.onePerPhone} onChange={(e) => set("onePerPhone", e.target.checked)} /> Once per mobile number</label>
+        {p.where !== "billing" && (
+          <label className="check"><input type="checkbox" checked={p.showOnMenu} onChange={(e) => set("showOnMenu", e.target.checked)} /> Show this offer on the customer menu</label>
+        )}
+        <label className="check"><input type="checkbox" checked={p.active} onChange={(e) => set("active", e.target.checked)} /> Active</label>
+        {p.code && Number(p.value) > 0 && <p className="hint" style={{ margin: 0 }}>{cleanCode(p.code)}: {promoSummary({ ...p, value: num(p.value), maxDiscount: num(p.maxDiscount), minOrder: num(p.minOrder) }, cur)}</p>}
+        {error && <div className="error">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : "Save code"}</button>
+        </div>
+      </form>
     </Modal>
   );
 }

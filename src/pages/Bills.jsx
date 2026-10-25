@@ -225,7 +225,7 @@ export function BillDetail({ bill, onClose, onChanged }) {
               </tr>
             ))}
             <tr><td className="muted">Subtotal</td><td className="num">{money(bill.subtotal, cur)}</td></tr>
-            {bill.discount?.amount > 0 && <tr><td className="muted">Discount</td><td className="num">−{money(bill.discount.amount, cur)}</td></tr>}
+            {bill.discount?.amount > 0 && <tr><td className="muted">{bill.promo?.code ? `Promo ${bill.promo.code}` : "Discount"}</td><td className="num">−{money(bill.discount.amount, cur)}</td></tr>}
             {bill.gst?.amount > 0 && <tr><td className="muted">GST ({bill.gst.percent}%)</td><td className="num">{money(bill.gst.amount, cur)}</td></tr>}
             <tr><td><b>Total</b></td><td className="num"><b>{money(bill.total, cur)}</b></td></tr>
             {bill.paymentMode === "credit" && (

@@ -111,7 +111,7 @@ export function receiptRows(shop, bill) {
   pair(`Items: ${count}`, "");
   pair("Subtotal", n2(bill.subtotal));
   if (bill.discount?.amount > 0) {
-    pair(bill.discount.type === "percent" ? `Discount ${bill.discount.value}%` : "Discount", "-" + n2(bill.discount.amount));
+    pair(bill.promo?.code ? `Promo ${bill.promo.code}` : bill.discount.type === "percent" ? `Discount ${bill.discount.value}%` : "Discount", "-" + n2(bill.discount.amount));
   }
   if (bill.gst?.percent > 0) {
     const half = Math.round((bill.gst.amount / 2) * 100) / 100;

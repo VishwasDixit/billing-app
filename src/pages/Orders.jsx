@@ -61,6 +61,8 @@ export default function Orders() {
   const [tableId, setTableId] = useState(null);
   const [adding, setAdding] = useState(null); // table to add an order for
   const [stockOpen, setStockOpen] = useState(false);
+  const [tableQ, setTableQ] = useState("");
+  const [busyOnly, setBusyOnly] = useState(false);
   const cur = shop.currency || "₹";
   useOrderPolling(5000);
 
@@ -72,6 +74,15 @@ export default function Orders() {
     for (const o of orders) if (isOpen(o) && o.status !== "new") (m.get(o.table) || m.set(o.table, []).get(o.table)).push(o);
     return m;
   }, [orders, tables]);
+
+  // Big restaurants: search, busy tables first, and a sensible number of tiles at once.
+  const shownTables = useMemo(() => {
+    let list = tables;
+    if (tableQ) list = list.filter((t) => t.name.toLowerCase().includes(tableQ.toLowerCase()));
+    if (busyOnly) list = list.filter((t) => byTable.get(t.id)?.length);
+    else if (tables.length > 40) list = [...list.filter((t) => byTable.get(t.id)?.length), ...list.filter((t) => !byTable.get(t.id)?.length)];
+    return list;
+  }, [tables, tableQ, busyOnly, byTable]);
 
   const accept = async (o) => {
     try {
@@ -240,8 +251,14 @@ export default function Orders() {
       )}
 
       <h2 style={{ marginBottom: 8 }}>Tables</h2>
+      {tables.length > 40 && (
+        <div className="table-tools">
+          <input className="input" type="search" placeholder="Find a table" value={tableQ} onChange={(e) => setTableQ(e.target.value)} />
+          <label className="check"><input type="checkbox" checked={busyOnly} onChange={(e) => setBusyOnly(e.target.checked)} /> Busy only</label>
+        </div>
+      )}
       <div className="table-grid">
-        {tables.map((t) => {
+        {shownTables.slice(0, 200).map((t) => {
           const list = byTable.get(t.id) || [];
           const total = list.reduce((s, o) => s + (o.total || 0), 0);
           const ready = list.some((o) => o.status === "ready");
@@ -264,6 +281,7 @@ export default function Orders() {
           );
         })}
       </div>
+      {shownTables.length > 200 && <p className="small muted">Showing 200 of {shownTables.length} tables (busy ones first). Search to find the others.</p>}
 
       {openTable && (
         <TableSheet
@@ -301,6 +319,10 @@ export default function Orders() {
                   payMode: req?.method === "upi" || req?.method === "paid" ? "upi" : req ? "cash" : undefined,
                   customer: toBill.find((o) => o.customer)?.customer || billed.find((o) => o.customer)?.customer || null,
                   prepaid: Math.round(paid.reduce((s, o) => s + (o.pay.amount || 0), 0) * 100) / 100,
+                  // Promo codes customers used on these orders become the bill's discount.
+                  promo: toBill.some((o) => o.promo?.amount > 0)
+                    ? { code: [...new Set(toBill.filter((o) => o.promo).map((o) => o.promo.code))].join(", "), amount: Math.round(toBill.reduce((s, o) => s + (o.promo?.amount || 0), 0) * 100) / 100 }
+                    : null,
                   prepaidOrderNos: paid.map((o) => o.orderNo),
                 },
               },
@@ -481,7 +503,8 @@ function OrderPicker({ table, onClose, onPlaced }) {
 // How a QR order is being paid, for staff.
 function PayChip({ o, cur }) {
   const p = o.pay;
-  if (!p || p.rule === "end" || (p.state === "end" && p.rule !== "choose")) return null;
+  const promo = o.promo?.amount > 0 && <span className="tag">🏷 {o.promo.code} −{money(o.promo.amount, cur)}</span>;
+  if (!p || p.rule === "end" || (p.state === "end" && p.rule !== "choose")) return promo ? <div className="pay-chip-row">{promo}</div> : null;
   const amt = money(p.amount ?? o.total, cur);
   const [cls, text] = {
     paid: ["good", `💳 Paid ${amt}${p.method === "counter" ? " (counter)" : ""}`],
@@ -492,5 +515,5 @@ function PayChip({ o, cur }) {
     refundDue: ["bad", `↩️ Refund ${amt}`],
     refunded: ["", `↩️ Refunded ${amt}`],
   }[p.state] || ["", ""];
-  return text ? <div className="pay-chip-row"><span className={"tag " + cls}>{text}</span></div> : null;
+  return text || promo ? <div className="pay-chip-row">{text && <span className={"tag " + cls}>{text}</span>}{promo}</div> : null;
 }

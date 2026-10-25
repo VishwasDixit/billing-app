@@ -4,6 +4,7 @@ import { get, post } from "../lib/api.js";
 import { money } from "../lib/format.js";
 import { defaultImageFor } from "../../shared/menuImages.js";
 import { qrSvg } from "../../shared/billQr.js";
+import { promoSummary } from "../../shared/promo.js";
 
 // The page a customer sees after scanning a table's QR code: menu, cart, order status.
 const STEPS = [
@@ -47,6 +48,8 @@ export default function CustomerOrder() {
     loadMine(token).some((o) => !["rejected", "billed"].includes(o.status) || (o.bill && o.bill.paymentMode === "upi" && !o.bill.paymentConfirmed)) ? "status" : "menu"
   );
   const [billAsk, setBillAsk] = useState(false);
+  const [offerCode, setOfferCode] = useState("");
+  const [tableQ, setTableQ] = useState("");
   const refreshMine = async () => {
     const next = await Promise.all(mine.map((o) => get(`/public/shop/${token}/orders/${o.id}?k=${o.key}`).then((s) => ({ ...o, ...s, checkedAt: Date.now() }), () => o)));
     setMine(next);
@@ -119,8 +122,11 @@ export default function CustomerOrder() {
       {!table && data.ordering.open && (
         <div className="co-tables">
           <p>Which table are you at?</p>
+          {data.tables.length > 30 && (
+            <input className="input" type="search" inputMode="numeric" placeholder="Table name or number" value={tableQ} onChange={(e) => setTableQ(e.target.value)} style={{ marginBottom: 8 }} />
+          )}
           <div className="co-table-grid">
-            {data.tables.map((t) => (
+            {data.tables.filter((t) => !tableQ || t.name.toLowerCase().includes(tableQ.toLowerCase())).slice(0, 120).map((t) => (
               <button key={t.id} className="btn" onClick={() => setParams({ t: t.id })}>{t.name}</button>
             ))}
           </div>
@@ -150,7 +156,7 @@ export default function CustomerOrder() {
             <div key={o.id} className="card co-order">
               <div className="co-order-head">
                 <b>Order #{o.orderNo}</b>
-                <span className="small muted">{o.tableName} · {money(o.total, cur)}</span>
+                <span className="small muted">{o.tableName} · {money(o.total, cur)}{o.promo ? ` · 🏷 ${o.promo.code} −${money(o.promo.amount, cur)}` : ""}</span>
               </div>
               {o.status === "rejected" ? (
                 <div className="error">Sorry, this order couldn't be taken{o.reason ? `: ${o.reason}` : "."} Please ask the staff.</div>
@@ -175,6 +181,18 @@ export default function CustomerOrder() {
         </div>
       ) : (
         <>
+          {data.offers?.length > 0 && data.ordering.open && (
+            <div className="co-offers">
+              {data.offers.map((o) => (
+                <button key={o.code} className="co-offer" onClick={() => setOfferCode(o.code)} aria-pressed={offerCode === o.code}>
+                  <b>🏷 {o.code}</b>
+                  <span>{o.description || promoSummary(o, cur)}</span>
+                  {o.description && <small>{promoSummary(o, cur)}</small>}
+                  <small className="co-offer-use">{offerCode === o.code ? "✓ Will be applied at checkout" : "Tap to use"}</small>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="co-tools">
             <input className="input" type="search" placeholder="Search dishes…" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
@@ -263,11 +281,14 @@ export default function CustomerOrder() {
           setNote={(k, note) => setCart((prev) => new Map(prev).set(k, { ...prev.get(k), note }))}
           onClose={() => setReview(false)}
           payRule={data.payRule}
+          offers={data.offers || []}
+          initialCode={offerCode}
           onPlaced={(o) => {
             const next = [...mine, o];
             setMine(next);
             saveMine(token, next);
             setCart(new Map());
+            setOfferCode("");
             setReview(false);
             setView("status");
           }}
@@ -277,7 +298,7 @@ export default function CustomerOrder() {
   );
 }
 
-function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, payRule }) {
+function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, payRule, offers, initialCode }) {
   const [note, setOrderNote] = useState("");
   // Name and mobile are needed to order; remembered on this phone for next time.
   const saved = (() => {
@@ -293,6 +314,32 @@ function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, p
   const contactOk = name.trim().length >= 2 && /^[6-9]\d{9}$/.test(mobile);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Promo code: checked by the server with its own prices (and this mobile, for once-per-mobile codes).
+  const [code, setCode] = useState(initialCode || "");
+  const [promo, setPromo] = useState(null); // { code, amount }
+  const [promoErr, setPromoErr] = useState("");
+  const [checking, setChecking] = useState(false);
+  const items = lines.map((l) => ({ itemId: l.itemId, variant: l.variant, qty: l.qty, note: l.note }));
+  const applyCode = async (c = code) => {
+    c = c.trim().toUpperCase();
+    if (!c) return;
+    setChecking(true);
+    setPromoErr("");
+    try {
+      const r = await post(`/public/shop/${token}/promo`, { code: c, items, phone: mobile });
+      setPromo({ code: r.code, amount: r.amount });
+      setCode(r.code);
+    } catch (err) {
+      setPromo(null);
+      setPromoErr(err.offline ? "No internet on this phone. Please try again." : err.message);
+    } finally {
+      setChecking(false);
+    }
+  };
+  useEffect(() => {
+    if (initialCode) applyCode(initialCode);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const toPay = Math.max(0, total - (promo?.amount || 0));
   const place = async () => {
     if (!contactOk) return setError(name.trim().length < 2 ? "Please enter your name." : "Please enter a 10-digit mobile number.");
     setBusy(true);
@@ -305,14 +352,20 @@ function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, p
     try {
       const r = await post(`/public/shop/${token}/orders`, {
         table: table.id,
-        items: lines.map((l) => ({ itemId: l.itemId, variant: l.variant, qty: l.qty, note: l.note })),
+        items,
         note,
         name: name.trim(),
         phone: mobile,
+        ...(promo && { promo: promo.code }),
       });
-      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
+      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, promo: r.promo || null, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
     } catch (err) {
-      setError(err.offline ? "No internet on this phone. Please try again, or order with the staff." : err.message);
+      // The code stopped working (used up, wrong time, used on this mobile): say so and let them order without it.
+      if (err.data?.code === "PROMO") {
+        setPromo(null);
+        setPromoErr(err.message);
+        setError("");
+      } else setError(err.offline ? "No internet on this phone. Please try again, or order with the staff." : err.message);
     } finally {
       setBusy(false);
     }
@@ -339,7 +392,29 @@ function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, p
           <input className="input" placeholder="Mobile number *" type="tel" inputMode="tel" autoComplete="tel" maxLength={16} value={phone} onChange={(e) => setPhone(e.target.value)} required />
           <span className="small muted">So the restaurant can reach you about your order.</span>
         </div>
-        <div className="co-line-top"><b>Total</b><b>{money(total, cur)}</b></div>
+        <div className="co-promo">
+          {promo ? (
+            <div className="co-line-top">
+              <span>🏷 <b>{promo.code}</b> applied</span>
+              <span>−{money(promo.amount, cur)} <button className="link-btn" onClick={() => (setPromo(null), setCode(""))}>Remove</button></span>
+            </div>
+          ) : (
+            <form className="co-promo-row" onSubmit={(e) => (e.preventDefault(), applyCode())}>
+              <input className="input" placeholder="Have a promo code?" autoCapitalize="characters" maxLength={20} value={code} onChange={(e) => (setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "")), setPromoErr(""))} />
+              <button className="btn" disabled={!code || checking}>{checking ? "…" : "Apply"}</button>
+            </form>
+          )}
+          {!promo && !code && offers.length > 0 && (
+            <div className="chips">
+              {offers.map((o) => (
+                <button key={o.code} className="chip" onClick={() => applyCode(o.code)}>🏷 {o.code}</button>
+              ))}
+            </div>
+          )}
+          {promoErr && <div className="error small">{promoErr}</div>}
+        </div>
+        {promo && <div className="co-line-top small muted"><span>Items</span><span>{money(total, cur)}</span></div>}
+        <div className="co-line-top"><b>Total</b><b>{money(toPay, cur)}</b></div>
         {error && <div className="error">{error}</div>}
         <button className="btn btn-primary btn-lg" disabled={busy || !contactOk} onClick={place}>{busy ? "Sending…" : "Place order"}</button>
         <p className="small muted" style={{ margin: 0, textAlign: "center" }}>
@@ -435,6 +510,7 @@ function OrderPay({ token, order, cur, upiOn, onChange }) {
             {order.bill.items.map((i, k) => (
               <div key={k} className="co-line-top"><span>{i.qty}× {i.name}{i.variant ? ` (${i.variant})` : ""}</span><span>{money(i.amount, cur)}</span></div>
             ))}
+            {order.bill.discount?.amount > 0 && <div className="co-line-top"><span>{order.promo ? `Promo ${order.promo.code}` : "Discount"}</span><span>−{money(order.bill.discount.amount, cur)}</span></div>}
             {order.bill.gst?.amount > 0 && <div className="co-line-top"><span>GST</span><span>{money(order.bill.gst.amount, cur)}</span></div>}
             <div className="co-line-top"><b>Total</b><b>{money(order.bill.total, cur)}</b></div>
           </details>

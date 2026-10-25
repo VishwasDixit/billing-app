@@ -104,3 +104,29 @@ describe("bill change rules", () => {
     for (const r of Object.values(EDIT_REASONS)) expect(r).toBeTruthy();
   });
 });
+
+import { checkPromo, promoSummary } from "../shared/promo.js";
+
+describe("promo code rules", () => {
+  const p = (x) => ({ active: true, type: "percent", value: 10, ...x });
+  // Friday 23 Oct 2026, 4:30 pm India time.
+  const fri430 = new Date("2026-10-23T11:00:00Z");
+  it("percent with a cap, flat never more than the bill", () => {
+    expect(checkPromo(p({ value: 50, maxDiscount: 100 }), { subtotal: 1000 }).amount).toBe(100);
+    expect(checkPromo(p({ type: "flat", value: 500 }), { subtotal: 120 }).amount).toBe(120);
+    expect(checkPromo(p({}), { subtotal: 0 }).ok).toBe(false);
+  });
+  it("days and times are India time, and a window can run past midnight", () => {
+    expect(checkPromo(p({ days: [1, 2, 3, 4, 5], timeFrom: "15:00", timeTo: "18:00" }), { subtotal: 100, at: fri430 }).ok).toBe(true);
+    expect(checkPromo(p({ days: [0, 6] }), { subtotal: 100, at: fri430 }).reason).toMatch(/Sat, Sun only/);
+    expect(checkPromo(p({ timeFrom: "17:00", timeTo: "19:00" }), { subtotal: 100, at: fri430 }).reason).toMatch(/5 pm–7 pm/);
+    const late = new Date("2026-10-23T19:00:00Z"); // 00:30 Saturday in India
+    expect(checkPromo(p({ timeFrom: "22:00", timeTo: "02:00" }), { subtotal: 100, at: late }).ok).toBe(true);
+    expect(checkPromo(p({ validTo: "2026-10-23" }), { subtotal: 100, at: late }).reason).toMatch(/expired/); // already the 24th in India
+  });
+  it("where it works, uses, and a one-line summary", () => {
+    expect(checkPromo(p({ where: "billing" }), { subtotal: 100, where: "qr" }).ok).toBe(false);
+    expect(checkPromo(p({ maxUses: 5, uses: 5 }), { subtotal: 100 }).reason).toMatch(/fully used/);
+    expect(promoSummary(p({ maxDiscount: 100, minOrder: 300, days: [1, 2, 3, 4, 5], timeFrom: "15:00", timeTo: "18:00" }))).toBe("10% off up to ₹100 · min ₹300 · Mon–Fri · 3 pm–6 pm");
+  });
+});

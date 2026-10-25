@@ -293,7 +293,7 @@ export function AppProvider({ children }) {
       },
       // Saves a bill on this device first, then uploads it. Works offline.
       // billDate (YYYY-MM-DD, optional): a past day for a bill that was missed; saved at the current time of day on that date.
-      async recordBill({ items, discount, gstPercent, paymentMode, customer, paidNow, billDate, table, orderIds }) {
+      async recordBill({ items, discount, gstPercent, paymentMode, customer, paidNow, billDate, table, orderIds, promo }) {
         const { billNo, deviceCode } = await nextBillNo();
         const now = new Date();
         const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -320,6 +320,7 @@ export function AppProvider({ children }) {
           itemCount: t.itemCount,
           subtotal: t.subtotal,
           discount: t.discount,
+          ...(promo && t.discount.amount > 0 && { promo }),
           gst: t.gst,
           gstPercent: t.gst.percent,
           total: t.total,

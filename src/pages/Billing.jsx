@@ -2,7 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { markBilledLocally } from "../lib/orders.js";
 import { useApp, accessState } from "../lib/store.jsx";
-import { put } from "../lib/api.js";
+import { post, put } from "../lib/api.js";
 import { isOwner } from "../lib/roles.js";
 import { EDIT_REASONS, isOldBill } from "../../shared/billChanges.js";
 import { computeTotals } from "../../shared/totals.js";
@@ -29,6 +29,10 @@ export default function Billing() {
   const [cart, setCart] = useState(() => new Map()); // key -> line
   const [picker, setPicker] = useState(null); // item with variants
   const [discount, setDiscount] = useState(shop.defaultDiscount || { type: "percent", value: 0 });
+  // A promo code behind the discount: applied here ("billing") or from the table's QR orders ("orders").
+  const [promo, setPromo] = useState(null); // { code, amount, source }
+  const [promoCode, setPromoCode] = useState("");
+  const [promoBusy, setPromoBusy] = useState(false);
   const [gstPercent, setGstPercent] = useState(shop.gstPercent || 0);
   const [paymentMode, setPaymentMode] = useState("cash");
   const [customer, setCustomer] = useState(null); // udhar customer
@@ -54,6 +58,7 @@ export default function Billing() {
       if (!d?.cart?.length) return;
       setCart(new Map(d.cart));
       if (d.discount) setDiscount(d.discount);
+      if (d.promo) setPromo(d.promo);
       if (d.gstPercent != null) setGstPercent(d.gstPercent);
       if (d.paymentMode) setPaymentMode(d.paymentMode);
       if (d.customer) setCustomer(d.customer);
@@ -69,11 +74,11 @@ export default function Billing() {
     if (!restored.current) return;
     try {
       if (!cart.size) localStorage.removeItem(draftKey);
-      else localStorage.setItem(draftKey, JSON.stringify({ cart: [...cart.entries()], discount, gstPercent, paymentMode, customer, paidNow, billDate, tableBill, editBill }));
+      else localStorage.setItem(draftKey, JSON.stringify({ cart: [...cart.entries()], discount, promo, gstPercent, paymentMode, customer, paidNow, billDate, tableBill, editBill }));
     } catch {
       /* storage full or blocked */
     }
-  }, [cart, discount, gstPercent, paymentMode, customer, paidNow, billDate, tableBill, editBill, draftKey]);
+  }, [cart, discount, promo, gstPercent, paymentMode, customer, paidNow, billDate, tableBill, editBill, draftKey]);
 
   useEffect(() => {
     const b = location.state?.editBill;
@@ -84,6 +89,7 @@ export default function Billing() {
     setBillDate("");
     setCart(new Map(b.items.map((l) => [lineKey(l.itemId || l.name, l.variant || ""), { itemId: l.itemId, name: l.name, variant: l.variant || "", category: l.category || "", rate: l.rate, qty: l.qty }])));
     setDiscount({ type: b.discount?.type || "percent", value: b.discount?.value || 0 });
+    setPromo(null);
     setGstPercent(b.gst?.percent || 0);
     setPaymentMode(b.paymentMode || "cash");
     setCustomer(b.customer || null);
@@ -97,6 +103,7 @@ export default function Billing() {
     setEditBill(null);
     setCart(new Map());
     setDiscount(shop.defaultDiscount || { type: "percent", value: 0 });
+      setPromo(null);
     setGstPercent(shop.gstPercent || 0);
     setPaymentMode("cash");
     setCustomer(null);
@@ -112,6 +119,8 @@ export default function Billing() {
     setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant), { ...l }])));
     if (tb.payMode) setPaymentMode(tb.payMode);
     if (tb.customer) setCustomer(tb.customer);
+    // Codes the customers used on these QR orders (already counted with the orders).
+    setPromo(tb.promo?.amount > 0 ? { code: tb.promo.code, amount: tb.promo.amount, source: "orders" } : null);
     setCartOpen(true);
     nav(".", { replace: true, state: null });
   }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -161,8 +170,42 @@ export default function Billing() {
     });
 
   const lines = [...cart.entries()];
-  const t = computeTotals(lines.map(([, l]) => l), discount, gstPercent);
+  // A promo code sets the discount while it's applied (the typed discount comes back when it's removed).
+  const billDiscount = promo ? { type: "flat", value: promo.amount } : discount;
+  const t = computeTotals(lines.map(([, l]) => l), billDiscount, gstPercent);
   const credit = paymentMode === "credit";
+  const applyPromo = async (code = promoCode) => {
+    code = code.trim().toUpperCase();
+    if (!code || promoBusy) return;
+    setPromoBusy(true);
+    try {
+      const r = await post("/promos/check", { code, subtotal: t.subtotal });
+      setPromo({ code: r.code, amount: r.amount, source: "billing" });
+      setPromoCode("");
+      toast(`${r.code} applied: −${money(r.amount, cur)}`);
+    } catch (err) {
+      toast(err.offline ? "Promo codes need internet. You can still type a discount." : err.message);
+    } finally {
+      setPromoBusy(false);
+    }
+  };
+  const removePromo = () => setPromo(null);
+  // Items changed: check the code again (minimum order, percent of the new total).
+  useEffect(() => {
+    if (!cart.size && promo) return removePromo();
+    if (promo?.source !== "billing") return;
+    const id = setTimeout(async () => {
+      try {
+        const r = await post("/promos/check", { code: promo.code, subtotal: t.subtotal });
+        if (r.amount !== promo.amount) setPromo({ ...promo, amount: r.amount });
+      } catch (err) {
+        if (err.offline) return;
+        removePromo();
+        toast(`${promo.code} removed: ${err.message}`);
+      }
+    }, 600);
+    return () => clearTimeout(id);
+  }, [t.subtotal, cart.size]); // eslint-disable-line react-hooks/exhaustive-deps
   const paidNowClamped = Math.min(Math.max(Number(paidNow) || 0, 0), t.total);
   const udharThisBill = Math.round((t.total - paidNowClamped) * 100) / 100;
   const currentDue = customer ? customers.find((c) => c.clientId === customer.clientId)?.due || 0 : 0;
@@ -187,13 +230,17 @@ export default function Billing() {
     setBusy(kind);
     setPrintError(null);
     try {
-      const bill = await recordBill({ items: lines.map(([, l]) => l), discount, gstPercent, paymentMode, customer, paidNow: paidNowClamped, billDate: pastDate, table: tableBill?.tableName, orderIds: tableBill?.orderIds });
+      const bill = await recordBill({
+        items: lines.map(([, l]) => l), discount: billDiscount, gstPercent, paymentMode, customer, paidNow: paidNowClamped, billDate: pastDate, table: tableBill?.tableName, orderIds: tableBill?.orderIds,
+        promo: promo && t.discount.amount > 0 ? { code: promo.code, source: promo.source } : undefined,
+      });
       if (tableBill) {
         await markBilledLocally(tableBill.orderIds);
         setTableBill(null);
       }
       setCart(new Map());
       setDiscount(shop.defaultDiscount || { type: "percent", value: 0 });
+      setPromo(null);
       setGstPercent(shop.gstPercent || 0);
       setPaymentMode("cash");
       setCustomer(null);
@@ -239,6 +286,7 @@ export default function Billing() {
       setEditBill(null);
       setCart(new Map());
       setDiscount(shop.defaultDiscount || { type: "percent", value: 0 });
+      setPromo(null);
       setGstPercent(shop.gstPercent || 0);
       setPaymentMode("cash");
       setCustomer(null);
@@ -387,12 +435,28 @@ export default function Billing() {
         <div className="bill-opts">
           <span className="muted">Discount</span>
           <div className="inline">
-            <input type="number" min="0" step="0.01" inputMode="decimal" value={discount.value} onChange={(e) => setDiscount({ ...discount, value: Math.max(0, parseFloat(e.target.value) || 0) })} />
-            <select value={discount.type} onChange={(e) => setDiscount({ ...discount, type: e.target.value })}>
+            <input type="number" min="0" step="0.01" inputMode="decimal" disabled={!!promo} value={billDiscount.value} onChange={(e) => setDiscount({ ...discount, value: Math.max(0, parseFloat(e.target.value) || 0) })} />
+            <select disabled={!!promo} value={billDiscount.type} onChange={(e) => setDiscount({ ...discount, type: e.target.value })}>
               <option value="percent">%</option>
               <option value="flat">{cur}</option>
             </select>
           </div>
+          {!editBill && (
+            <>
+              <span className="muted">Promo</span>
+              {promo ? (
+                <div className="inline promo-on">
+                  <span className="tag good">🏷 {promo.code} −{money(promo.amount, cur)}</span>
+                  <button className="btn btn-sm btn-ghost" onClick={removePromo} aria-label="Remove promo code">✕</button>
+                </div>
+              ) : (
+                <form className="inline" onSubmit={(e) => (e.preventDefault(), applyPromo())}>
+                  <input placeholder="Code" maxLength={20} autoCapitalize="characters" value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} style={{ textTransform: "uppercase" }} />
+                  <button className="btn btn-sm" disabled={!promoCode || promoBusy || !cart.size}>{promoBusy ? "…" : "Apply"}</button>
+                </form>
+              )}
+            </>
+          )}
           <span className="muted">GST %</span>
           <div className="inline">
             <input type="number" min="0" step="0.01" inputMode="decimal" value={gstPercent} onChange={(e) => setGstPercent(Math.max(0, parseFloat(e.target.value) || 0))} />
@@ -426,7 +490,7 @@ export default function Billing() {
 
         <div className="totals">
           <div className="row"><span>Subtotal</span><span>{money(t.subtotal, cur)}</span></div>
-          {t.discount.amount > 0 && <div className="row"><span>Discount{t.discount.type === "percent" ? ` (${t.discount.value}%)` : ""}</span><span>−{money(t.discount.amount, cur)}</span></div>}
+          {t.discount.amount > 0 && <div className="row"><span>{promo ? `Promo ${promo.code}` : `Discount${t.discount.type === "percent" ? ` (${t.discount.value}%)` : ""}`}</span><span>−{money(t.discount.amount, cur)}</span></div>}
           {t.gst.percent > 0 && <div className="row"><span>GST ({t.gst.percent}%)</span><span>{money(t.gst.amount, cur)}</span></div>}
           <div className="row grand"><span>Total</span><span>{money(t.total, cur)}</span></div>
         </div>

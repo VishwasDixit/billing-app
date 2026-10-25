@@ -15,6 +15,7 @@ import { isAdminEmail } from "../auth.js";
 import { subscriptionStatus, hasPaidFeatures } from "../subscription.js";
 import { rateLimit, clientIp } from "../limits.js";
 import { refreshDailyStock, takeStock, checkAvailable } from "../stock.js";
+import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.js";
 
 export const STATUSES = ["new", "accepted", "preparing", "ready", "served", "billed", "rejected"];
 export const OPEN = ["new", "accepted", "preparing", "ready", "served"];
@@ -108,7 +109,10 @@ async function customerOrder(db, shop, id, key) {
 
 export const orderTotal = (items) => round2(items.reduce((s, i) => s + i.qty * i.rate, 0));
 // What the customer pays for one order on its own: items plus the shop's GST.
-const payableTotal = (shop, items) => computeTotals(items, { type: "percent", value: 0 }, shop.gstPercent || 0).total;
+// A promo code the customer used comes off before GST, like any discount.
+const promoOff = (promo) => (promo?.amount > 0 ? { type: "flat", value: promo.amount } : { type: "percent", value: 0 });
+const payableTotal = (shop, items, promo) => computeTotals(items, promoOff(promo), shop.gstPercent || 0).total;
+const orderPayable = (shop, o) => payableTotal(shop, o.items, o.promo);
 
 // A paid QR order becomes a saved bill right away (P-1, P-2, … per shop), so the books are complete
 // even before the table is closed. The order already took stock when it went to the kitchen.
@@ -122,7 +126,7 @@ async function createOrderBill(db, shop, o, user) {
     return db.collection("bills").findOne({ shopId: shop._id, clientId: cur.billClientId });
   }
   const r = await db.collection("counters").findOneAndUpdate({ _id: `bills:${shop._id}:P` }, { $inc: { n: 1 } }, { upsert: true, returnDocument: "after" });
-  const t = computeTotals(o.items, { type: "percent", value: 0 }, shop.gstPercent || 0);
+  const t = computeTotals(o.items, promoOff(o.promo), shop.gstPercent || 0);
   const now = new Date();
   const mode = o.pay?.method === "upi" ? "upi" : "cash";
   const bill = {
@@ -149,6 +153,7 @@ async function createOrderBill(db, shop, o, user) {
     status: "paid",
     paymentConfirmedAt: now,
     paymentConfirmedBy: user.name,
+    ...(o.promo && { promo: { code: o.promo.code, source: "qr" } }),
   };
   try {
     await db.collection("bills").insertOne(bill);
@@ -188,6 +193,7 @@ export default [
         ordering: state,
         payRule: payRuleOf(shop),
         upi: !!shop.upiId,
+        offers: await menuOffers(db, shop),
         menu: menu.map((m) => ({
           id: String(m._id),
           name: m.name,
@@ -214,6 +220,7 @@ export default [
           // Name and mobile are asked before ordering: fewer prank orders, and the shop can call back.
           name: z.string().trim().min(2, "Please enter your name.").max(40),
           phone: z.string().trim().max(16).transform((p, ctx) => cleanMobile(p) || (ctx.addIssue({ code: "custom", message: "Please enter a 10-digit mobile number." }), z.NEVER)),
+          promo: z.string().trim().max(40).optional().default(""),
         })
         .parse(body);
       const state = await orderingState(db, shop);
@@ -230,11 +237,19 @@ export default [
       const items = priceLines(menuById, input.items);
       const stockProblem = checkAvailable(menuById, items);
       if (stockProblem) throw new HttpError(409, stockProblem, { code: "STOCK" });
+      const clientId = crypto.randomUUID();
+      // A promo code: checked here with the server's prices, and one use taken for this order.
+      let promo = null;
+      if (input.promo) {
+        const { promo: p, amount } = await promoDiscount(db, shop, input.promo, { subtotal: orderTotal(items), where: "qr", phone: input.phone });
+        await reservePromo(db, p, { ref: clientId, phone: input.phone, amount });
+        promo = { code: p.code, amount };
+      }
       const now = new Date();
       const customer = await upsertCustomerByPhone(db, shop._id, { name: input.name, phone: input.phone });
       const doc = {
         shopId: shop._id,
-        clientId: crypto.randomUUID(),
+        clientId,
         orderNo: await nextQrNumber(db, shop._id),
         source: "qr",
         table: table.id,
@@ -246,13 +261,37 @@ export default [
         items,
         total: orderTotal(items),
         status: "new",
-        pay: initialPay(payRuleOf(shop), payableTotal(shop, items)),
+        ...(promo && { promo }),
+        pay: initialPay(payRuleOf(shop), payableTotal(shop, items, promo)),
         customerKey: crypto.randomBytes(12).toString("base64url"),
         createdAt: now,
         updatedAt: now,
       };
-      doc._id = (await db.collection("orders").insertOne(doc)).insertedId;
-      return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, pay: publicPay(doc) };
+      try {
+        doc._id = (await db.collection("orders").insertOne(doc)).insertedId;
+      } catch (err) {
+        if (promo) await releasePromo(db, shop._id, clientId);
+        throw err;
+      }
+      return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, pay: publicPay(doc), ...(promo && { promo }) };
+    },
+    { auth: false },
+  ],
+  // The customer checks a promo code before ordering (prices from the server's menu).
+  [
+    "POST",
+    "/public/shop/:token/promo",
+    async ({ db, params, body, req }) => {
+      const shop = await shopByToken(db, params.token);
+      const input = z.object({ code: z.string().trim().max(40), items: z.array(LineIn).min(1, "add at least one item").max(MAX_LINES), phone: z.string().max(16).optional().default("") }).parse(body);
+      // Guessing codes: a few tries an hour per phone and per shop.
+      const ip = clientIp(req);
+      if (ip) await rateLimit(db, `promo-try:ip:${ip}`, 30, "Too many tries. Please ask the staff.");
+      await rateLimit(db, `promo-try:shop:${shop._id}`, 2000, "Too many tries. Please ask the staff.");
+      const menu = await db.collection("menuItems").find({ shopId: shop._id }).toArray();
+      const items = priceLines(new Map(menu.map((m) => [String(m._id), m])), input.items);
+      const { promo, amount } = await promoDiscount(db, shop, input.code, { subtotal: orderTotal(items), where: "qr", phone: cleanMobile(input.phone) || "" });
+      return { code: promo.code, amount, description: promo.description, payable: payableTotal(shop, items, { amount }) };
     },
     { auth: false },
   ],
@@ -271,6 +310,7 @@ export default [
         reason: o.rejectReason || "",
         items: o.items,
         total: o.total,
+        promo: o.promo || null,
         createdAt: o.createdAt,
         billRequest: o.billRequest || null,
         pay: publicPay(o),
@@ -352,9 +392,9 @@ export default [
       if (method === "end" && pay.rule !== "choose") throw new HttpError(400, "Please pay before your food is cooked.");
       const next =
         method === "upi"
-          ? { ...pay, state: "claimed", method: "upi", utr, claimedAt: new Date(), amount: o.total }
+          ? { ...pay, state: "claimed", method: "upi", utr, claimedAt: new Date(), amount: orderPayable(shop, o) }
           : method === "counter"
-            ? { ...pay, state: "due", method: "counter", amount: o.total }
+            ? { ...pay, state: "due", method: "counter", amount: orderPayable(shop, o) }
             : { ...pay, state: "end", method: "" };
       const u = await db.collection("orders").findOneAndUpdate({ _id: o._id }, { $set: { pay: next, updatedAt: new Date() } }, { returnDocument: "after" });
       return { ok: true, pay: publicPay(u) };
@@ -378,7 +418,7 @@ export default [
       if (action === "confirm") {
         if (!["claimed", "due", "choose"].includes(pay.state)) throw new HttpError(409, pay.state === "paid" ? "Already marked paid." : "Nothing to confirm.");
         if (!OPEN.includes(o.status)) throw new HttpError(409, "This order is closed.");
-        $set = { pay: { ...pay, state: "paid", method: pay.method || "counter", amount: o.total, confirmedAt: now, confirmedBy: user.name }, updatedAt: now };
+        $set = { pay: { ...pay, state: "paid", method: pay.method || "counter", amount: orderPayable(shop, o), confirmedAt: now, confirmedBy: user.name }, updatedAt: now };
         // Pay first: the payment sends the order to the kitchen.
         if (pay.rule === "first" && o.status === "new") Object.assign($set, { status: "accepted", acceptedAt: now, acceptedBy: user.name });
       } else if (action === "reject") {
@@ -513,6 +553,8 @@ export default [
         { returnDocument: "after" }
       );
       if (o && status === "accepted") await takeStock(db, shop._id, o.items, { orderId: o.clientId });
+      // A cancelled order gives its promo code use back.
+      if (o && status === "rejected" && o.promo) await releasePromo(db, shop._id, o.clientId);
       // A paid order that's cancelled: its bill goes to the Deleted bin (stock back if it was cooking).
       if (o && refund && cur0.billClientId) {
         const b = await db.collection("bills").findOne({ shopId: shop._id, clientId: cur0.billClientId, status: "paid" });

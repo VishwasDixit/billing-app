@@ -1,7 +1,7 @@
 // Printable table QR codes (A4 PDF, 6 per page): customers scan to see the menu and order.
 export const orderUrl = (shop, tableId) => `${window.location.origin}/order/${shop.orderToken}?t=${encodeURIComponent(tableId)}`;
 
-export async function downloadTableQrs(shop, tables) {
+export async function downloadTableQrs(shop, tables, { part = 0 } = {}) {
   const [{ jsPDF }, { qrMatrix }] = await Promise.all([import("jspdf"), import("../../shared/billQr.js")]);
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const W = 210, H = 297, cols = 2, rows = 3, cw = W / cols, ch = H / rows;
@@ -33,7 +33,7 @@ export async function downloadTableQrs(shop, tables) {
     doc.text("Scan to see the menu and order", x + cw / 2, y + 87, { align: "center" });
     doc.setFontSize(8);
     doc.setTextColor(120);
-    doc.text("Pay at the counter after your meal", x + cw / 2, y + 92, { align: "center" });
+    doc.text(shop.qrPayment === "first" ? "Pay when you order" : shop.qrPayment === "choose" ? "Pay now or after your meal" : "Pay at the counter after your meal", x + cw / 2, y + 92, { align: "center" });
   }
-  doc.save(`${String(shop.name).replace(/[^\w-]+/g, "-")}-table-QR-codes.pdf`);
+  doc.save(`${String(shop.name).replace(/[^\w-]+/g, "-")}-table-QR-codes${part ? `-part-${part}` : ""}.pdf`);
 }

@@ -58,7 +58,7 @@ const ShopSettings = z
     // Tables for table orders / QR ordering.
     tables: z
       .array(z.object({ id: z.string().trim().regex(/^[A-Za-z0-9_-]{1,20}$/), name: z.string().trim().min(1).max(30) }))
-      .max(100)
+      .max(1000, "You can have up to 1000 tables.")
       .refine((t) => new Set(t.map((x) => x.id)).size === t.length, "table ids must be different"),
     qrOrdering: z.boolean(),
     // When QR customers pay: at the end, they choose (now or at the end), or before it's cooked.
