@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { useApp, accessState } from "../lib/store.jsx";
 import { del, get, post, put } from "../lib/api.js";
 import { fmtDate, money } from "../lib/format.js";
-import { promoSummary, DAY_NAMES, cleanCode } from "../../shared/promo.js";
+import { promoSummary, DAY_NAMES, cleanCode, tablesText, timeText } from "../../shared/promo.js";
+import { storeOpen, hoursText, DEFAULT_CLOSED_MESSAGE } from "../../shared/hours.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { PAPER } from "../printer/receipt.js";
 import { printTest, warmLogo } from "../printer/index.js";
@@ -24,6 +25,7 @@ const pick = (s) => ({
   tables: (s.tables || []).map((t) => ({ ...t })),
   qrOrdering: !!s.qrOrdering,
   qrPayment: s.qrPayment || "end",
+  hours: { enabled: false, open: "10:00", close: "21:00", closedDays: [], message: "", ...(s.hours || {}) },
   askCustomer: s.askCustomer || "optional",
   name: s.name || "",
   logo: s.logo || "",
@@ -293,6 +295,54 @@ async function checkForUpdate(toast) {
   }
 }
 
+// QR orders only during opening hours; a friendly note for customers otherwise.
+function HoursField({ hours: h, onChange }) {
+  const set = (k, v) => onChange({ ...h, [k]: v });
+  const now = storeOpen(h);
+  // Exactly what a customer sees now, or (while open) with the usual opening time.
+  const preview = now.message || (h.message.trim() || DEFAULT_CLOSED_MESSAGE).replaceAll("{open}", timeText(h.open)).replaceAll("{close}", timeText(h.close));
+  return (
+    <div className="field hours-field">
+      <label className="check">
+        <input type="checkbox" checked={h.enabled} onChange={(e) => set("enabled", e.target.checked)} />
+        Take QR orders only during opening hours
+      </label>
+      {h.enabled && (
+        <>
+          <div className="grid2">
+            <Field label="Opens at">
+              <input type="time" required value={h.open} onChange={(e) => set("open", e.target.value)} />
+            </Field>
+            <Field label="Closes at" hint={h.close < h.open ? "Closes after midnight" : undefined}>
+              <input type="time" required value={h.close} onChange={(e) => set("close", e.target.value)} />
+            </Field>
+          </div>
+          <div className="field">
+            Weekly off <span className="hint">Days with no QR orders</span>
+            <div className="day-chips">
+              {[1, 2, 3, 4, 5, 6, 0].map((d) => (
+                <button type="button" key={d} className={"chip" + (h.closedDays.includes(d) ? " on" : "")} aria-pressed={h.closedDays.includes(d)}
+                  onClick={() => set("closedDays", h.closedDays.includes(d) ? h.closedDays.filter((x) => x !== d) : [...h.closedDays, d].slice(0, 6))}>
+                  {DAY_NAMES[d]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Field label="Message when closed" hint="Optional. {open} becomes the next opening time.">
+            <textarea rows={2} maxLength={200} placeholder={DEFAULT_CLOSED_MESSAGE} value={h.message} onChange={(e) => set("message", e.target.value)} />
+          </Field>
+          <div className="small">
+            Customers will see: <i>“{preview}”</i>
+          </div>
+          <div className="small muted">
+            {hoursText(h)} · right now QR ordering is <b>{now.open ? "open" : "closed"}</b>. Staff billing and the menu always work.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 const MAX_TABLES = 1000;
 const PAGE = 50;
 const QR_BATCH = 60; // 10 pages of QR codes per PDF, so big shops don't freeze the phone
@@ -379,7 +429,8 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
           </span>
         </div>
       )}
-      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save your tables.</p>}
+      {tables.length > 0 && f.qrOrdering && <HoursField hours={f.hours} onChange={(h) => set("hours", h)} />}
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save your tables and hours.</p>}
 
       {saved && f.qrOrdering && !dirty && (
         <div className="stack">
@@ -744,6 +795,7 @@ function Diagnostics({ slowMode, onClose }) {
 
 // ---------- Promo codes ----------
 const BLANK_PROMO = {
+  tables: [],
   code: "", description: "", type: "percent", value: 10, maxDiscount: 0, minOrder: 0, validFrom: "", validTo: "", active: true,
   days: [], timeFrom: "", timeTo: "", maxUses: 0, onePerPhone: false, where: "both", showOnMenu: false,
 };
@@ -799,7 +851,7 @@ function PromosCard() {
                     {p.showOnMenu && <span className="tag">On menu</span>}
                   </div>
                   {p.description && <div className="small">{p.description}</div>}
-                  <div className="small muted">{promoSummary(p, cur)} · {WHERE[p.where]}</div>
+                  <div className="small muted">{promoSummary(p, cur)} · {WHERE[p.where]}{p.tables?.length ? ` · ${tablesText(p.tables, shop.tables)}` : " · all tables"}</div>
                   <div className="small muted">
                     Used {p.uses}{p.maxUses > 0 ? ` of ${p.maxUses}` : ""} time{p.uses === 1 && !p.maxUses ? "" : "s"} · {money(p.discountGiven, cur)} given
                     {(p.validFrom || p.validTo) && ` · ${p.validFrom ? fmtDate(p.validFrom) : "now"} to ${p.validTo ? fmtDate(p.validTo) : "no end"}`}
@@ -831,8 +883,30 @@ function PromosCard() {
   );
 }
 
+// Chosen table ids as runs in the shop's order: [firstTable, lastTable, ids].
+function tableRuns(ids, tables) {
+  const want = new Set(ids);
+  const runs = [];
+  let run = null;
+  for (const t of tables) {
+    if (want.has(t.id)) {
+      if (run) (run[1] = t), run[2].push(t.id);
+      else runs.push((run = [t, t, [t.id]]));
+    } else run = null;
+  }
+  return runs;
+}
+
 function PromoModal({ promo, cur, onClose, onSaved }) {
-  const [p, setP] = useState(() => ({ ...BLANK_PROMO, ...promo }));
+  const { shop } = useApp();
+  const tables = shop.tables || [];
+  const [p, setP] = useState(() => ({ ...BLANK_PROMO, ...promo, tables: (promo.tables || []).filter((id) => tables.some((t) => t.id === id)) }));
+  const [from, setFrom] = useState(0);
+  const [to, setTo] = useState(Math.min(9, Math.max(0, tables.length - 1)));
+  const addRange = () => {
+    const [a, b] = from <= to ? [from, to] : [to, from];
+    set("tables", [...new Set([...p.tables, ...tables.slice(a, b + 1).map((t) => t.id)])]);
+  };
   const { busy, error, run } = useAction();
   const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
   const num = (v) => Math.max(0, Number(v) || 0);
@@ -877,6 +951,35 @@ function PromoModal({ promo, cur, onClose, onSaved }) {
             <input type="number" min="0" step="1" inputMode="numeric" value={p.maxUses} onChange={(e) => set("maxUses", e.target.value)} />
           </Field>
         </div>
+        {tables.length > 0 && (
+          <div className="field">
+            Which tables
+            <Seg value={p.tables.length ? "some" : "all"} onChange={(v) => set("tables", v === "all" ? [] : p.tables.length ? p.tables : tables.slice(0, Math.min(10, tables.length)).map((t) => t.id))} options={[["all", "All tables"], ["some", "Only some tables"]]} />
+            {p.tables.length > 0 && (
+              <>
+                <div className="chips">
+                  {tableRuns(p.tables, tables).map(([a, b, ids]) => (
+                    <span key={a.id} className="chip on">
+                      {a === b ? a.name : `${a.name} – ${b.name}`}{" "}
+                      <button type="button" className="chip-x" aria-label="Remove these tables" onClick={() => set("tables", p.tables.filter((id) => !ids.includes(id)))}>✕</button>
+                    </span>
+                  ))}
+                </div>
+                <div className="inline range-add">
+                  <select value={from} onChange={(e) => setFrom(Number(e.target.value))} aria-label="From table">
+                    {tables.map((t, i) => <option key={t.id} value={i}>{t.name}</option>)}
+                  </select>
+                  <span className="muted">to</span>
+                  <select value={to} onChange={(e) => setTo(Number(e.target.value))} aria-label="To table">
+                    {tables.map((t, i) => <option key={t.id} value={i}>{t.name}</option>)}
+                  </select>
+                  <button type="button" className="btn btn-sm" onClick={addRange}>+ Add</button>
+                </div>
+                <span className="hint">{p.tables.length} table{p.tables.length === 1 ? "" : "s"}. At Billing, it works on these tables' bills only, not counter bills.</span>
+              </>
+            )}
+          </div>
+        )}
         <div className="field">
           Works on
           <Seg value={p.where} onChange={(v) => set("where", v)} options={[["both", "Table QR + Billing"], ["qr", "Table QR"], ["billing", "Billing"]]} />

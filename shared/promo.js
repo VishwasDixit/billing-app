@@ -44,12 +44,28 @@ export function promoSummary(p, cur = "₹") {
 
 // What the code takes off this subtotal, or why it can't be used.
 // where: "qr" (customer's phone) or "billing" (staff). usedByPhone: this mobile already used it.
-export function checkPromo(p, { subtotal = 0, where = "billing", at = new Date(), usedByPhone = false, cur = "₹" } = {}) {
+// Chosen tables in the shop's order, joined into runs: "Table 1 – Table 10, Patio 2".
+export function tablesText(ids, shopTables = []) {
+  const want = new Set(ids || []);
+  const runs = [];
+  let run = null;
+  for (const t of shopTables) {
+    if (want.has(t.id)) {
+      if (run) run[1] = t;
+      else runs.push((run = [t, t]));
+    } else run = null;
+  }
+  return runs.map(([a, b]) => (a === b ? a.name : `${a.name} – ${b.name}`)).join(", ");
+}
+
+// table: the table this order or bill is for ("" at the counter). tableNames: tablesText(…) for the message.
+export function checkPromo(p, { subtotal = 0, where = "billing", at = new Date(), usedByPhone = false, cur = "₹", table = "", tableNames = "" } = {}) {
   const no = (reason) => ({ ok: false, reason });
   if (!p || p.archived) return no("That isn't a valid code.");
   if (!p.active) return no("This code is paused right now.");
   if (p.where === "qr" && where !== "qr") return no("This code is only for table QR orders.");
   if (p.where === "billing" && where !== "billing") return no("This code is only for the counter. Please ask the staff.");
+  if (p.tables?.length && !p.tables.includes(table)) return no(`This code works at ${tableNames || "some tables"} only.`);
   const local = new Date(at.getTime() + IST);
   const today = local.toISOString().slice(0, 10);
   if (p.validFrom && today < p.validFrom) return no(`This code starts on ${dateText(p.validFrom)}.`);

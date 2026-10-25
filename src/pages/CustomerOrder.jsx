@@ -59,6 +59,12 @@ export default function CustomerOrder() {
   useEffect(() => {
     get(`/public/shop/${token}`).then(setData, (e) => setError(e.message));
   }, [token]);
+  // Closed for the night: check again every minute so ordering opens on time.
+  useEffect(() => {
+    if (!data?.ordering?.closedForHours) return;
+    const t = setInterval(() => get(`/public/shop/${token}`).then(setData, () => {}), 60000);
+    return () => clearInterval(t);
+  }, [token, data?.ordering?.closedForHours]);
 
   // Keep my recent orders' status fresh.
   useEffect(() => {
@@ -80,6 +86,8 @@ export default function CustomerOrder() {
   }, [token, mine.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const table = data?.tables.find((t) => t.id === tableId);
+  // Offers for this table only (some codes are for some tables).
+  const offers = (data?.offers || []).filter((o) => !o.tables?.length || o.tables.includes(tableId));
   const cur = data?.shop.currency || "₹";
   const categories = useMemo(() => ["All", ...new Set((data?.menu || []).map((m) => m.category))], [data]);
   const shown = (data?.menu || []).filter((m) => (cat === "All" || m.category === cat) && (!q || m.name.toLowerCase().includes(q.toLowerCase())));
@@ -117,7 +125,17 @@ export default function CustomerOrder() {
         )}
       </header>
 
-      {!data.ordering.open && <div className="co-note">{data.ordering.reason} You can still see the menu.</div>}
+      {!data.ordering.open &&
+        (data.ordering.closedForHours ? (
+          <div className="co-closed">
+            <div className="co-closed-moon">🌙</div>
+            <b>{data.ordering.reason}</b>
+            {data.hours && <span className="small muted">Ordering hours: {data.hours}</span>}
+            <span className="small muted">Have a look at the menu meanwhile 👇</span>
+          </div>
+        ) : (
+          <div className="co-note">{data.ordering.reason} You can still see the menu.</div>
+        ))}
 
       {!table && data.ordering.open && (
         <div className="co-tables">
@@ -181,9 +199,9 @@ export default function CustomerOrder() {
         </div>
       ) : (
         <>
-          {data.offers?.length > 0 && data.ordering.open && (
+          {offers.length > 0 && data.ordering.open && (
             <div className="co-offers">
-              {data.offers.map((o) => (
+              {offers.map((o) => (
                 <button key={o.code} className="co-offer" onClick={() => setOfferCode(o.code)} aria-pressed={offerCode === o.code}>
                   <b>🏷 {o.code}</b>
                   <span>{o.description || promoSummary(o, cur)}</span>
@@ -281,7 +299,7 @@ export default function CustomerOrder() {
           setNote={(k, note) => setCart((prev) => new Map(prev).set(k, { ...prev.get(k), note }))}
           onClose={() => setReview(false)}
           payRule={data.payRule}
-          offers={data.offers || []}
+          offers={offers}
           initialCode={offerCode}
           onPlaced={(o) => {
             const next = [...mine, o];
@@ -326,7 +344,7 @@ function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, p
     setChecking(true);
     setPromoErr("");
     try {
-      const r = await post(`/public/shop/${token}/promo`, { code: c, items, phone: mobile });
+      const r = await post(`/public/shop/${token}/promo`, { code: c, items, phone: mobile, table: table.id });
       setPromo({ code: r.code, amount: r.amount });
       setCode(r.code);
     } catch (err) {

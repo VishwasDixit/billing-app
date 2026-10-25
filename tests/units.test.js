@@ -130,3 +130,27 @@ describe("promo code rules", () => {
     expect(promoSummary(p({ maxDiscount: 100, minOrder: 300, days: [1, 2, 3, 4, 5], timeFrom: "15:00", timeTo: "18:00" }))).toBe("10% off up to ₹100 · min ₹300 · Mon–Fri · 3 pm–6 pm");
   });
 });
+
+import { storeOpen, hoursText } from "../shared/hours.js";
+
+describe("opening hours", () => {
+  // IST times on Friday 23 Oct 2026.
+  const ist = (hm, day = "2026-10-23") => new Date(`${day}T${hm}:00+05:30`);
+  const h = { enabled: true, open: "10:00", close: "21:00", closedDays: [] };
+  it("open inside the window, closed outside with when it opens next", () => {
+    expect(storeOpen(h, ist("12:00")).open).toBe(true);
+    expect(storeOpen(h, ist("09:30"))).toMatchObject({ open: false, opensAt: "10 am" });
+    expect(storeOpen(h, ist("21:00"))).toMatchObject({ open: false, opensAt: "10 am tomorrow" });
+    expect(storeOpen(h, ist("09:30")).message).toBe("We're closed right now 😴 We open at 10 am. See you soon! 🙏");
+  });
+  it("skips days off, and late-night windows belong to the day they open", () => {
+    // Saturday off: Friday night after closing opens Sunday.
+    expect(storeOpen({ ...h, closedDays: [6] }, ist("22:00")).opensAt).toBe("10 am on Sunday");
+    const late = { enabled: true, open: "18:00", close: "02:00", closedDays: [6] };
+    expect(storeOpen(late, ist("23:30")).open).toBe(true);
+    expect(storeOpen(late, ist("01:30", "2026-10-24")).open).toBe(true); // Saturday 1:30 am = Friday night
+    expect(storeOpen(late, ist("19:00", "2026-10-24")).open).toBe(false); // Saturday evening: off
+    expect(storeOpen({ ...h, enabled: false }, ist("03:00")).open).toBe(true);
+    expect(hoursText({ ...h, closedDays: [1] })).toBe("10 am – 9 pm · closed Mon");
+  });
+});

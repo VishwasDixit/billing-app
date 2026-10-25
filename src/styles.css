@@ -996,3 +996,10 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .table-tools .input { flex: 1 1 200px; max-width: 320px; }
 .pay-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .bill-opts .promo-on { align-items: center; }
+.chip .chip-x { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 0 0 4px; font: inherit; }
+.range-add { flex-wrap: wrap; gap: 6px; align-items: center; }
+.range-add select { max-width: 140px; }
+.hours-field { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.co-closed { display: grid; gap: 4px; justify-items: center; text-align: center; margin: 8px 0 12px; padding: 18px 16px; border-radius: 16px; background: color-mix(in srgb, var(--accent) 9%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border)); }
+.co-closed-moon { font-size: 34px; line-height: 1; }
+.co-closed b { font-size: 16px; }

@@ -189,3 +189,53 @@ describe("many tables", () => {
     expect((await c("PUT", "/shop", { tables: tables(1001) })).status).toBe(400);
   });
 });
+
+describe("codes for some tables only", () => {
+  it("works at the chosen tables, not at others or at the counter", async () => {
+    const { c, token, tea, order } = await shop("tables-promo@promo.test");
+    await c("POST", "/promos", promo({ code: "WELCOME100", type: "flat", value: 100 }));
+    await c("POST", "/promos", promo({ code: "WELCOME50", type: "flat", value: 50, tables: ["T1"], showOnMenu: true }));
+    expect((await c("GET", "/promos")).body.promos.find((p) => p.code === "WELCOME50").tables).toEqual(["T1"]);
+    // Customer page gets the tables, so it only shows the offer at those tables.
+    expect((await client()("GET", `/public/shop/${token}`)).body.offers[0].tables).toEqual(["T1"]);
+
+    expect((await order({ promo: "WELCOME50", table: "T1" })).body.promo).toMatchObject({ code: "WELCOME50", amount: 50 });
+    const t2 = await order({ promo: "WELCOME50", table: "T2", phone: "9876500009" });
+    expect(t2.status).toBe(400);
+    expect(t2.body.error).toMatch(/Table 1/);
+    expect((await order({ promo: "WELCOME100", table: "T2", phone: "9876500008" })).body.promo.amount).toBe(100);
+    expect((await client()("POST", `/public/shop/${token}/promo`, { code: "WELCOME50", table: "T2", items: [{ itemId: tea.id, qty: 20 }] })).status).toBe(400);
+
+    // Staff: fine on Table 1's bill, not on a counter bill.
+    expect((await c("POST", "/promos/check", { code: "WELCOME50", subtotal: 300, table: "T1" })).body.amount).toBe(50);
+    expect((await c("POST", "/promos/check", { code: "WELCOME50", subtotal: 300 })).body.error).toMatch(/Table 1/);
+    // Tables that don't exist are refused when saving.
+    expect((await c("POST", "/promos", promo({ code: "GHOST", tables: ["T99"] }))).status).toBe(400);
+  });
+});
+
+describe("opening hours for QR orders", () => {
+  const hm = (minsFromNow) => new Date(Date.now() + 5.5 * 3600e3 + minsFromNow * 60e3).toISOString().slice(11, 16);
+  it("takes orders only while open, with a friendly message otherwise", async () => {
+    const { c, token, order } = await shop("hours@promo.test");
+    await c("PUT", "/shop", { hours: { enabled: true, open: hm(120), close: hm(240), closedDays: [], message: "" } });
+    const pub = (await client()("GET", `/public/shop/${token}`)).body;
+    expect(pub.ordering).toMatchObject({ open: false, closedForHours: true });
+    expect(pub.ordering.reason).toMatch(/closed right now/i);
+    expect(pub.ordering.reason).toMatch(/open/i);
+    expect((await order({})).status).toBe(403);
+
+    // Open now (a window around the current time), with the shop's own message kept for later.
+    await c("PUT", "/shop", { hours: { enabled: true, open: hm(-60), close: hm(60), closedDays: [], message: "Kitchen's resting! Back at {open} 🍲" } });
+    expect((await client()("GET", `/public/shop/${token}`)).body.ordering).toMatchObject({ open: true });
+    expect((await order({})).status).toBe(200);
+
+    // Closed today (weekly off), with the custom message.
+    const today = new Date(Date.now() + 5.5 * 3600e3).getUTCDay();
+    await c("PUT", "/shop", { hours: { enabled: true, open: hm(-60), close: hm(60), closedDays: [today], message: "Kitchen's resting! Back at {open} 🍲" } });
+    const off = (await client()("GET", `/public/shop/${token}`)).body.ordering;
+    expect(off.open).toBe(false);
+    expect(off.reason).toMatch(/^Kitchen's resting! Back at /);
+    expect(off.reason).not.toMatch(/\{open\}/);
+  });
+});

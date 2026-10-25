@@ -16,6 +16,7 @@ import { subscriptionStatus, hasPaidFeatures } from "../subscription.js";
 import { rateLimit, clientIp } from "../limits.js";
 import { refreshDailyStock, takeStock, checkAvailable } from "../stock.js";
 import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.js";
+import { storeOpen, hoursText } from "../../shared/hours.js";
 
 export const STATUSES = ["new", "accepted", "preparing", "ready", "served", "billed", "rejected"];
 export const OPEN = ["new", "accepted", "preparing", "ready", "served"];
@@ -77,6 +78,9 @@ async function orderingState(db, shop) {
   const owner = await db.collection("users").findOne({ shopId: shop._id }, { projection: { email: 1 } });
   const status = subscriptionStatus(shop, { isAdmin: !!owner && isAdminEmail(owner.email) });
   if (!hasPaidFeatures(status)) return { open: false, reason: "Ordering from the table isn't available yet. Please order with the staff." };
+  // Opening hours (Settings): outside them, a friendly note instead of the order button.
+  const h = storeOpen(shop.hours);
+  if (!h.open) return { open: false, closedForHours: true, reason: h.message, opensAt: h.opensAt };
   return { open: true };
 }
 
@@ -194,6 +198,7 @@ export default [
         payRule: payRuleOf(shop),
         upi: !!shop.upiId,
         offers: await menuOffers(db, shop),
+        hours: hoursText(shop.hours),
         menu: menu.map((m) => ({
           id: String(m._id),
           name: m.name,
@@ -241,7 +246,7 @@ export default [
       // A promo code: checked here with the server's prices, and one use taken for this order.
       let promo = null;
       if (input.promo) {
-        const { promo: p, amount } = await promoDiscount(db, shop, input.promo, { subtotal: orderTotal(items), where: "qr", phone: input.phone });
+        const { promo: p, amount } = await promoDiscount(db, shop, input.promo, { subtotal: orderTotal(items), where: "qr", phone: input.phone, table: table.id });
         await reservePromo(db, p, { ref: clientId, phone: input.phone, amount });
         promo = { code: p.code, amount };
       }
@@ -283,14 +288,16 @@ export default [
     "/public/shop/:token/promo",
     async ({ db, params, body, req }) => {
       const shop = await shopByToken(db, params.token);
-      const input = z.object({ code: z.string().trim().max(40), items: z.array(LineIn).min(1, "add at least one item").max(MAX_LINES), phone: z.string().max(16).optional().default("") }).parse(body);
+      const input = z
+        .object({ code: z.string().trim().max(40), items: z.array(LineIn).min(1, "add at least one item").max(MAX_LINES), phone: z.string().max(16).optional().default(""), table: z.string().max(20).optional().default("") })
+        .parse(body);
       // Guessing codes: a few tries an hour per phone and per shop.
       const ip = clientIp(req);
       if (ip) await rateLimit(db, `promo-try:ip:${ip}`, 30, "Too many tries. Please ask the staff.");
       await rateLimit(db, `promo-try:shop:${shop._id}`, 2000, "Too many tries. Please ask the staff.");
       const menu = await db.collection("menuItems").find({ shopId: shop._id }).toArray();
       const items = priceLines(new Map(menu.map((m) => [String(m._id), m])), input.items);
-      const { promo, amount } = await promoDiscount(db, shop, input.code, { subtotal: orderTotal(items), where: "qr", phone: cleanMobile(input.phone) || "" });
+      const { promo, amount } = await promoDiscount(db, shop, input.code, { subtotal: orderTotal(items), where: "qr", phone: cleanMobile(input.phone) || "", table: input.table });
       return { code: promo.code, amount, description: promo.description, payable: payableTotal(shop, items, { amount }) };
     },
     { auth: false },

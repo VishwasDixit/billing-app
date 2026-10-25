@@ -61,6 +61,14 @@ const ShopSettings = z
       .max(1000, "You can have up to 1000 tables.")
       .refine((t) => new Set(t.map((x) => x.id)).size === t.length, "table ids must be different"),
     qrOrdering: z.boolean(),
+    // Opening hours for QR orders (India time); outside them customers see a friendly note.
+    hours: z.object({
+      enabled: z.boolean(),
+      open: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use a time like 10:00"),
+      close: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use a time like 21:00"),
+      closedDays: z.array(z.number().int().min(0).max(6)).max(6).default([]),
+      message: z.string().trim().max(200).default(""),
+    }),
     // When QR customers pay: at the end, they choose (now or at the end), or before it's cooked.
     qrPayment: z.enum(["end", "choose", "first"]),
     defaultDiscount: z.object({ type: z.enum(["percent", "flat"]), value: z.number().min(0).max(100000) }),
