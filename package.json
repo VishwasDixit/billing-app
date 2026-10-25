@@ -8,7 +8,8 @@
     "dev:api": "node --watch-path=server --watch-path=shared server/dev.js",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "android:build": "bash android/build.sh"
   },
   "engines": {
     "node": ">=20"

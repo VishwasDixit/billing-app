@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.vercel.billing_app_chi_five.twa",
+      "sha256_cert_fingerprints": [
+        "20:C2:AA:8A:82:FF:46:95:49:65:BA:C3:06:3A:D1:52:D9:23:58:1D:0F:7E:C4:AF:EF:C2:02:B1:52:3E:7E:7B"
+      ]
+    }
+  }
+]

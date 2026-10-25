@@ -9,3 +9,11 @@ Claude.pdf
 .claude/
 .env*
 !.env.example
+# Android build (the signing key lives in ~/billing-keys, never here)
+android/.gradle/
+android/app/build/
+android/build/
+android/out/
+android/local.properties
+*.keystore
+*.jks

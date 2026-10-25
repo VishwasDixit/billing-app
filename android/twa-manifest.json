@@ -1,0 +1,57 @@
+{
+  "packageId": "app.vercel.billing_app_chi_five.twa",
+  "host": "billing-app-chi-five.vercel.app",
+  "name": "Billing – Shop POS",
+  "launcherName": "Billing",
+  "display": "standalone",
+  "themeColor": "#0F766E",
+  "themeColorDark": "#0F766E",
+  "navigationColor": "#0F766E",
+  "navigationColorDark": "#111418",
+  "navigationDividerColor": "#0F766E",
+  "navigationDividerColorDark": "#111418",
+  "backgroundColor": "#F5F6F8",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://billing-app-chi-five.vercel.app/icon-512.png",
+  "maskableIconUrl": "https://billing-app-chi-five.vercel.app/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "/Users/vishwas/billing-keys/upload.keystore",
+    "alias": "upload"
+  },
+  "appVersionCode": 1,
+  "shortcuts": [
+    {
+      "name": "New bill",
+      "shortName": "New bill",
+      "url": "/",
+      "chosenIconUrl": "https://billing-app-chi-five.vercel.app/icon-192.png"
+    },
+    {
+      "name": "Orders",
+      "shortName": "Orders",
+      "url": "/orders",
+      "chosenIconUrl": "https://billing-app-chi-five.vercel.app/icon-192.png"
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://billing-app-chi-five.vercel.app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://billing-app-chi-five.vercel.app/",
+  "minSdkVersion": 21,
+  "orientation": "default",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": [],
+  "displayOverride": []
+}
