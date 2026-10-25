@@ -4,7 +4,7 @@ import { useApp, accessState } from "../lib/store.jsx";
 import { del, get, post, put } from "../lib/api.js";
 import { fmtDate, money } from "../lib/format.js";
 import { promoSummary, DAY_NAMES, cleanCode, tablesText, timeText } from "../../shared/promo.js";
-import { storeOpen, hoursText, DEFAULT_CLOSED_MESSAGE } from "../../shared/hours.js";
+import { storeOpen, hoursText, DEFAULT_CLOSED_MESSAGE, closureActive, istDay } from "../../shared/hours.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { PAPER } from "../printer/receipt.js";
 import { printTest, warmLogo } from "../printer/index.js";
@@ -191,6 +191,7 @@ export default function Settings() {
         </div>
 
         <div className="cards">
+          <HoursCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} />
           <TablesCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} access={access} />
 
           {user.role !== "admin" && <KitchenStaffCard />}
@@ -293,6 +294,62 @@ async function checkForUpdate(toast) {
   } catch {
     toast("Couldn't check right now. Check the internet and try again.");
   }
+}
+
+// Opening hours and closing the shop for a day (both are about QR table orders; billing always works).
+function HoursCard({ f, set, shop, saveShop, dirty }) {
+  const toast = useToast();
+  const { busy, error, run } = useAction();
+  const [closing, setClosing] = useState(null); // null | "days"
+  const [until, setUntil] = useState(istDay());
+  const [message, setMessage] = useState("");
+  const closed = closureActive(shop.closure);
+  const state = storeOpen(shop.hours, new Date(), shop.closure);
+  const close = (u) =>
+    run(async () => {
+      await put("/shop/closure", { until: u, message });
+      await saveShop({});
+      setClosing(null);
+      toast(u ? "Shop closed for QR orders" : "Shop open again");
+    });
+  const untilText = shop.closure?.until === "manual" ? "until you open it" : shop.closure?.until === istDay() ? "for today" : `till ${fmtDate(shop.closure?.until)}`;
+  return (
+    <section className="card stack" id="hours">
+      <h2>Opening hours</h2>
+      <div className={"shop-state " + (state.open ? "open" : "closed")}>
+        <b>{state.open ? "🟢 Open for QR orders" : closed ? `🔴 Shop closed ${untilText}` : "🌙 Closed now (outside opening hours)"}</b>
+        {!state.open && <span className="small">Customers see: “{state.message}”</span>}
+        {!shop.qrOrdering && <span className="small muted">QR ordering is off. Turn it on in Tables &amp; QR ordering for customers to order from tables.</span>}
+      </div>
+
+      {closed ? (
+        <button className="btn btn-primary" disabled={busy} onClick={() => close(null)}>🟢 Open the shop now</button>
+      ) : (
+        <div className="stack">
+          <div className="small muted">Closed today or for a holiday? Close the shop and customers can't order from the table QR. Billing at the counter still works.</div>
+          <div className="btn-row">
+            <button className="btn" disabled={busy} onClick={() => close("today")}>🔴 Close for today</button>
+            <button className="btn" disabled={busy} onClick={() => setClosing(closing ? null : "days")}>📅 Close for some days</button>
+            <button className="btn btn-ghost" disabled={busy} onClick={() => close("manual")}>Close until I open it</button>
+          </div>
+          {closing === "days" && (
+            <div className="inline range-add">
+              <span>Closed till (last closed day)</span>
+              <input type="date" min={istDay()} value={until} onChange={(e) => setUntil(e.target.value)} />
+              <button className="btn btn-sm btn-primary" disabled={busy || !until} onClick={() => close(until)}>Close</button>
+            </div>
+          )}
+          <Field label="Message for customers while closed" hint="Optional. {open} becomes when you're back (tomorrow, a date, or soon).">
+            <textarea rows={2} maxLength={200} placeholder="We're closed today 🙏 See you tomorrow!" value={message} onChange={(e) => setMessage(e.target.value)} />
+          </Field>
+        </div>
+      )}
+      {error && <div className="error">{error}</div>}
+
+      <HoursField hours={f.hours} onChange={(h) => set("hours", h)} />
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save the hours.</p>}
+    </section>
+  );
 }
 
 // QR orders only during opening hours; a friendly note for customers otherwise.
@@ -429,8 +486,7 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
           </span>
         </div>
       )}
-      {tables.length > 0 && f.qrOrdering && <HoursField hours={f.hours} onChange={(h) => set("hours", h)} />}
-      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save your tables and hours.</p>}
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save your tables.</p>}
 
       {saved && f.qrOrdering && !dirty && (
         <div className="stack">

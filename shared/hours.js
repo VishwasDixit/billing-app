@@ -6,8 +6,28 @@ import { timeText } from "./promo.js";
 const IST = 5.5 * 3600e3;
 const DAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 export const DEFAULT_CLOSED_MESSAGE = "We're closed right now 😴 We open at {open}. See you soon! 🙏";
+export const istDay = (at = new Date()) => new Date(at.getTime() + IST).toISOString().slice(0, 10);
+const addDay = (d, n) => new Date(Date.parse(d + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+const shortDate = (d) => new Date(d + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
 
-export function storeOpen(hours, at = new Date()) {
+// The shop closed by hand (Settings › Opening hours): closure = { until: "YYYY-MM-DD" (last closed
+// day) | "manual" (until opened again), message }.
+export const closureActive = (closure, at = new Date()) => !!closure?.until && (closure.until === "manual" || istDay(at) <= closure.until);
+export function closureMessage(closure, at = new Date()) {
+  const manual = closure.until === "manual";
+  const today = closure.until === istDay(at);
+  const back = manual ? "soon" : today ? "tomorrow" : shortDate(addDay(closure.until, 1));
+  const fallback = manual
+    ? "We're closed right now 😴 Please check back soon! 🙏"
+    : today
+      ? "We're closed today 🙏 See you tomorrow!"
+      : "We're closed for a few days 🙏 We'll be back on {open}.";
+  return (closure.message?.trim() || fallback).replaceAll("{open}", back);
+}
+
+// Open for QR orders now? Closed by hand first, then the opening hours.
+export function storeOpen(hours, at = new Date(), closure = null) {
+  if (closureActive(closure, at)) return { open: false, closedByHand: true, message: closureMessage(closure, at) };
   if (!hours?.enabled || !hours.open || !hours.close || hours.open === hours.close) return { open: true };
   const local = new Date(at.getTime() + IST);
   const now = local.toISOString().slice(11, 16);

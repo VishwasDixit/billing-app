@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError, respondRaw } from "../http.js";
 import { subscriptionStatus } from "../subscription.js";
+import { istDay } from "../../shared/hours.js";
 import { checkPassword } from "../auth.js";
 import bcrypt from "bcryptjs";
 import { defaultMenu } from "../seed/grillhive-menu.js";
@@ -144,6 +145,23 @@ export default [
   // The secret part of the table QR links. A new one makes old printed QR codes stop working.
   // Bill safety: a 4-digit owner PIN for editing, deleting and restoring bills.
   // Setting or removing it needs the account password, so a cashier using the shop login can't.
+  // Close the shop for QR orders: today, until a date, or until opened again (null = open now).
+  // Saved straight away (no "Save settings"), and the counter staff can do it too.
+  [
+    "PUT",
+    "/shop/closure",
+    async ({ db, shop, user, body }) => {
+      const { until, message } = z
+        .object({ until: z.union([z.literal("today"), z.literal("manual"), z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.null()]), message: z.string().trim().max(200).optional().default("") })
+        .parse(body);
+      const day = until === "today" ? istDay() : until;
+      if (day && day !== "manual" && day < istDay()) throw new HttpError(400, "Pick today or a later date.");
+      const update = day ? { $set: { closure: { until: day, message, at: new Date(), by: user.name } } } : { $set: { closure: null } };
+      const updated = await db.collection("shops").findOneAndUpdate({ _id: shop._id }, update, { returnDocument: "after", projection: { logo: 0, qrImage: 0 } });
+      return publicShop(updated, user.role === "admin");
+    },
+    { manager: true },
+  ],
   [
     "PUT",
     "/shop/bill-pin",

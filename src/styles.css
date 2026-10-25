@@ -1003,3 +1003,6 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .co-closed { display: grid; gap: 4px; justify-items: center; text-align: center; margin: 8px 0 12px; padding: 18px 16px; border-radius: 16px; background: color-mix(in srgb, var(--accent) 9%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border)); }
 .co-closed-moon { font-size: 34px; line-height: 1; }
 .co-closed b { font-size: 16px; }
+.shop-state { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); }
+.shop-state.open { background: color-mix(in srgb, var(--good, #16a34a) 9%, var(--panel)); }
+.shop-state.closed { background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }

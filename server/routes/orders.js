@@ -79,7 +79,7 @@ async function orderingState(db, shop) {
   const status = subscriptionStatus(shop, { isAdmin: !!owner && isAdminEmail(owner.email) });
   if (!hasPaidFeatures(status)) return { open: false, reason: "Ordering from the table isn't available yet. Please order with the staff." };
   // Opening hours (Settings): outside them, a friendly note instead of the order button.
-  const h = storeOpen(shop.hours);
+  const h = storeOpen(shop.hours, new Date(), shop.closure);
   if (!h.open) return { open: false, closedForHours: true, reason: h.message, opensAt: h.opensAt };
   return { open: true };
 }

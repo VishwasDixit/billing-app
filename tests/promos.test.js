@@ -232,10 +232,39 @@ describe("opening hours for QR orders", () => {
 
     // Closed today (weekly off), with the custom message.
     const today = new Date(Date.now() + 5.5 * 3600e3).getUTCDay();
-    await c("PUT", "/shop", { hours: { enabled: true, open: hm(-60), close: hm(60), closedDays: [today], message: "Kitchen's resting! Back at {open} 🍲" } });
+    await c("PUT", "/shop", { hours: { enabled: true, open: hm(-60), close: hm(60), closedDays: [today, (today + 6) % 7], message: "Kitchen's resting! Back at {open} 🍲" } }); // (the window may start yesterday near midnight)
     const off = (await client()("GET", `/public/shop/${token}`)).body.ordering;
     expect(off.open).toBe(false);
     expect(off.reason).toMatch(/^Kitchen's resting! Back at /);
     expect(off.reason).not.toMatch(/\{open\}/);
+  });
+});
+
+describe("closing the shop for a day", () => {
+  it("closes QR ordering today, for some days, or until reopened, with a message", async () => {
+    const { c, token, order } = await shop("closed@promo.test");
+    const ordering = async () => (await client()("GET", `/public/shop/${token}`)).body.ordering;
+    const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+
+    const r = await c("PUT", "/shop/closure", { until: "today", message: "" });
+    expect(r.body.closure).toMatchObject({ until: today });
+    expect(await ordering()).toMatchObject({ open: false, closedForHours: true });
+    expect((await ordering()).reason).toMatch(/closed today/i);
+    expect((await order({})).status).toBe(403);
+
+    await c("PUT", "/shop/closure", { until: "2099-01-05", message: "Diwali holidays 🪔 Back on {open}!" });
+    expect((await ordering()).reason).toBe("Diwali holidays 🪔 Back on 6 Jan!");
+
+    await c("PUT", "/shop/closure", { until: "manual", message: "" });
+    expect((await ordering()).reason).toMatch(/closed right now/i);
+
+    // Managers can open it again; dates in the past are refused.
+    const mgr = (await c("POST", "/staff", { name: "Sita", role: "manager", pin: "2222", wage: 1 })).body;
+    const code = (await c("GET", "/staff/code")).body.code;
+    const m = client();
+    await m("POST", "/auth/staff-login", { code, staffId: mgr.id, pin: "2222" });
+    expect((await m("PUT", "/shop/closure", { until: null })).body.closure).toBeNull();
+    expect((await ordering()).open).toBe(true);
+    expect((await c("PUT", "/shop/closure", { until: "2020-01-01" })).status).toBe(400);
   });
 });

@@ -70,7 +70,7 @@ export default function Orders() {
   const orders = allOrders(st);
   const waiting = orders.filter((o) => o.status === "new");
   const tables = shop.tables || [];
-  const qrHours = shop.qrOrdering && shop.hours?.enabled ? storeOpen(shop.hours) : null;
+  const qrHours = shop.qrOrdering ? storeOpen(shop.hours, new Date(), shop.closure) : null;
   const byTable = useMemo(() => {
     const m = new Map(tables.map((t) => [t.id, []]));
     for (const o of orders) if (isOpen(o) && o.status !== "new") (m.get(o.table) || m.set(o.table, []).get(o.table)).push(o);
@@ -153,7 +153,7 @@ export default function Orders() {
       <div className="page-head">
         <h1>Orders</h1>
         <div className="btn-row">
-          {qrHours && !qrHours.open && <span className="tag">🌙 QR orders closed · opens {qrHours.opensAt}</span>}
+          {qrHours && !qrHours.open && <span className="tag">{qrHours.closedByHand ? "🔴 Shop closed for QR orders" : `🌙 QR orders closed · opens ${qrHours.opensAt}`}</span>}
           {!st.online && <span className="tag warn">Offline · orders saved on this phone</span>}
           {st.pending.length > 0 && <span className="tag warn">{st.pending.length} to upload</span>}
           <button className="btn" onClick={() => setStockOpen(true)}>🥟 Stock</button>
