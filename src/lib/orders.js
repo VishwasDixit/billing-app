@@ -172,6 +172,14 @@ export async function closeTable(table) {
   await kvSet(key("orders"), state.orders);
 }
 
+// The table left without paying: its unpaid orders close as "unpaid". Returns the customers marked.
+export async function leftUnpaid(table) {
+  const r = await post("/orders/left-unpaid", { table });
+  set({ orders: state.orders.map((o) => (o.table === table && OPEN.includes(o.status) && !o.billClientId ? { ...o, status: "unpaid" } : o)) });
+  await kvSet(key("orders"), state.orders);
+  return r;
+}
+
 // Staff confirm a customer's "I have paid" (UPI).
 export async function confirmPayment(claim, mode = "upi") {
   await post(`/bills/${claim.clientId}/confirm-payment`, { mode });

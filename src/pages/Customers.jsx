@@ -93,6 +93,8 @@ export default function Customers() {
               >
                 <td>
                   <b>{c.name}</b> {c.pending && <span className="tag warn">not synced</span>}
+                  {c.payLaterBlocked && <span className="tag bad">Must pay first</span>}
+                  {c.unpaidCount > 0 && !c.payLaterBlocked && <span className="tag warn">didn't pay ×{c.unpaidCount}</span>}
                   <div className="muted small">{c.phone || "No phone"}{c.lastRemindedAt ? ` · reminded ${timeAgo(c.lastRemindedAt)}` : ""}</div>
                 </td>
                 <td className="muted small">

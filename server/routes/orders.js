@@ -17,8 +17,10 @@ import { rateLimit, clientIp } from "../limits.js";
 import { refreshDailyStock, takeStock, checkAvailable } from "../stock.js";
 import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.js";
 import { storeOpen, hoursText } from "../../shared/hours.js";
+import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
 
-export const STATUSES = ["new", "accepted", "preparing", "ready", "served", "billed", "rejected"];
+// "unpaid": the table left without paying (closed by staff; not a sale).
+export const STATUSES = ["new", "accepted", "preparing", "ready", "served", "billed", "rejected", "unpaid"];
 export const OPEN = ["new", "accepted", "preparing", "ready", "served"];
 const MAX_LINES = 60;
 
@@ -132,7 +134,8 @@ async function createOrderBill(db, shop, o, user) {
   const r = await db.collection("counters").findOneAndUpdate({ _id: `bills:${shop._id}:P` }, { $inc: { n: 1 } }, { upsert: true, returnDocument: "after" });
   const t = computeTotals(o.items, promoOff(o.promo), shop.gstPercent || 0);
   const now = new Date();
-  const mode = o.pay?.method === "upi" ? "upi" : "cash";
+  const online = o.pay?.method === "online";
+  const mode = online ? cfBillMode(o.pay.paymentGroup) : o.pay?.method === "upi" ? "upi" : "cash";
   const bill = {
     shopId: shop._id,
     clientId,
@@ -158,6 +161,7 @@ async function createOrderBill(db, shop, o, user) {
     paymentConfirmedAt: now,
     paymentConfirmedBy: user.name,
     ...(o.promo && { promo: { code: o.promo.code, source: "qr" } }),
+    ...(online && { paymentGateway: { name: "cashfree", orderId: o.pay.online?.cfOrderId, paymentId: o.pay.paymentId || "", group: o.pay.paymentGroup || "" } }),
   };
   try {
     await db.collection("bills").insertOne(bill);
@@ -174,11 +178,73 @@ async function createOrderBill(db, shop, o, user) {
 // Order pay states: end · choose (not decided) · due (waiting for payment) · claimed (says paid by UPI)
 // · paid · refundDue (paid, then the order was rejected) · refunded.
 export const payRuleOf = (shop) => (["choose", "first"].includes(shop.qrPayment) ? shop.qrPayment : "end");
-const initialPay = (rule, total) => ({ rule, state: rule === "first" ? "due" : rule === "choose" ? "choose" : "end", amount: total });
+const initialPay = (rule, total, payLater = true) => ({ rule, state: rule === "first" ? "due" : rule === "choose" ? "choose" : "end", amount: total, payLater });
 const publicPay = (o) => {
   const p = o.pay || { rule: "end", state: "end", amount: o.total };
-  return { rule: p.rule, state: p.state, amount: p.amount ?? o.total, method: p.method || "", notReceived: !!p.notReceivedAt, confirmedAt: p.confirmedAt || null };
+  return {
+    rule: p.rule, state: p.state, amount: p.amount ?? o.total, method: p.method || "", notReceived: !!p.notReceivedAt, confirmedAt: p.confirmedAt || null,
+    // May they pay later (at the table or counter)? And did their last online payment fail?
+    payLater: p.payLater !== false,
+    failed: !!p.failedAt && !["paid", "refundDue", "refunded"].includes(p.state),
+  };
 };
+
+// Paying later (at the table or counter): the shop's rule, and this customer's block.
+const payLaterOk = (shop, customer) => (shop.payLater === "none" ? false : shop.payLater === "all" ? true : !customer?.payLaterBlocked);
+// After a failed online payment with the shop's "cancel" rule, paying later isn't offered any more.
+const canPayLater = (shop, pay) => pay.payLater !== false && !(pay.failedAt && shop.payFail === "cancel");
+
+const UNPAID_MINUTES = 15;
+// "Must pay online" shops: pay-first orders still unpaid after 15 minutes are cancelled
+// (checked whenever orders are loaded; no scheduled job needed).
+async function expireUnpaid(db, shop) {
+  if (shop.payFail !== "cancel" || !shop.gateway) return;
+  const old = await db
+    .collection("orders")
+    .find({ shopId: shop._id, status: "new", "pay.rule": "first", "pay.state": "due", createdAt: { $lt: new Date(Date.now() - UNPAID_MINUTES * 60e3) } }, { projection: { clientId: 1, promo: 1 } })
+    .toArray();
+  for (const o of old) {
+    const now = new Date();
+    const r = await db
+      .collection("orders")
+      .updateOne({ _id: o._id, status: "new", "pay.state": "due" }, { $set: { status: "rejected", rejectReason: `Not paid in ${UNPAID_MINUTES} minutes`, rejectedAt: now, rejectedBy: "Auto", updatedAt: now } });
+    if (r.modifiedCount && o.promo) await releasePromo(db, shop._id, o.clientId);
+  }
+}
+
+// Cashfree says this payment went through: the order is paid (exactly once), its bill made, and a
+// pay-first order goes to the kitchen. Wrong amounts are flagged, never accepted.
+async function approveOnline(db, shop, cfOrderId, { amount, payment }) {
+  const o = await db.collection("orders").findOne({ shopId: shop._id, "pay.online.cfOrderId": cfOrderId });
+  if (!o || ["paid", "refundDue", "refunded"].includes(o.pay.state)) return o;
+  const now = new Date();
+  if (Math.abs(Number(amount) - o.pay.online.amount) > 0.009) {
+    await db.collection("orders").updateOne({ _id: o._id }, { $set: { "pay.mismatch": { amount: Number(amount), at: now }, updatedAt: now } });
+    return o;
+  }
+  const paid = {
+    "pay.method": "online", "pay.amount": o.pay.online.amount, "pay.paymentId": String(payment?.cf_payment_id || ""), "pay.paymentGroup": payment?.payment_group || "",
+    "pay.confirmedAt": now, "pay.confirmedBy": "Online (Cashfree)", updatedAt: now,
+  };
+  // Paid for an order that was cancelled meanwhile: the money must go back.
+  const closed = !OPEN.includes(o.status);
+  const $set = { ...paid, "pay.state": closed ? "refundDue" : "paid" };
+  if (!closed && o.pay.rule === "first" && o.status === "new") Object.assign($set, { status: "accepted", acceptedAt: now, acceptedBy: "Online payment" });
+  const u = await db.collection("orders").findOneAndUpdate({ _id: o._id, status: o.status, "pay.state": o.pay.state }, { $set, $unset: { "pay.failedAt": "" } }, { returnDocument: "after" });
+  if (!u) return db.collection("orders").findOne({ _id: o._id }); // the other signal got there first
+  if ($set.status === "accepted") await takeStock(db, shop._id, u.items, { orderId: u.clientId });
+  if (!closed) await createOrderBill(db, shop, u, { name: "Online (Cashfree)" });
+  return db.collection("orders").findOne({ _id: o._id });
+}
+
+async function markOnlineFailed(db, shop, cfOrderId) {
+  await db
+    .collection("orders")
+    .updateOne({ shopId: shop._id, "pay.online.cfOrderId": cfOrderId, "pay.state": { $nin: ["paid", "refundDue", "refunded"] } }, { $set: { "pay.failedAt": new Date(), updatedAt: new Date() } });
+}
+
+// Where Cashfree sends the customer back, and its webhook: this app's own address.
+const appOrigin = (req) => process.env.APP_URL || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers["x-forwarded-host"] || req.headers.host}`;
 
 export default [
   // ---------- Public: the customer's phone after scanning a table QR ----------
@@ -198,6 +264,7 @@ export default [
         payRule: payRuleOf(shop),
         upi: !!shop.upiId,
         offers: await menuOffers(db, shop),
+        online: !!shop.gateway?.name,
         hours: hoursText(shop.hours),
         menu: menu.map((m) => ({
           id: String(m._id),
@@ -267,7 +334,8 @@ export default [
         total: orderTotal(items),
         status: "new",
         ...(promo && { promo }),
-        pay: initialPay(payRuleOf(shop), payableTotal(shop, items, promo)),
+        // Not allowed to pay later (shop rule or blocked customer): pay before it's cooked.
+        pay: payLaterOk(shop, customer) ? initialPay(payRuleOf(shop), payableTotal(shop, items, promo)) : initialPay("first", payableTotal(shop, items, promo), false),
         customerKey: crypto.randomBytes(12).toString("base64url"),
         createdAt: now,
         updatedAt: now,
@@ -308,6 +376,7 @@ export default [
     "/public/shop/:token/orders/:id",
     async ({ db, params, query }) => {
       const shop = await shopByToken(db, params.token);
+      await expireUnpaid(db, shop);
       const o = await customerOrder(db, shop, params.id, query.k);
       const bill = o.billClientId ? await db.collection("bills").findOne({ shopId: shop._id, clientId: o.billClientId }) : null;
       return {
@@ -318,6 +387,8 @@ export default [
         items: o.items,
         total: o.total,
         promo: o.promo || null,
+        online: !!shop.gateway?.name,
+        laterOk: canPayLater(shop, o.pay || {}),
         createdAt: o.createdAt,
         billRequest: o.billRequest || null,
         pay: publicPay(o),
@@ -397,6 +468,7 @@ export default [
       if (!["choose", "due", "end"].includes(pay.state)) return { ok: true, pay: publicPay(o) };
       if (method === "upi" && !shop.upiId) throw new HttpError(400, "Online payment isn't set up here. Please pay at the counter.");
       if (method === "end" && pay.rule !== "choose") throw new HttpError(400, "Please pay before your food is cooked.");
+      if (method === "end" && !canPayLater(shop, pay)) throw new HttpError(400, "Please pay online for this order.");
       const next =
         method === "upi"
           ? { ...pay, state: "claimed", method: "upi", utr, claimedAt: new Date(), amount: orderPayable(shop, o) }
@@ -409,6 +481,81 @@ export default [
     { auth: false },
   ],
 
+  // Pay this order online through the shop's own Cashfree account. The amount is the server's.
+  [
+    "POST",
+    "/public/shop/:token/orders/:id/pay-online",
+    async ({ db, params, body, req }) => {
+      const shop = await shopByToken(db, params.token);
+      const { key } = z.object({ key: z.string() }).parse(body);
+      const o = await customerOrder(db, shop, params.id, key);
+      const gw = shopGateway(shop);
+      if (!gw) throw new HttpError(400, "Online payment isn't set up here. Please pay at the counter.");
+      await rateLimit(db, `qr-pay:${o.clientId}`, 10, "Too many tries. Please ask the staff.");
+      if (!OPEN.includes(o.status)) throw new HttpError(409, o.status === "rejected" ? "This order was cancelled." : "This order is already billed. Please pay the bill.");
+      const pay = o.pay || initialPay("end", o.total);
+      if (["paid", "refundDue", "refunded"].includes(pay.state)) return { pay: publicPay(o) };
+      const amount = round2(orderPayable(shop, o));
+      const cfOrderId = `${o.orderNo}_${o.clientId.slice(0, 8)}_${Date.now().toString(36)}`.replace(/[^\w-]/g, "");
+      const origin = appOrigin(req);
+      const cfo = await cfCreateOrder(gw, {
+        order_id: cfOrderId,
+        order_amount: amount,
+        order_currency: "INR",
+        customer_details: { customer_id: `c_${o.customerPhone || o.clientId.slice(0, 12)}`, customer_phone: o.customerPhone || "9999999999", customer_name: (o.customerName || "Customer").slice(0, 40) },
+        order_meta: {
+          return_url: `${origin}/order/${params.token}?t=${encodeURIComponent(o.table)}&paid=${o.clientId}`,
+          notify_url: `${origin}/api/public/pay/cashfree/${shop._id}`,
+        },
+        order_note: `Order #${o.orderNo} · ${o.tableName || o.table}`,
+      });
+      await db.collection("orders").updateOne({ _id: o._id }, { $set: { "pay.online": { gateway: "cashfree", cfOrderId, amount, createdAt: new Date() }, updatedAt: new Date() } });
+      return { paymentSessionId: cfo.payment_session_id, cfOrderId, mode: sdkMode(gw.mode), amount };
+    },
+    { auth: false },
+  ],
+  // Back from Cashfree (or waiting): the server asks Cashfree itself, never trusting the phone.
+  [
+    "GET",
+    "/public/shop/:token/orders/:id/pay-online",
+    async ({ db, params, query }) => {
+      const shop = await shopByToken(db, params.token);
+      let o = await customerOrder(db, shop, params.id, query.k);
+      const gw = shopGateway(shop);
+      if (gw && o.pay?.online?.cfOrderId && !["paid", "refundDue", "refunded"].includes(o.pay.state)) {
+        const r = await cfOrderResult(gw, o.pay.online.cfOrderId);
+        if (r.paid) o = await approveOnline(db, shop, o.pay.online.cfOrderId, { amount: r.payment?.payment_amount ?? r.amount, payment: r.payment });
+        else if (["FAILED", "USER_DROPPED", "CANCELLED"].includes(r.payment?.payment_status)) {
+          await markOnlineFailed(db, shop, o.pay.online.cfOrderId);
+          o = await db.collection("orders").findOne({ _id: o._id });
+        }
+      }
+      return { status: o.status, pay: publicPay(o), billNo: o.billNo || null, laterOk: canPayLater(shop, o.pay || {}) };
+    },
+    { auth: false },
+  ],
+  // Cashfree's webhook for a shop's payments (signed with that shop's secret).
+  [
+    "POST",
+    "/public/pay/cashfree/:shopId",
+    async ({ db, params, req, raw, body }) => {
+      if (!/^[a-f0-9]{24}$/.test(params.shopId)) throw new HttpError(404, "Not found.");
+      const { ObjectId } = await import("mongodb");
+      const shop = await db.collection("shops").findOne({ _id: new ObjectId(params.shopId) }, { projection: { logo: 0, qrImage: 0 } });
+      const gw = shopGateway(shop);
+      if (!gw) throw new HttpError(404, "Not found.");
+      if (!cfWebhookOk(String(raw || ""), req.headers["x-webhook-timestamp"], req.headers["x-webhook-signature"], gw.secret)) throw new HttpError(400, "Bad signature.");
+      const cfOrderId = body?.data?.order?.order_id;
+      const payment = body?.data?.payment;
+      if (cfOrderId && payment) {
+        if (payment.payment_status === "SUCCESS") await approveOnline(db, shop, cfOrderId, { amount: payment.payment_amount, payment });
+        else if (["FAILED", "USER_DROPPED", "CANCELLED"].includes(payment.payment_status)) await markOnlineFailed(db, shop, cfOrderId);
+      }
+      return { ok: true };
+    },
+    { auth: false },
+  ],
+
   // ---------- Staff ----------
   // Staff check a QR order's payment: received (pay-first orders then go to the kitchen),
   // not received, or a refund handed back for a paid order that was cancelled.
@@ -416,7 +563,7 @@ export default [
     "POST",
     "/orders/:id/payment",
     async ({ db, shop, params, body, user }) => {
-      const { action } = z.object({ action: z.enum(["confirm", "reject", "refunded"]) }).parse(body);
+      const { action } = z.object({ action: z.enum(["confirm", "reject", "refunded", "refund-online"]) }).parse(body);
       const o = await db.collection("orders").findOne({ shopId: shop._id, clientId: params.id });
       if (!o) throw new HttpError(404, "Order not found.");
       const pay = o.pay || initialPay("end", o.total);
@@ -431,6 +578,13 @@ export default [
       } else if (action === "reject") {
         if (pay.state !== "claimed") throw new HttpError(409, "Nothing to reject.");
         $set = { pay: { ...pay, state: pay.rule === "first" ? "due" : "choose", method: "", notReceivedAt: now }, updatedAt: now };
+      } else if (action === "refund-online") {
+        // Paid online, then cancelled: Cashfree sends the money back to the customer.
+        if (pay.state !== "refundDue" || pay.method !== "online" || !pay.online) throw new HttpError(409, "No online refund is due.");
+        const gw = shopGateway(shop);
+        if (!gw) throw new HttpError(400, "Cashfree isn't connected any more. Refund from the Cashfree dashboard, then mark it refunded.");
+        const r = await cfRefund(gw, pay.online.cfOrderId, { amount: pay.amount, refundId: `r_${pay.online.cfOrderId}`.slice(0, 40), note: `Order #${o.orderNo} cancelled` });
+        $set = { pay: { ...pay, state: "refunded", refundedAt: now, refundedBy: user.name, refund: { id: r.refund_id, status: r.refund_status || "PENDING" } }, updatedAt: now };
       } else {
         if (pay.state !== "refundDue") throw new HttpError(409, "No refund is due.");
         $set = { pay: { ...pay, state: "refunded", refundedAt: now, refundedBy: user.name }, updatedAt: now };
@@ -455,6 +609,7 @@ export default [
     "GET",
     "/orders",
     async ({ db, shop }) => {
+      await expireUnpaid(db, shop);
       const since = new Date(Date.now() - 12 * 3600e3);
       const list = await db
         .collection("orders")
@@ -474,6 +629,31 @@ export default [
       };
     },
     { kitchen: true },
+  ],
+  // The table left without paying: its unpaid orders close as "unpaid" (not sales), and each
+  // customer gets a mark; at the shop's limit they must pay online from then on.
+  [
+    "POST",
+    "/orders/left-unpaid",
+    async ({ db, shop, body, user }) => {
+      const { table } = z.object({ table: z.string().max(20) }).parse(body);
+      const list = await db.collection("orders").find({ shopId: shop._id, table, status: { $in: OPEN }, billClientId: { $exists: false } }).toArray();
+      if (!list.length) throw new HttpError(409, "Nothing unpaid on this table.");
+      const now = new Date();
+      await db.collection("orders").updateMany({ _id: { $in: list.map((o) => o._id) } }, { $set: { status: "unpaid", unpaidAt: now, unpaidBy: user.name, updatedAt: now } });
+      const ids = [...new Set(list.map((o) => o.customer?.clientId).filter(Boolean))];
+      const customers = [];
+      for (const clientId of ids) {
+        let c = await db.collection("customers").findOneAndUpdate({ shopId: shop._id, clientId }, { $inc: { unpaidCount: 1 }, $set: { lastUnpaidAt: now } }, { returnDocument: "after" });
+        if (!c) continue;
+        if (shop.blockAfter > 0 && c.unpaidCount >= shop.blockAfter && !c.payLaterBlocked) {
+          c = await db.collection("customers").findOneAndUpdate({ _id: c._id }, { $set: { payLaterBlocked: true } }, { returnDocument: "after" });
+        }
+        customers.push({ id: String(c._id), name: c.name, phone: c.phone, unpaidCount: c.unpaidCount, blocked: !!c.payLaterBlocked });
+      }
+      return { closed: list.length, customers };
+    },
+    { manager: true },
   ],
   // Free a table whose orders were all paid (and billed) while ordering.
   [

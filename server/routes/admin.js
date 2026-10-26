@@ -293,7 +293,7 @@ export default [
     "/admin/shops/:id/export",
     async ({ db, params }) => {
       const shopId = oid(params.id);
-      const shop = await db.collection("shops").findOne({ _id: shopId }, { projection: { logo: 0, qrImage: 0 } });
+      const shop = await db.collection("shops").findOne({ _id: shopId }, { projection: { logo: 0, qrImage: 0, billPinHash: 0, "gateway.secretBox": 0 } });
       if (!shop) throw new HttpError(404, "Shop not found.");
       const all = (name, sort = { createdAt: 1 }) => db.collection(name).find({ shopId }).sort(sort).toArray();
       const [users, menu, bills, customers, customerPayments, expenses, payments, help] = await Promise.all([

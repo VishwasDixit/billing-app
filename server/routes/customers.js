@@ -44,7 +44,7 @@ export const cleanMobile = (p) => {
 // The customer with this mobile number, or a new one (QR orders and order bills).
 export async function upsertCustomerByPhone(db, shopId, { name, phone }) {
   const found = await db.collection("customers").findOne({ shopId, phone: { $in: [phone, `+91${phone}`, `+91 ${phone}`, `0${phone}`] } });
-  if (found) return { clientId: found.clientId, name: found.name, phone: found.phone };
+  if (found) return { clientId: found.clientId, name: found.name, phone: found.phone, payLaterBlocked: !!found.payLaterBlocked };
   // phoneKey is unique per shop, so two orders from one number at the same moment make one customer.
   const now = new Date();
   const c = { clientId: crypto.randomUUID(), name, phone };
@@ -54,11 +54,11 @@ export async function upsertCustomerByPhone(db, shopId, { name, phone }) {
       { $setOnInsert: { shopId, ...c, phoneKey: phone, address: "", note: "", language: "", createdAt: now } },
       { upsert: true, returnDocument: "after" }
     );
-    return { clientId: r.clientId, name: r.name, phone: r.phone };
+    return { clientId: r.clientId, name: r.name, phone: r.phone, payLaterBlocked: !!r.payLaterBlocked };
   } catch (err) {
     if (err?.code !== 11000) throw err;
     const r = await db.collection("customers").findOne({ shopId, phoneKey: phone });
-    return { clientId: r.clientId, name: r.name, phone: r.phone };
+    return { clientId: r.clientId, name: r.name, phone: r.phone, payLaterBlocked: !!r.payLaterBlocked };
   }
 }
 
@@ -103,6 +103,9 @@ function summary(c, b) {
     lastBillAt: cr?.lastBillAt || null,
     lastPaymentAt: pd?.lastPaymentAt || null,
     lastRemindedAt: c.lastRemindedAt || null,
+    // "Left without paying" marks, and whether they must pay online (no paying later).
+    unpaidCount: c.unpaidCount || 0,
+    payLaterBlocked: !!c.payLaterBlocked,
     due,
     settled: due <= 0,
   };
@@ -160,6 +163,18 @@ async function customerSummary(db, shop, c) {
 }
 
 export default [
+  // Must this customer pay online (no paying at the table or counter later)?
+  [
+    "PUT",
+    "/customers/:id/pay-later",
+    async ({ db, shop, params, body }) => {
+      const c = await findCustomer(db, shop, params.id);
+      const { blocked } = z.object({ blocked: z.boolean() }).parse(body);
+      const u = await db.collection("customers").findOneAndUpdate({ _id: c._id }, { $set: { payLaterBlocked: blocked, ...(!blocked && { unpaidCount: 0 }), updatedAt: new Date() } }, { returnDocument: "after" });
+      return customerSummary(db, shop, u);
+    },
+    { manager: true },
+  ],
   [
     "GET",
     "/customers",

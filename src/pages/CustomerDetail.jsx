@@ -56,6 +56,31 @@ export default function CustomerDetail() {
         <button className="btn" onClick={() => setEditing(true)}>Edit</button>
       </div>
 
+      {(c.payLaterBlocked || c.unpaidCount > 0) && (
+        <div className={"card shop-state " + (c.payLaterBlocked ? "closed" : "")} style={{ marginBottom: 16 }}>
+          <b>{c.payLaterBlocked ? "🔒 Must pay before their food is cooked" : `⚠️ Left without paying ${c.unpaidCount} time${c.unpaidCount === 1 ? "" : "s"}`}</b>
+          <span className="small muted">
+            {c.unpaidCount > 0 && `Left without paying ${c.unpaidCount} time${c.unpaidCount === 1 ? "" : "s"}. `}
+            {c.payLaterBlocked ? "Their QR orders must be paid first (online, or at the counter before cooking)." : "They can still pay after eating."}
+          </span>
+        </div>
+      )}
+      <label className="check" style={{ marginBottom: 16 }}>
+        <input
+          type="checkbox"
+          checked={c.payLaterBlocked}
+          disabled={busy}
+          onChange={(e) =>
+            run(async () => {
+              const u = await put(`/customers/${id}/pay-later`, { blocked: e.target.checked });
+              setData((d) => ({ ...d, customer: u }));
+              toast(u.payLaterBlocked ? `${c.name} must pay first from now on` : `${c.name} can pay later again`);
+            })
+          }
+        />
+        Must pay first (no paying after eating on QR orders)
+      </label>
+
       <div className="card" style={{ marginBottom: 16, display: "flex", gap: 16, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
         <div>
           <div className="muted small">{c.due > 0 ? "Total due" : c.due < 0 ? "Advance paid" : "Account"}</div>

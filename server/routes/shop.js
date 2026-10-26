@@ -4,6 +4,8 @@ import { ObjectId } from "mongodb";
 import { HttpError, respondRaw } from "../http.js";
 import { subscriptionStatus } from "../subscription.js";
 import { istDay } from "../../shared/hours.js";
+import { encryptSecret } from "../payments/keys.js";
+import { keysWork } from "../payments/cashfree.js";
 import { checkPassword } from "../auth.js";
 import bcrypt from "bcryptjs";
 import { defaultMenu } from "../seed/grillhive-menu.js";
@@ -18,9 +20,12 @@ const MAX_PHOTO = 50 * 1024; // decoded bytes; the phone resizes photos to ~15â€
 export const MAX_PHOTOS_PER_SHOP = 150;
 const PHOTO_URL = /^\/api\/menu-images\/[a-f0-9]{24}$/;
 
+// The gateway's secret never leaves the server: only which gateway, test or live, and the App ID's end.
+export const publicGateway = (g) => (g?.name ? { name: g.name, mode: g.mode, appIdEnd: String(g.appId || "").slice(-4), connectedAt: g.connectedAt } : null);
+
 export function publicShop(shop, isAdmin = false) {
-  const { deviceSeq, billPinHash, ...rest } = shop;
-  return { ...rest, billPin: !!billPinHash, id: String(shop._id), _id: undefined, status: subscriptionStatus(shop, { isAdmin }) };
+  const { deviceSeq, billPinHash, gateway, ...rest } = shop;
+  return { ...rest, gateway: publicGateway(gateway), billPin: !!billPinHash, id: String(shop._id), _id: undefined, status: subscriptionStatus(shop, { isAdmin }) };
 }
 
 const ShopSettings = z
@@ -62,6 +67,12 @@ const ShopSettings = z
       .max(1000, "You can have up to 1000 tables.")
       .refine((t) => new Set(t.map((x) => x.id)).size === t.length, "table ids must be different"),
     qrOrdering: z.boolean(),
+    // Paying later (at the table or counter): everyone, everyone except blocked customers, or no one.
+    payLater: z.enum(["all", "unblocked", "none"]),
+    // After a failed online payment: they may pay later, or must pay online (unpaid pay-first orders end after 15 min).
+    payFail: z.enum(["later", "cancel"]),
+    // Block a customer from paying later after this many "left without paying" (0 = never by itself).
+    blockAfter: z.number().int().min(0).max(5),
     // Opening hours for QR orders (India time); outside them customers see a friendly note.
     hours: z.object({
       enabled: z.boolean(),
@@ -145,6 +156,28 @@ export default [
   // The secret part of the table QR links. A new one makes old printed QR codes stop working.
   // Bill safety: a 4-digit owner PIN for editing, deleting and restoring bills.
   // Setting or removing it needs the account password, so a cashier using the shop login can't.
+  // The shop's own Cashfree account (owner only). Keys are checked with Cashfree before saving.
+  [
+    "PUT",
+    "/shop/gateway",
+    async ({ db, shop, user, body }) => {
+      const input = z
+        .union([
+          z.object({ disconnect: z.literal(true) }),
+          z.object({ appId: z.string().trim().min(4).max(100), secret: z.string().trim().min(8).max(200), mode: z.enum(["test", "live"]) }),
+        ])
+        .parse(body);
+      let gateway = null;
+      if (!input.disconnect) {
+        if (!(await keysWork({ mode: input.mode, appId: input.appId, secret: input.secret }))) {
+          throw new HttpError(400, `Cashfree didn't accept these keys. Check the App ID and Secret key, and that they're ${input.mode === "live" ? "Production" : "Test"} keys.`);
+        }
+        gateway = { name: "cashfree", mode: input.mode, appId: input.appId, secretBox: encryptSecret(input.secret), connectedAt: new Date(), connectedBy: user.name };
+      }
+      const updated = await db.collection("shops").findOneAndUpdate({ _id: shop._id }, { $set: { gateway } }, { returnDocument: "after", projection: { logo: 0, qrImage: 0 } });
+      return publicShop(updated, user.role === "admin");
+    },
+  ],
   // Close the shop for QR orders: today, until a date, or until opened again (null = open now).
   // Saved straight away (no "Save settings"), and the counter staff can do it too.
   [

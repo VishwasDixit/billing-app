@@ -59,6 +59,38 @@ export default function CustomerOrder() {
   useEffect(() => {
     get(`/public/shop/${token}`).then(setData, (e) => setError(e.message));
   }, [token]);
+  // Back from Cashfree's payment page (?paid=<order>): ask the server how it went. The webhook
+  // may be a moment behind, so check a few times.
+  const [returning, setReturning] = useState(() => params.get("paid") || "");
+  useEffect(() => {
+    if (!returning) return;
+    const o = loadMine(token).find((x) => x.id === returning);
+    const next = new URLSearchParams(params);
+    next.delete("paid");
+    setParams(next, { replace: true });
+    if (!o) return setReturning("");
+    setView("status");
+    let alive = true;
+    (async () => {
+      for (let i = 0; i < 6 && alive; i++) {
+        try {
+          const r = await get(`/public/shop/${token}/orders/${o.id}/pay-online?k=${o.key}`);
+          if (r.pay.state !== "choose" && r.pay.state !== "due" && r.pay.state !== "end") break;
+          if (r.pay.failed) break;
+        } catch {
+          /* try again */
+        }
+        await new Promise((res) => setTimeout(res, 2000));
+      }
+      if (alive) {
+        await refreshMine();
+        setReturning("");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Closed for the night: check again every minute so ordering opens on time.
   useEffect(() => {
     if (!data?.ordering?.closedForHours) return;
@@ -153,6 +185,7 @@ export default function CustomerOrder() {
 
       {view === "status" ? (
         <div className="co-status">
+          {returning && <div className="co-pay wait">⏳ Checking your payment with Cashfree…</div>}
           <BillBox
             token={token}
             mine={mine}
@@ -189,7 +222,7 @@ export default function CustomerOrder() {
                 </>
               )}
               <div className="small muted">{(o.items || []).map((i) => `${i.qty}× ${i.name}${i.variant ? ` (${i.variant})` : ""}`).join(", ")}</div>
-              <OrderPay token={token} order={o} cur={cur} upiOn={data.upi} onChange={refreshMine} />
+              <OrderPay token={token} order={o} cur={cur} upiOn={data.upi} onlineOn={data.online} onChange={refreshMine} />
             </div>
           ))}
           {mine.some((o) => o.status === "new") && (
@@ -495,7 +528,19 @@ function PayWithApps({ link, amount, upiId }) {
 }
 
 // Paying for one order while ordering (when the shop allows it): UPI now, at the counter, or at the end.
-function OrderPay({ token, order, cur, upiOn, onChange }) {
+// Cashfree's checkout script, loaded only when someone pays online.
+function loadCashfree() {
+  if (window.Cashfree) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Couldn't open the payment page. Check the internet and try again."));
+    document.head.appendChild(s);
+  });
+}
+
+function OrderPay({ token, order, cur, upiOn, onlineOn, onChange }) {
   const p = order.pay;
   const [open, setOpen] = useState(false);
   const [utr, setUtr] = useState("");
@@ -517,11 +562,27 @@ function OrderPay({ token, order, cur, upiOn, onChange }) {
       setBusy(false);
     }
   };
+  const online = onlineOn || order.online;
+  const laterOk = order.laterOk ?? p.payLater !== false;
+  // Opens Cashfree's payment page; it comes back to this page, which then checks the result.
+  const payOnline = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await post(`/public/shop/${token}/orders/${order.id}/pay-online`, { key: order.key });
+      if (!r.paymentSessionId) return await onChange();
+      await loadCashfree();
+      await window.Cashfree({ mode: r.mode }).checkout({ paymentSessionId: r.paymentSessionId, redirectTarget: "_self" });
+    } catch (err) {
+      setError(err.offline ? "No internet on this phone. Please try again." : err.message);
+      setBusy(false);
+    }
+  };
   const link = order.upi && upiLinkFor(order.upi, p.amount ?? order.total, `Order #${order.orderNo} · ${order.tableName}`);
   if (p.state === "paid")
     return (
       <div className="co-pay paid">
-        ✅ Paid {amount}{p.method === "counter" ? " at the counter" : ""}{order.bill ? ` · Bill ${order.bill.billNo}` : ""}
+        ✅ Paid {amount}{p.method === "counter" ? " at the counter" : p.method === "online" ? " online" : ""}{order.bill ? ` · Bill ${order.bill.billNo}` : ""}
         {order.bill && (
           <details className="small co-mini-bill">
             <summary>See bill</summary>
@@ -542,7 +603,9 @@ function OrderPay({ token, order, cur, upiOn, onChange }) {
     return (
       <div className="co-pay small">
         You'll pay at the end.{" "}
-        {p.rule === "choose" && upiOn && <button className="link-btn" onClick={() => setOpen(true)}>Pay now instead</button>}
+        {p.rule === "choose" && online && <button className="link-btn" disabled={busy} onClick={payOnline}>Pay now online instead</button>}
+        {p.rule === "choose" && !online && upiOn && <button className="link-btn" onClick={() => setOpen(true)}>Pay now instead</button>}
+        {error && <div className="error small">{error}</div>}
         {open && <UpiPanel link={link} upiId={order.upi?.id} amount={amount} utr={utr} setUtr={setUtr} busy={busy} error={error} onPaid={() => send("upi")} />}
       </div>
     );
@@ -551,13 +614,17 @@ function OrderPay({ token, order, cur, upiOn, onChange }) {
   return (
     <div className="co-pay stack">
       {p.notReceived && <div className="error small">The staff couldn't find your payment. Please pay again or pay at the counter.</div>}
+      {p.failed && <div className="error small">❌ Your payment didn't go through. No money was taken. Please try again{laterOk && p.state === "choose" ? ", or pay at the end" : ""}.</div>}
+      {p.payLater === false && p.state === "due" && !p.failed && <div className="small muted">This order needs to be paid before it's cooked.</div>}
       {p.state === "due" && <b className="small">💳 Please pay {amount} to send this order to the kitchen.</b>}
       {p.state === "due" && p.method === "counter" && <div className="small">💵 Pay {amount} at the counter. Your order is cooked once the staff confirm it.</div>}
-      {upiOn && link && !open && <button className="btn btn-primary" disabled={busy} onClick={() => setOpen(true)}>📱 Pay {amount} now (UPI)</button>}
+      {online && <button className="btn btn-primary" disabled={busy} onClick={payOnline}>{busy ? "Opening payment…" : `💳 Pay ${amount} online`}</button>}
+      {online && <div className="small muted" style={{ textAlign: "center" }}>UPI, cards, netbanking or wallets · secured by Cashfree</div>}
+      {!online && upiOn && link && !open && <button className="btn btn-primary" disabled={busy} onClick={() => setOpen(true)}>📱 Pay {amount} now (UPI)</button>}
       {open && <UpiPanel link={link} upiId={order.upi?.id} amount={amount} utr={utr} setUtr={setUtr} busy={busy} error={error} onPaid={() => send("upi")} />}
       <div className="btn-row">
         {p.state === "due" && p.method !== "counter" && <button className="btn btn-sm" disabled={busy} onClick={() => send("counter")}>💵 Pay at the counter</button>}
-        {p.state === "choose" && <button className="btn btn-sm" disabled={busy} onClick={() => send("end")}>Pay at the end</button>}
+        {p.state === "choose" && laterOk && <button className="btn btn-sm" disabled={busy} onClick={() => send("end")}>Pay at the end</button>}
       </div>
       {!open && error && <div className="error small">{error}</div>}
     </div>

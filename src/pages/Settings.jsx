@@ -25,6 +25,9 @@ const pick = (s) => ({
   tables: (s.tables || []).map((t) => ({ ...t })),
   qrOrdering: !!s.qrOrdering,
   qrPayment: s.qrPayment || "end",
+  payLater: s.payLater || "unblocked",
+  payFail: s.payFail || "later",
+  blockAfter: s.blockAfter ?? 0,
   hours: { enabled: false, open: "10:00", close: "21:00", closedDays: [], message: "", ...(s.hours || {}) },
   askCustomer: s.askCustomer || "optional",
   name: s.name || "",
@@ -192,6 +195,7 @@ export default function Settings() {
 
         <div className="cards">
           <HoursCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} />
+          <OnlinePaymentsCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} />
           <TablesCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} access={access} />
 
           {user.role !== "admin" && <KitchenStaffCard />}
@@ -294,6 +298,106 @@ async function checkForUpdate(toast) {
   } catch {
     toast("Couldn't check right now. Check the internet and try again.");
   }
+}
+
+// The shop's own Cashfree account for online payments, and the pay-later rules.
+function OnlinePaymentsCard({ f, set, shop, saveShop, dirty }) {
+  const toast = useToast();
+  const { busy, error, run } = useAction();
+  const [form, setForm] = useState(null); // { appId, secret, mode } while connecting
+  const g = shop.gateway;
+  const connect = (e) => {
+    e.preventDefault();
+    run(async () => {
+      await put("/shop/gateway", { appId: form.appId.trim(), secret: form.secret.trim(), mode: form.mode });
+      await saveShop({});
+      setForm(null);
+      toast("Cashfree connected");
+    });
+  };
+  const disconnect = () =>
+    confirm("Disconnect Cashfree? Customers will pay by UPI or at the counter again, and staff confirm payments by hand.") &&
+    run(async () => {
+      await put("/shop/gateway", { disconnect: true });
+      await saveShop({});
+      toast("Cashfree disconnected");
+    });
+  return (
+    <section className="card stack" id="online-payments">
+      <h2>Online payments</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        Connect your own <b>Cashfree</b> account and customers pay QR orders online (UPI, cards, netbanking, wallets). Paid orders are confirmed by themselves, with no staff step, and
+        the money goes straight to your Cashfree account. Cashfree charges its own fee (about 2%); this app takes nothing.
+      </p>
+      {g ? (
+        <div className="shop-state open">
+          <b>✅ Cashfree connected · {g.mode === "live" ? "Live" : "Test mode"}</b>
+          <span className="small muted">App ID …{g.appIdEnd}{g.connectedAt ? ` · since ${fmtDate(g.connectedAt)}` : ""}</span>
+          {g.mode !== "live" && <span className="small">Test mode: no real money moves. Switch to your Production keys when you're ready.</span>}
+          <div className="btn-row">
+            <button className="btn btn-sm" onClick={() => setForm({ appId: "", secret: "", mode: g.mode })}>Change keys</button>
+            <button className="btn btn-sm btn-ghost" disabled={busy} onClick={disconnect}>Disconnect</button>
+          </div>
+        </div>
+      ) : (
+        !form && <button className="btn btn-primary" style={{ justifySelf: "start" }} onClick={() => setForm({ appId: "", secret: "", mode: "test" })}>Connect Cashfree</button>
+      )}
+      {form && (
+        <form className="stack" onSubmit={connect} autoComplete="off">
+          <div className="small muted">
+            In the Cashfree dashboard open <b>Developers › API Keys</b> (Payment Gateway) and copy the App ID and Secret key. Start with <b>Test</b> keys to try it safely.
+          </div>
+          <div className="field">
+            Keys for
+            <Seg value={form.mode} onChange={(v) => setForm({ ...form, mode: v })} options={[["test", "Test (sandbox)"], ["live", "Live (real money)"]]} />
+          </div>
+          <Field label="App ID (Client ID)">
+            <input required autoComplete="off" spellCheck={false} value={form.appId} onChange={(e) => setForm({ ...form, appId: e.target.value })} />
+          </Field>
+          <Field label="Secret key" hint="Saved encrypted. It's never shown again, even to you.">
+            <input required type="password" autoComplete="new-password" spellCheck={false} value={form.secret} onChange={(e) => setForm({ ...form, secret: e.target.value })} />
+          </Field>
+          <div className="btn-row">
+            <button className="btn btn-primary" disabled={busy}>{busy ? "Checking with Cashfree…" : "Check & connect"}</button>
+            <button type="button" className="btn btn-ghost" onClick={() => setForm(null)}>Cancel</button>
+          </div>
+        </form>
+      )}
+      {error && <div className="error">{error}</div>}
+
+      <div className="field">
+        Who can pay later (at the table or counter)?
+        <Seg value={f.payLater} onChange={(v) => set("payLater", v)} options={[["all", "Everyone"], ["unblocked", "All except blocked"], ["none", "No one"]]} />
+        <span className="hint">
+          {f.payLater === "none"
+            ? "Every QR order is paid before it's cooked (online, or at the counter first)."
+            : f.payLater === "unblocked"
+              ? "Customers you block (Udhar › customer, or after “Left without paying”) must pay before their food is cooked."
+              : "Anyone can pay after eating."}
+        </span>
+      </div>
+      {g && (
+        <div className="field">
+          If an online payment fails
+          <Seg value={f.payFail} onChange={(v) => set("payFail", v)} options={[["later", "Let them pay later"], ["cancel", "Must pay online"]]} />
+          <span className="hint">
+            {f.payFail === "later"
+              ? "They can try again, or pay at the end (if they're allowed to pay later)."
+              : "They can only try again. Orders that must be paid first are cancelled if still unpaid after 15 minutes."}
+          </span>
+        </div>
+      )}
+      <Field label="Block a customer from paying later after" hint="Counted when staff tap “Left without paying” on a table.">
+        <select value={f.blockAfter} onChange={(e) => set("blockAfter", Number(e.target.value))}>
+          <option value={0}>Never by itself (I'll decide)</option>
+          <option value={1}>1 time left without paying</option>
+          <option value={2}>2 times</option>
+          <option value={3}>3 times</option>
+        </select>
+      </Field>
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save these rules.</p>}
+    </section>
+  );
 }
 
 // Opening hours and closing the shop for a day (both are about QR table orders; billing always works).

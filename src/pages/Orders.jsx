@@ -4,7 +4,8 @@ import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Modal, useToast } from "../components/ui.jsx";
 import { ItemPicture } from "../components/ItemPicture.jsx";
-import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment, orderPayment, closeTable } from "../lib/orders.js";
+import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment, orderPayment, closeTable, leftUnpaid } from "../lib/orders.js";
+import { put } from "../lib/api.js";
 import { printBill } from "../printer/index.js";
 import { shareBillPdf } from "../printer/pdf.js";
 import { StockPanel } from "../components/Stock.jsx";
@@ -13,8 +14,8 @@ import { explainPrintError } from "../printer/transports.js";
 import { usePref } from "../lib/prefs.js";
 import { storeOpen } from "../../shared/hours.js";
 
-export const STATUS_LABEL = { new: "New", accepted: "To cook", preparing: "Cooking", ready: "Ready", served: "Served", billed: "Paid", rejected: "Rejected" };
-const STATUS_TAG = { new: "warn", accepted: "accent", preparing: "accent", ready: "good", served: "", billed: "", rejected: "bad" };
+export const STATUS_LABEL = { new: "New", accepted: "To cook", preparing: "Cooking", ready: "Ready", served: "Served", billed: "Paid", rejected: "Rejected", unpaid: "Left unpaid" };
+const STATUS_TAG = { new: "warn", accepted: "accent", preparing: "accent", ready: "good", served: "", billed: "", rejected: "bad", unpaid: "bad" };
 export const ago = (t) => {
   const m = Math.max(0, Math.round((Date.now() - new Date(t)) / 60000));
   return m < 1 ? "just now" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} m`;
@@ -68,6 +69,27 @@ export default function Orders() {
   useOrderPolling(5000);
 
   const orders = allOrders(st);
+  // Orders paid online go to the kitchen by themselves: print their KOT once on this device.
+  useEffect(() => {
+    const fresh = orders.filter((o) => o.acceptedBy === "Online payment" && o.status === "accepted" && Date.now() - new Date(o.acceptedAt || o.updatedAt) < 30 * 60e3);
+    if (!fresh.length) return;
+    let done = [];
+    try {
+      done = JSON.parse(localStorage.getItem("kotOnlineDone") || "[]");
+    } catch {
+      /* none yet */
+    }
+    const todo = fresh.filter((o) => !done.includes(o.clientId));
+    if (!todo.length) return;
+    try {
+      localStorage.setItem("kotOnlineDone", JSON.stringify([...done, ...todo.map((o) => o.clientId)].slice(-200)));
+    } catch {
+      /* storage blocked */
+    }
+    (async () => {
+      for (const o of todo) await kot(o);
+    })();
+  }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
   const waiting = orders.filter((o) => o.status === "new");
   const tables = shop.tables || [];
   const qrHours = shop.qrOrdering ? storeOpen(shop.hours, new Date(), shop.closure) : null;
@@ -192,8 +214,20 @@ export default function Orders() {
               {o.pay.state === "refundDue" ? (
                 <>
                   <div className="order-top"><b>↩️ Refund {money(o.pay.amount, cur)} · #{o.orderNo} · {o.tableName}</b><span className="small muted">{ago(o.updatedAt)}</span></div>
-                  <div className="small">This order was cancelled after the customer paid{o.pay.state === "refundDue" && o.pay.confirmedAt ? "" : " (check your UPI app first)"}. Give the money back, then mark it.</div>
-                  <div className="btn-row" style={{ justifyContent: "flex-end" }}><button className="btn btn-sm btn-primary" onClick={() => payAction(o, "refunded")}>Refund done</button></div>
+                  {o.pay.method === "online" ? (
+                    <>
+                      <div className="small">This order was cancelled after the customer paid online. Send the money back through Cashfree (it reaches them in a few days).</div>
+                      <div className="btn-row" style={{ justifyContent: "flex-end" }}>
+                        <button className="btn btn-sm btn-ghost" onClick={() => confirm("Already refunded from the Cashfree dashboard?") && payAction(o, "refunded")}>Refunded already</button>
+                        <button className="btn btn-sm btn-primary" onClick={() => payAction(o, "refund-online")}>↩️ Refund via Cashfree</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="small">This order was cancelled after the customer paid{o.pay.state === "refundDue" && o.pay.confirmedAt ? "" : " (check your UPI app first)"}. Give the money back, then mark it.</div>
+                      <div className="btn-row" style={{ justifyContent: "flex-end" }}><button className="btn btn-sm btn-primary" onClick={() => payAction(o, "refunded")}>Refund done</button></div>
+                    </>
+                  )}
                 </>
               ) : (
                 <>
@@ -390,6 +424,30 @@ function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
         ))}
         <div className="btn-row" style={{ justifyContent: "space-between" }}>
           <button className="btn" onClick={onAdd}>+ Add order</button>
+          {onBill && !allPaid && orders.length > 0 && (
+            <button
+              className="btn btn-ghost"
+              onClick={async () => {
+                if (!confirm(`${table.name} left without paying? Its unpaid orders will be closed as unpaid (not counted as sales).`)) return;
+                try {
+                  const r = await leftUnpaid(table.id);
+                  toast(`${table.name} closed as unpaid`);
+                  for (const c of r.customers) {
+                    if (c.blocked) toast(`${c.name} must now pay online (left without paying ${c.unpaidCount}×)`);
+                    else if (confirm(`${c.name} (${c.phone}) has left without paying ${c.unpaidCount} time${c.unpaidCount === 1 ? "" : "s"}. Make them pay before their food is cooked from now on?`)) {
+                      await put(`/customers/${c.id}/pay-later`, { blocked: true });
+                      toast(`${c.name} must now pay first`);
+                    }
+                  }
+                  onClose();
+                } catch (e) {
+                  toast(e.message);
+                }
+              }}
+            >
+              🚫 Left without paying
+            </button>
+          )}
           {onBill &&
             (allPaid ? (
               <button
@@ -506,11 +564,19 @@ function OrderPicker({ table, onClose, onPlaced }) {
 // How a QR order is being paid, for staff.
 function PayChip({ o, cur }) {
   const p = o.pay;
-  const promo = o.promo?.amount > 0 && <span className="tag">🏷 {o.promo.code} −{money(o.promo.amount, cur)}</span>;
-  if (!p || p.rule === "end" || (p.state === "end" && p.rule !== "choose")) return promo ? <div className="pay-chip-row">{promo}</div> : null;
+  const promo = (
+    <>
+      {o.promo?.amount > 0 && <span className="tag">🏷 {o.promo.code} −{money(o.promo.amount, cur)}</span>}
+      {p?.payLater === false && p.state !== "paid" && <span className="tag warn">⚠️ Must pay first</span>}
+      {p?.mismatch && p.state !== "paid" && <span className="tag bad">⚠️ Online amount didn't match: check Cashfree</span>}
+      {p?.failedAt && !["paid", "refundDue", "refunded"].includes(p.state) && <span className="tag">Online payment failed</span>}
+    </>
+  );
+  const hasExtra = o.promo?.amount > 0 || p?.payLater === false || p?.mismatch || p?.failedAt;
+  if (!p || p.rule === "end" || (p.state === "end" && p.rule !== "choose")) return hasExtra ? <div className="pay-chip-row">{promo}</div> : null;
   const amt = money(p.amount ?? o.total, cur);
   const [cls, text] = {
-    paid: ["good", `💳 Paid ${amt}${p.method === "counter" ? " (counter)" : ""}`],
+    paid: ["good", `💳 Paid ${amt}${p.method === "counter" ? " (counter)" : p.method === "online" ? " online ✓" : ""}`],
     claimed: ["warn", `⏳ Says paid ${amt} by UPI`],
     due: ["bad", p.method === "counter" ? `🕒 Will pay ${amt} at the counter` : `🕒 Waiting for payment ${amt}`],
     choose: ["", "Not paid yet"],
@@ -518,5 +584,5 @@ function PayChip({ o, cur }) {
     refundDue: ["bad", `↩️ Refund ${amt}`],
     refunded: ["", `↩️ Refunded ${amt}`],
   }[p.state] || ["", ""];
-  return text || promo ? <div className="pay-chip-row">{text && <span className={"tag " + cls}>{text}</span>}{promo}</div> : null;
+  return text || hasExtra ? <div className="pay-chip-row">{text && <span className={"tag " + cls}>{text}</span>}{promo}</div> : null;
 }
