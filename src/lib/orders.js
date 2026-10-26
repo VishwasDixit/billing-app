@@ -7,7 +7,7 @@ import { get, post } from "./api.js";
 import { kvGet, kvSet } from "./offline.js";
 import { uuid } from "./format.js";
 
-let state = { orders: [], pending: [], statusQueue: [], paymentClaims: [], orderPay: [], online: true, loaded: false, waiting: 0, attention: 0 };
+let state = { orders: [], pending: [], statusQueue: [], paymentClaims: [], orderPay: [], helpRequests: [], online: true, loaded: false, waiting: 0, attention: 0 };
 const listeners = new Set();
 const emit = () => listeners.forEach((l) => l());
 const set = (patch) => {
@@ -17,7 +17,9 @@ const set = (patch) => {
   const billTables = new Set(state.orders.filter((o) => o.billRequest && OPEN.includes(o.status)).map((o) => o.table));
   // QR orders paid (or to be refunded) while ordering.
   state.orderPay = state.orders.filter((o) => ["claimed", "refundDue"].includes(o.pay?.state) || (o.pay?.state === "due" && o.pay.method === "counter" && o.status === "new"));
-  state.attention = state.waiting + billTables.size + state.paymentClaims.length + state.orderPay.filter((o) => o.status !== "new").length;
+  // Customers asking from their table (waiter, water, questions) that nobody answered yet.
+  state.helpOpen = state.helpRequests.filter((r) => r.status === "open").length;
+  state.attention = state.waiting + billTables.size + state.paymentClaims.length + state.orderPay.filter((o) => o.status !== "new").length + state.helpOpen;
   emit();
 };
 
@@ -56,7 +58,7 @@ export async function refreshOrders() {
   try {
     await flushOrders();
     const r = await get("/orders");
-    set({ orders: r.orders, paymentClaims: r.paymentClaims || [], online: true, loaded: true });
+    set({ orders: r.orders, paymentClaims: r.paymentClaims || [], helpRequests: r.helpRequests || [], online: true, loaded: true });
     await kvSet(key("orders"), r.orders);
   } catch (err) {
     if (err.offline) set({ online: false });
@@ -178,6 +180,13 @@ export async function leftUnpaid(table) {
   set({ orders: state.orders.map((o) => (o.table === table && OPEN.includes(o.status) && !o.billClientId ? { ...o, status: "unpaid" } : o)) });
   await kvSet(key("orders"), state.orders);
   return r;
+}
+
+// Staff answer a table's request, or mark it done.
+export async function answerHelp(req, body) {
+  const saved = await post(`/orders/help/${req.id}`, body);
+  set({ helpRequests: state.helpRequests.map((r) => (r.id === saved.id ? saved : r)).filter((r) => r.status !== "done") });
+  return saved;
 }
 
 // Staff confirm a customer's "I have paid" (UPI).

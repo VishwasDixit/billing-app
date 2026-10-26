@@ -20,6 +20,7 @@ import orderRoutes from "./routes/orders.js";
 import kitchenRoutes from "./routes/kitchen.js";
 import staffRoutes from "./routes/staff.js";
 import promoRoutes from "./routes/promos.js";
+import tableHelpRoutes from "./routes/tableHelp.js";
 
 // Each route: [method, "/path/:param", handler, { auth = true, admin = false }]
 const ROUTES = [
@@ -38,6 +39,7 @@ const ROUTES = [
   ...kitchenRoutes,
   ...staffRoutes,
   ...promoRoutes,
+  ...tableHelpRoutes,
 ].map(([method, path, handler, opts = {}]) => {
   const keys = [];
   const re = new RegExp(

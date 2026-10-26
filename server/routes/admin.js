@@ -323,7 +323,7 @@ export default [
       if (confirmName.toLowerCase() !== String(shop.name).trim().toLowerCase()) throw new HttpError(400, "The name doesn't match. Type the shop name exactly to delete it.");
       const owners = await db.collection("users").find({ shopId }, { projection: { email: 1 } }).toArray();
       const counts = {};
-      for (const name of ["menuItems", "menuImages", "bills", "customers", "customerPayments", "expenses", "payments", "helpThreads", "orders", "ingredients", "recipes", "stockMoves", "kitchenAlerts", "staff", "attendance", "staffAdvances", "salaryPayments", "salaryAdjustments", "staffLoans", "salaryMonths", "brainModels", "brainSuggestions", "billAudit", "promos", "promoUses", "users"]) {
+      for (const name of ["menuItems", "menuImages", "bills", "customers", "customerPayments", "expenses", "payments", "helpThreads", "orders", "ingredients", "recipes", "stockMoves", "kitchenAlerts", "staff", "attendance", "staffAdvances", "salaryPayments", "salaryAdjustments", "staffLoans", "salaryMonths", "brainModels", "brainSuggestions", "billAudit", "promos", "promoUses", "tableHelp", "users"]) {
         counts[name] = (await db.collection(name).deleteMany({ shopId })).deletedCount;
       }
       const emails = owners.map((o) => o.email);

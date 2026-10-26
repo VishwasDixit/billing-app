@@ -64,9 +64,9 @@ export function publicOrder({ _id, shopId, customerKey, ...o }) {
 }
 
 const tablesOf = (shop) => (Array.isArray(shop.tables) ? shop.tables : []);
-const tableById = (shop, id) => tablesOf(shop).find((t) => t.id === id);
+export const tableById = (shop, id) => tablesOf(shop).find((t) => t.id === id);
 
-async function shopByToken(db, token) {
+export async function shopByToken(db, token) {
   if (!/^[A-Za-z0-9_-]{16,40}$/.test(token || "")) throw new HttpError(404, "This QR code isn't valid any more. Please ask the staff.");
   const shop = await db.collection("shops").findOne({ orderToken: token }, { projection: { qrImage: 0 } });
   if (!shop) throw new HttpError(404, "This QR code isn't valid any more. Please ask the staff.");
@@ -243,6 +243,29 @@ async function markOnlineFailed(db, shop, cfOrderId) {
     .updateOne({ shopId: shop._id, "pay.online.cfOrderId": cfOrderId, "pay.state": { $nin: ["paid", "refundDue", "refunded"] } }, { $set: { "pay.failedAt": new Date(), updatedAt: new Date() } });
 }
 
+// Bestsellers for the customer menu: most sold (paid bills, last 30 days), cached on the shop for
+// 6 hours; a new shop gets its first dishes in menu order.
+async function popularItems(db, shop, menu) {
+  const c = shop.popularCache;
+  if (c?.at && Date.now() - new Date(c.at) < 6 * 3600e3) return c.ids;
+  const top = await db
+    .collection("bills")
+    .aggregate([
+      { $match: { shopId: shop._id, status: "paid", createdAt: { $gte: new Date(Date.now() - 30 * 864e5) } } },
+      { $unwind: "$items" },
+      { $match: { "items.itemId": { $type: "string", $ne: "" } } },
+      { $group: { _id: "$items.itemId", qty: { $sum: "$items.qty" } } },
+      { $sort: { qty: -1 } },
+      { $limit: 20 },
+    ])
+    .toArray();
+  const shown = new Set(menu.map((m) => String(m._id)));
+  let ids = top.map((t) => t._id).filter((id) => shown.has(id)).slice(0, 8);
+  if (!ids.length) ids = menu.slice(0, 8).map((m) => String(m._id));
+  await db.collection("shops").updateOne({ _id: shop._id }, { $set: { popularCache: { at: new Date(), ids } } });
+  return ids;
+}
+
 // Where Cashfree sends the customer back, and its webhook: this app's own address.
 const appOrigin = (req) => process.env.APP_URL || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers["x-forwarded-host"] || req.headers.host}`;
 
@@ -265,6 +288,7 @@ export default [
         upi: !!shop.upiId,
         offers: await menuOffers(db, shop),
         online: !!shop.gateway?.name,
+        popular: await popularItems(db, shop, menu),
         hours: hoursText(shop.hours),
         menu: menu.map((m) => ({
           id: String(m._id),
@@ -625,6 +649,10 @@ export default [
       return {
         orders: list.map(publicOrder),
         paymentClaims: claims.map(({ _id, ...b }) => ({ ...b, id: String(_id) })),
+        // Customers asking from their table (waiter, water, questions) that aren't done yet.
+        helpRequests: (
+          await db.collection("tableHelp").find({ shopId: shop._id, status: { $ne: "done" }, createdAt: { $gte: since } }).sort({ createdAt: 1 }).limit(100).toArray()
+        ).map(({ _id, shopId, deviceKey, ...r }) => ({ ...r, id: String(_id) })),
         serverTime: new Date(),
       };
     },

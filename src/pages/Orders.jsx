@@ -4,7 +4,8 @@ import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
 import { Modal, useToast } from "../components/ui.jsx";
 import { ItemPicture } from "../components/ItemPicture.jsx";
-import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment, orderPayment, closeTable, leftUnpaid } from "../lib/orders.js";
+import { useOrders, allOrders, isOpen, refreshOrders, setOrderStatus, createStaffOrder, confirmPayment, orderPayment, closeTable, leftUnpaid, answerHelp } from "../lib/orders.js";
+import { HELP_ASKS, helpText, QUICK_REPLIES } from "../../shared/tableHelp.js";
 import { put } from "../lib/api.js";
 import { printBill } from "../printer/index.js";
 import { shareBillPdf } from "../printer/pdf.js";
@@ -183,6 +184,15 @@ export default function Orders() {
         </div>
       </div>
       {stockOpen && <StockPanel onClose={() => setStockOpen(false)} />}
+
+      {st.helpRequests.length > 0 && (
+        <section className="stack" style={{ marginBottom: 16 }}>
+          <h2>Table requests ({st.helpRequests.length})</h2>
+          {st.helpRequests.map((r) => (
+            <HelpRequest key={r.id} r={r} />
+          ))}
+        </section>
+      )}
 
       {st.paymentClaims.length > 0 && (
         <section className="stack" style={{ marginBottom: 16 }}>
@@ -558,6 +568,46 @@ function OrderPicker({ table, onClose, onPlaced }) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+// A customer asking from their table: quick replies, a typed reply, or done.
+function HelpRequest({ r }) {
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const act = async (body) => {
+    setBusy(true);
+    try {
+      await answerHelp(r, body);
+      setText("");
+      if (body.done) toast(`${r.tableName}: done ✓`);
+    } catch (e) {
+      toast(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const [icon] = HELP_ASKS[r.kind] || ["💬"];
+  return (
+    <div className={"card order-card help-req" + (r.status === "open" ? " new" : "")}>
+      <div className="order-top">
+        <b>{icon} {r.tableName}{r.name ? ` · ${r.name}` : ""}</b>
+        <span className="small muted">{ago(r.createdAt)}{r.count > 1 ? ` · asked ${r.count}×` : ""}</span>
+      </div>
+      <div className="help-req-text">{helpText(r)}</div>
+      {r.reply && <div className="small muted">↳ {r.repliedBy || "Staff"}: {r.reply}</div>}
+      <div className="btn-row">
+        {r.status === "open" && QUICK_REPLIES.map((q) => <button key={q} className="btn btn-sm" disabled={busy} onClick={() => act({ reply: q })}>{q}</button>)}
+        <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => act({ done: true })}>Done ✓</button>
+      </div>
+      {r.kind === "question" && r.status === "open" && (
+        <form className="inline" onSubmit={(e) => (e.preventDefault(), text.trim() && act({ reply: text.trim() }))}>
+          <input className="input" placeholder="Type a reply…" maxLength={200} value={text} onChange={(e) => setText(e.target.value)} />
+          <button className="btn btn-sm" disabled={busy || !text.trim()}>Send</button>
+        </form>
+      )}
+    </div>
   );
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { HELP_ASKS, helpText } from "../../shared/tableHelp.js";
 import { useNavigate } from "react-router-dom";
 import { get, post } from "../lib/api.js";
 import { useOrders, chime } from "../lib/orders.js";
@@ -13,6 +14,8 @@ function orderItems(st, isKitchen) {
   const out = st.orders
     .filter((o) => o.status === "new")
     .map((o) => ({ key: "o" + o.clientId, icon: "🍽️", at: o.createdAt, text: `${o.tableName || o.table}: new ${o.source === "qr" ? "QR " : ""}order #${o.orderNo} (${o.items.reduce((s, i) => s + i.qty, 0)} items)`, to: "/orders" }));
+  for (const r of st.helpRequests.filter((x) => x.status === "open"))
+    out.push({ key: "h" + r.id, icon: HELP_ASKS[r.kind]?.[0] || "💬", at: r.createdAt, text: `${r.tableName || r.table}${r.name ? ` · ${r.name}` : ""}: ${helpText(r)}${r.count > 1 ? ` (×${r.count})` : ""}`, to: "/orders" });
   if (isKitchen) return out;
   const asked = new Map();
   for (const o of st.orders) if (o.billRequest && OPEN.includes(o.status) && !asked.has(o.table)) asked.set(o.table, o);
@@ -28,7 +31,7 @@ function orderItems(st, isKitchen) {
 
 export function useAlertCount(kitchenCount, isKitchen) {
   const st = useOrders();
-  return (isKitchen ? st.waiting : st.attention) + (kitchenCount || 0);
+  return (isKitchen ? st.waiting + (st.helpOpen || 0) : st.attention) + (kitchenCount || 0);
 }
 
 // 🔔 in the top bar on wide screens.
