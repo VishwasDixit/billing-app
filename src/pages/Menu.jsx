@@ -132,14 +132,17 @@ function ItemEditor({ item, categories, onClose }) {
   const { busy, error, setError, run } = useAction();
 
   const hasPhoto = !!item.image && !isDefaultImage(item.image);
-  const preview = photo?.link
-    ? photo.link.url
+  // A library photo is { link }. (Not `photo?.link`: an uploaded photo is a data-URL string, and every
+  // string has a built-in .link() method, which made uploads look like library photos.)
+  const lib = photo && typeof photo === "object" ? photo.link : null;
+  const preview = lib
+    ? lib.url
     : photo && photo !== "default"
       ? photo
       : photo === "default" || !hasPhoto
         ? defaultImageFor(f.name, f.category)
         : item.image;
-  const credit = photo?.link ? { author: photo.link.author } : !photo && hasPhoto ? item.imageCredit : null;
+  const credit = lib ? { author: lib.author } : !photo && hasPhoto ? item.imageCredit : null;
 
   const onPhoto = async (file) => {
     if (!file) return;
@@ -162,10 +165,10 @@ function ItemEditor({ item, categories, onClose }) {
     run(async () => {
       const variants = f.variants.map((v) => ({ label: f.variants.length > 1 ? v.label.trim() : "", price: Number(v.price) || 0 }));
       if (variants.length > 1 && variants.some((v) => !v.label)) throw new Error("Give each price a name, e.g. Half / Full.");
-      const link = photo?.link ? { image: photo.link.url, imageCredit: { author: photo.link.author, url: photo.link.pexelsUrl } } : {};
+      const link = lib ? { image: lib.url, imageCredit: { author: lib.author, url: lib.pexelsUrl } } : {};
       const saved = await saveMenuItem({ id: f.id, name: f.name, category: f.category, note: f.note || "", variants, active: f.active !== false, ...link });
       try {
-        if (photo?.link) {
+        if (lib) {
           /* saved with the item */
         } else if (photo === "default" && hasPhoto) await removeMenuPhoto(saved.id);
         else if (photo && photo !== "default") await setMenuPhoto(saved.id, photo);
