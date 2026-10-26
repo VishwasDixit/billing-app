@@ -5,8 +5,9 @@ import { z } from "zod";
 import { HttpError } from "../http.js";
 import { rateLimit, clientIp } from "../limits.js";
 import { shopByToken, tableById } from "./orders.js";
+import { QUICK_ASKS, helpSettings } from "../../shared/tableHelp.js";
 
-export const HELP_KINDS = ["waiter", "water", "bill", "cutlery", "question"];
+export const HELP_KINDS = [...QUICK_ASKS, "question"];
 const DeviceKey = z.string().regex(/^[A-Za-z0-9_-]{16,40}$/, "Please reload the page.");
 const MERGE_MS = 2 * 60e3;
 
@@ -31,7 +32,10 @@ export default [
         })
         .parse(body);
       if (input.kind === "question" && !input.text) throw new HttpError(400, "Please write your question.");
-      if (shop.blocked || !shop.qrOrdering) throw new HttpError(403, "Please ask the staff directly.");
+      // The shop's choices (Settings › Customer help) hold here too, not only on the page.
+      const help = helpSettings(shop);
+      if (shop.blocked || !shop.qrOrdering || !help.enabled) throw new HttpError(403, "Please ask the staff directly.");
+      if (input.kind === "question" ? !help.questions : !help.asks.includes(input.kind)) throw new HttpError(400, "That isn't available here. Please ask the staff.");
       const table = tableById(shop, input.table);
       if (!table) throw new HttpError(400, "This table isn't set up. Please ask the staff.");
       const now = new Date();

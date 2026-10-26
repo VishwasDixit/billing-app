@@ -1144,3 +1144,4 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 /* Grid columns must not grow with a side-scrolling row inside them (it widened the whole page). */
 .co-status, .co-help, .co-section, .co-sheet { grid-template-columns: minmax(0, 1fr); }
 .co-app { overflow-x: clip; }
+.co-quick.one { grid-template-columns: 1fr; }

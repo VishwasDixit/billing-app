@@ -6,7 +6,7 @@ import { STEPS, stepIndex } from "./common.js";
 import { OrderPay, BillBox } from "./parts.jsx";
 import { PopularCard } from "./MenuTab.jsx";
 
-export function StatusTab({ token, data, mine, cur, returning, canOrder, refreshMine, onAskBill, add, quickAdd, qtyOf, onMenu }) {
+export function StatusTab({ token, data, mine, cur, returning, canOrder, refreshMine, onAskBill, add, quickAdd, qtyOf, onMenu, helpOn = true }) {
   const list = [...mine].reverse().filter((o) => o.status !== "billed");
   const cooking = mine.some((o) => ["new", "accepted", "preparing", "ready", "served"].includes(o.status));
   const byId = useMemo(() => new Map((data.menu || []).map((m) => [m.id, m])), [data.menu]);
@@ -78,7 +78,7 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
       })}
 
       {mine.some((o) => o.status === "new") && (
-        <p className="small muted" style={{ textAlign: "center" }}>If no one confirms your order in a few minutes, tap 💬 Help to call the staff.</p>
+        <p className="small muted" style={{ textAlign: "center" }}>If no one confirms your order in a few minutes, {helpOn ? "tap 💬 Help to call the staff" : "please ask the staff"}.</p>
       )}
 
       {canOrder && cooking && more.length > 0 && (

@@ -5,6 +5,7 @@ import { del, get, post, put } from "../lib/api.js";
 import { fmtDate, money } from "../lib/format.js";
 import { promoSummary, DAY_NAMES, cleanCode, tablesText, timeText } from "../../shared/promo.js";
 import { storeOpen, hoursText, DEFAULT_CLOSED_MESSAGE, closureActive, istDay } from "../../shared/hours.js";
+import { HELP_ASKS, QUICK_ASKS, HELP_PRESETS, helpSettings } from "../../shared/tableHelp.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { PAPER } from "../printer/receipt.js";
 import { printTest, warmLogo } from "../printer/index.js";
@@ -26,6 +27,7 @@ const pick = (s) => ({
   qrOrdering: !!s.qrOrdering,
   qrPayment: s.qrPayment || "end",
   payLater: s.payLater || "unblocked",
+  help: helpSettings(s),
   payFail: s.payFail || "later",
   blockAfter: s.blockAfter ?? 0,
   hours: { enabled: false, open: "10:00", close: "21:00", closedDays: [], message: "", ...(s.hours || {}) },
@@ -196,6 +198,7 @@ export default function Settings() {
         <div className="cards">
           <HoursCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} />
           <OnlinePaymentsCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} />
+          <CustomerHelpCard f={f} set={set} dirty={dirty} />
           <TablesCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} access={access} />
 
           {user.role !== "admin" && <KitchenStaffCard />}
@@ -298,6 +301,60 @@ async function checkForUpdate(toast) {
   } catch {
     toast("Couldn't check right now. Check the internet and try again.");
   }
+}
+
+// The customer QR page's Help: on/off, which one-tap buttons, and written questions
+// (a library doesn't want "Water please").
+function CustomerHelpCard({ f, set, dirty }) {
+  const h = f.help;
+  const put = (patch) => set("help", { ...h, ...patch });
+  const toggle = (k) => put({ asks: h.asks.includes(k) ? h.asks.filter((x) => x !== k) : QUICK_ASKS.filter((x) => x === k || h.asks.includes(x)) });
+  const same = (a) => a.enabled === h.enabled && a.questions === h.questions && a.asks.join() === h.asks.join();
+  const shows = [...h.asks.map((k) => HELP_ASKS[k][1]), ...(h.questions ? ["written questions"] : [])];
+  return (
+    <section className="card stack" id="customer-help">
+      <h2>Customer help</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        The 💬 Help tab on the QR page, where customers ask your staff for things. Requests ring on the Orders screen. Choose what fits your place.
+      </p>
+      <label className="check">
+        <input type="checkbox" checked={h.enabled} onChange={(e) => put({ enabled: e.target.checked })} />
+        Show Help on the QR page
+      </label>
+      {h.enabled && (
+        <>
+          <div className="field">
+            Ready-made
+            <div className="btn-row">
+              {Object.entries(HELP_PRESETS).map(([k, p]) => (
+                <button key={k} type="button" className={"chip" + (same(p.help) ? " on" : "")} onClick={() => set("help", { ...p.help, asks: [...p.help.asks] })}>{p.label}</button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            One-tap buttons
+            <div className="day-chips">
+              {QUICK_ASKS.map((k) => (
+                <button key={k} type="button" className={"chip" + (h.asks.includes(k) ? " on" : "")} aria-pressed={h.asks.includes(k)} onClick={() => toggle(k)}>
+                  {HELP_ASKS[k][0]} {HELP_ASKS[k][1]}
+                </button>
+              ))}
+            </div>
+            <span className="hint">“Call staff” suits a library, shop or office; “Call a waiter”, water and the bill suit restaurants.</span>
+          </div>
+          <label className="check">
+            <input type="checkbox" checked={h.questions} onChange={(e) => put({ questions: e.target.checked })} />
+            Let customers write a question to the staff
+          </label>
+          <div className="small">
+            {shows.length ? <>Customers see: <b>{shows.join(" · ")}</b></> : <span className="error">Nothing to ask with: add a button or allow questions, or turn Help off.</span>}
+          </div>
+        </>
+      )}
+      {!h.enabled && <div className="small muted">The Help tab is hidden. Customers can still order, pay and see their bill.</div>}
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save.</p>}
+    </section>
+  );
 }
 
 // The shop's own Cashfree account for online payments, and the pay-later rules.

@@ -7,6 +7,7 @@ import { Review, BillAsk } from "./customer/parts.jsx";
 import { MenuTab } from "./customer/MenuTab.jsx";
 import { StatusTab } from "./customer/StatusTab.jsx";
 import { HelpTab } from "./customer/HelpTab.jsx";
+import { DEFAULT_HELP } from "../../shared/tableHelp.js";
 
 // The page a customer sees after scanning a table's QR code: menu, cart, their orders and help.
 // Three tabs at the bottom (Menu · My orders · Help), the cart bar just above them.
@@ -133,6 +134,12 @@ export default function CustomerOrder() {
   const count = lines.reduce((s, l) => s + l.qty, 0);
   const total = lines.reduce((s, l) => s + l.qty * l.rate, 0);
   const canOrder = !!table && !!data?.ordering.open;
+  // The shop decides if there's a Help tab (a library may not want one) and what it offers.
+  const helpCfg = data?.help || DEFAULT_HELP;
+  const helpOn = helpCfg.enabled && (helpCfg.asks.length > 0 || helpCfg.questions);
+  useEffect(() => {
+    if (data && !helpOn && tab === "help") setTab("menu");
+  }, [data, helpOn, tab]);
   const nudge = couponNudge(offers, total);
   const openOrders = mine.filter((o) => ["new", "accepted", "preparing", "ready", "served"].includes(o.status)).length;
 
@@ -172,7 +179,7 @@ export default function CustomerOrder() {
             <span className={"co-open " + (data.ordering.open ? "on" : "off")}>{hoursLine}</span>
           </div>
         </div>
-        <button className="co-help-btn" onClick={() => go("help")} aria-label="Help">💬{newReply && <i className="co-dot" />}</button>
+        {helpOn && <button className="co-help-btn" onClick={() => go("help")} aria-label="Help">💬{newReply && <i className="co-dot" />}</button>}
       </header>
 
       {!data.ordering.open &&
@@ -219,9 +226,10 @@ export default function CustomerOrder() {
             quickAdd={quickAdd}
             qtyOf={qtyOf}
             onMenu={() => go("menu")}
+            helpOn={helpOn}
           />
         )}
-        {tab === "help" && (
+        {tab === "help" && helpOn && (
           <HelpTab
             token={token}
             data={data}
@@ -233,6 +241,7 @@ export default function CustomerOrder() {
             onSent={loadHelp}
             onOrders={() => go("orders")}
             onMenu={() => go("menu")}
+            helpCfg={helpCfg}
           />
         )}
       </main>
@@ -264,9 +273,11 @@ export default function CustomerOrder() {
         <button className={tab === "orders" ? "on" : ""} onClick={() => go("orders")}>
           <span>🧾{openOrders > 0 && <i className="co-badge">{openOrders}</i>}</span>My orders
         </button>
-        <button className={tab === "help" ? "on" : ""} onClick={() => go("help")}>
-          <span>💬{newReply && <i className="co-dot" />}</span>Help
-        </button>
+        {helpOn && (
+          <button className={tab === "help" ? "on" : ""} onClick={() => go("help")}>
+            <span>💬{newReply && <i className="co-dot" />}</span>Help
+          </button>
+        )}
       </nav>
 
       {picker && (

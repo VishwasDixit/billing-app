@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { HttpError, respondRaw } from "../http.js";
 import { subscriptionStatus } from "../subscription.js";
 import { istDay } from "../../shared/hours.js";
+import { QUICK_ASKS } from "../../shared/tableHelp.js";
 import { encryptSecret } from "../payments/keys.js";
 import { keysWork } from "../payments/cashfree.js";
 import { checkPassword } from "../auth.js";
@@ -67,6 +68,12 @@ const ShopSettings = z
       .max(1000, "You can have up to 1000 tables.")
       .refine((t) => new Set(t.map((x) => x.id)).size === t.length, "table ids must be different"),
     qrOrdering: z.boolean(),
+    // The customer QR page's Help: on/off, which one-tap buttons, and written questions.
+    help: z.object({
+      enabled: z.boolean(),
+      asks: z.array(z.enum(QUICK_ASKS)).max(QUICK_ASKS.length).transform((a) => [...new Set(a)]),
+      questions: z.boolean(),
+    }),
     // Paying later (at the table or counter): everyone, everyone except blocked customers, or no one.
     payLater: z.enum(["all", "unblocked", "none"]),
     // After a failed online payment: they may pay later, or must pay online (unpaid pay-first orders end after 15 min).

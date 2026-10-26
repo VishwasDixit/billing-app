@@ -6,7 +6,6 @@ import { money } from "../../lib/format.js";
 import { promoSummary } from "../../../shared/promo.js";
 import { HELP_ASKS } from "../../../shared/tableHelp.js";
 
-const QUICK = ["waiter", "water", "bill", "cutlery"];
 const ago = (t) => {
   const m = Math.round((Date.now() - new Date(t)) / 60000);
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
@@ -19,7 +18,8 @@ const savedName = () => {
   }
 };
 
-export function HelpTab({ token, data, table, offers, cur, device, requests, onSent, onOrders, onMenu }) {
+export function HelpTab({ token, data, table, offers, cur, device, requests, onSent, onOrders, onMenu, helpCfg }) {
+  const QUICK = helpCfg.asks;
   const [text, setText] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -51,7 +51,7 @@ export function HelpTab({ token, data, table, offers, cur, device, requests, onS
   const faqs = [
     ["💳", "How do I pay?", <p key="p">{payText}{data.online ? " Online payments are secured by Cashfree (UPI, cards, netbanking)." : ""}</p>],
     ["⏱️", "Where is my order?", <p key="o">Open <button className="link-btn" onClick={onOrders}>My orders</button> to see live updates from the kitchen: Sent → Cooking → Ready → Served.</p>],
-    ["✏️", "Can I change or cancel my order?", <p key="c">Once the kitchen starts, please ask the staff: send a question below or tap “Call a waiter”. You can always add more from the <button className="link-btn" onClick={onMenu}>menu</button>.</p>],
+    ["✏️", "Can I change or cancel my order?", <p key="c">Once it's being prepared, please ask the staff{helpCfg.questions ? ": send a question below" : ""}{QUICK.length ? ` or tap “${HELP_ASKS[QUICK[0]][1]}”` : ""}. You can always add more from the <button className="link-btn" onClick={onMenu}>menu</button>.</p>],
     [
       "🏷️",
       "Is there any discount?",
@@ -71,23 +71,23 @@ export function HelpTab({ token, data, table, offers, cur, device, requests, onS
         <span className="small">{table ? `Your request goes straight to the staff at ${table.name}.` : "Choose your table first, so the staff know where to come."}</span>
       </section>
 
-      <div className="co-quick">
+      {QUICK.length > 0 && <div className={"co-quick" + (QUICK.length === 1 ? " one" : "")}>
         {QUICK.map((k) => (
           <button key={k} className="co-quick-btn" disabled={!!busy} onClick={() => ask(k)}>
             <span>{HELP_ASKS[k][0]}</span>
             {busy === k ? "Sending…" : HELP_ASKS[k][1]}
           </button>
         ))}
-      </div>
+      </div>}
 
-      <form className="co-ask" onSubmit={(e) => (e.preventDefault(), text.trim() && ask("question", { text: text.trim() }))}>
+      {helpCfg.questions && <form className="co-ask" onSubmit={(e) => (e.preventDefault(), text.trim() && ask("question", { text: text.trim() }))}>
         <label htmlFor="co-q"><b>Ask a question</b></label>
-        <textarea id="co-q" rows={2} maxLength={200} placeholder="e.g. Is the paneer tikka spicy? Do you have Jain food?" value={text} onChange={(e) => setText(e.target.value)} />
+        <textarea id="co-q" rows={2} maxLength={200} placeholder={QUICK.includes("waiter") ? "e.g. Is the paneer tikka spicy? Do you have Jain food?" : "Type your question for the staff…"} value={text} onChange={(e) => setText(e.target.value)} />
         <div className="co-ask-row">
           <span className="small muted">{text.length}/200</span>
           <button className="btn btn-primary" disabled={!text.trim() || !!busy}>{busy === "question" ? "Sending…" : "Send"}</button>
         </div>
-      </form>
+      </form>}
       {sent && !error && <div className="co-pay paid small">✅ {sent}</div>}
       {error && <div className="error small">{error}</div>}
 

@@ -136,3 +136,29 @@ describe("bestsellers on the customer menu", () => {
     expect(pop).not.toContain(d.id);
   });
 });
+
+describe("the shop controls the help section", () => {
+  it("can turn help off, pick which quick asks show, and turn off questions", async () => {
+    const { c, token } = await shop("settings@th.test");
+    const pub = async () => (await client()("GET", `/public/shop/${token}`)).body.help;
+    const ask = (kind, text) => client()("POST", `/public/shop/${token}/help`, { table: "T1", deviceKey: device(), kind, ...(text && { text }) });
+    // Default: on, the restaurant set (call staff instead of waiter is optional).
+    expect(await pub()).toEqual({ enabled: true, asks: ["waiter", "water", "bill", "cutlery"], questions: true });
+
+    // A library: only "Call staff" and questions.
+    expect((await c("PUT", "/shop", { help: { enabled: true, asks: ["staff"], questions: true } })).status).toBe(200);
+    expect(await pub()).toEqual({ enabled: true, asks: ["staff"], questions: true });
+    expect((await ask("water")).status).toBe(400);
+    expect((await ask("staff")).status).toBe(200);
+    expect((await ask("question", "Where are the history books?")).status).toBe(200);
+
+    await c("PUT", "/shop", { help: { enabled: true, asks: ["staff"], questions: false } });
+    expect((await ask("question", "hello")).status).toBe(400);
+
+    await c("PUT", "/shop", { help: { enabled: false, asks: ["staff"], questions: true } });
+    expect((await pub()).enabled).toBe(false);
+    expect((await ask("staff")).status).toBe(403);
+    // Unknown buttons are refused when saving.
+    expect((await c("PUT", "/shop", { help: { enabled: true, asks: ["dance"], questions: true } })).status).toBe(400);
+  });
+});

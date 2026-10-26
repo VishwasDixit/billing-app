@@ -17,6 +17,7 @@ import { rateLimit, clientIp } from "../limits.js";
 import { refreshDailyStock, takeStock, checkAvailable } from "../stock.js";
 import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.js";
 import { storeOpen, hoursText } from "../../shared/hours.js";
+import { helpSettings } from "../../shared/tableHelp.js";
 import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
 
 // "unpaid": the table left without paying (closed by staff; not a sale).
@@ -289,6 +290,7 @@ export default [
         offers: await menuOffers(db, shop),
         online: !!shop.gateway?.name,
         popular: await popularItems(db, shop, menu),
+        help: helpSettings(shop),
         hours: hoursText(shop.hours),
         menu: menu.map((m) => ({
           id: String(m._id),
