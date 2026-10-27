@@ -42,6 +42,8 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         navigateFallbackDenylist: [/^\/api/],
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
+        // iPhone start-up screens: iOS loads only its own size when the app opens; not cached.
+        globIgnores: ["splash/**"],
         // Uploaded menu photos never change (a new photo gets a new URL), so cache them for offline billing.
         runtimeCaching: [
           {
