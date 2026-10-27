@@ -14,6 +14,7 @@ import { printKot } from "../printer/index.js";
 import { explainPrintError } from "../printer/transports.js";
 import { usePref } from "../lib/prefs.js";
 import { storeOpen } from "../../shared/hours.js";
+import { groupOf, groupPrice, deliveryLine } from "../../shared/tableGroups.js";
 
 export const STATUS_LABEL = { new: "New", accepted: "To cook", preparing: "Cooking", ready: "Ready", served: "Served", billed: "Paid", rejected: "Rejected", unpaid: "Left unpaid" };
 const STATUS_TAG = { new: "warn", accepted: "accent", preparing: "accent", ready: "good", served: "", billed: "", rejected: "bad", unpaid: "bad" };
@@ -491,6 +492,10 @@ function OrderPicker({ table, onClose, onPlaced }) {
   const [lines, setLines] = useState(() => new Map());
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // Far tables (a table group): their own prices, and a delivery charge unless it's picked up.
+  const group = groupOf(shop, table.id);
+  const priceOf = (m, v) => groupPrice(group, m.id, v.label || "", v.price);
+  const [pickup, setPickup] = useState(false);
   const active = menu.filter((m) => m.active !== false);
   const cats = ["All", ...new Set(active.map((m) => m.category || "Other"))];
   const shown = active.filter((m) => (cat === "All" || (m.category || "Other") === cat) && (!q || m.name.toLowerCase().includes(q.toLowerCase())));
@@ -501,16 +506,18 @@ function OrderPicker({ table, onClose, onPlaced }) {
       const next = new Map(prev);
       const qty = (next.get(k)?.qty || 0) + d;
       if (qty <= 0) next.delete(k);
-      else next.set(k, { itemId: m.id, name: m.name, variant: v.label || "", category: m.category || "", rate: v.price, qty, note: next.get(k)?.note || "" });
+      else next.set(k, { itemId: m.id, name: m.name, variant: v.label || "", category: m.category || "", rate: priceOf(m, v), qty, note: next.get(k)?.note || "" });
       return next;
     });
   };
   const list = [...lines.values()];
-  const total = list.reduce((s, l) => s + l.qty * l.rate, 0);
+  const food = list.reduce((s, l) => s + l.qty * l.rate, 0);
+  const delivery = pickup ? null : deliveryLine(group, food);
+  const total = food + (delivery?.rate || 0);
   const place = async () => {
     setBusy(true);
     try {
-      onPlaced(await createStaffOrder({ table: table.id, tableName: table.name, items: list, note }));
+      onPlaced(await createStaffOrder({ table: table.id, tableName: table.name, items: delivery ? [...list, delivery] : list, note }));
     } catch (err) {
       toast(err.message);
       setBusy(false);
@@ -529,7 +536,7 @@ function OrderPicker({ table, onClose, onPlaced }) {
                 <div key={m.id + v.label} className={"picker-row" + (m.soldOut ? " out" : "")}>
                   <ItemPicture item={m} size={36} />
                   <span className="picker-name">
-                    {m.name}{v.label ? ` (${v.label})` : ""}<span className="small muted"> {money(v.price, cur)}</span>
+                    {m.name}{v.label ? ` (${v.label})` : ""}<span className="small muted"> {money(priceOf(m, v), cur)}</span>
                     {m.soldOut ? <span className="tag bad" style={{ marginLeft: 4 }}>sold out</span> : typeof m.stock === "number" && <span className="tag warn" style={{ marginLeft: 4 }}>{m.stock} left</span>}
                   </span>
                   <div className="qty">
@@ -558,6 +565,12 @@ function OrderPicker({ table, onClose, onPlaced }) {
               </div>
             ))}
             <input className="input" placeholder="Note for the whole order (optional)" maxLength={160} value={note} onChange={(e) => setNote(e.target.value)} />
+            {group?.delivery?.charge > 0 && (
+              <div className="order-top small">
+                <span>🛵 {group.name}: {delivery ? `delivery charge ${money(delivery.rate, cur)}` : pickup ? "no delivery charge (picked up)" : "free delivery"}</span>
+                <label className="check small"><input type="checkbox" checked={pickup} onChange={(e) => setPickup(e.target.checked)} /> Picked up</label>
+              </div>
+            )}
           </div>
         )}
         <div className="modal-actions">

@@ -8,6 +8,7 @@ import { MenuTab } from "./customer/MenuTab.jsx";
 import { StatusTab } from "./customer/StatusTab.jsx";
 import { HelpTab } from "./customer/HelpTab.jsx";
 import { DEFAULT_HELP } from "../../shared/tableHelp.js";
+import { freeDeliveryGap } from "../../shared/tableGroups.js";
 
 // The page a customer sees after scanning a table's QR code: menu, cart, their orders and help.
 // Three tabs at the bottom (Menu · My orders · Help), the cart bar just above them.
@@ -40,10 +41,29 @@ export default function CustomerOrder() {
   };
   const loadHelp = () => get(`/public/shop/${token}/help?d=${device}`).then((r) => setHelp(r.requests), () => {});
 
+  // The menu for this table: far tables (a table group) have their own prices and a delivery charge.
+  const menuUrl = `/public/shop/${token}${tableId ? `?t=${encodeURIComponent(tableId)}` : ""}`;
   useEffect(() => {
-    get(`/public/shop/${token}`).then(setData, (e) => setError(e.message));
     loadHelp();
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    get(menuUrl).then(setData, (e) => setError(e.message));
+  }, [menuUrl]);
+  // Table chosen or changed: what's already in the cart takes this table's prices.
+  useEffect(() => {
+    if (!data?.menu) return;
+    const byId = new Map(data.menu.map((m) => [m.id, m]));
+    setCart((prev) => {
+      let changed = false;
+      const next = new Map();
+      for (const [k, l] of prev) {
+        const v = byId.get(l.itemId)?.variants.find((x) => (x.label || "") === l.variant);
+        if (v && v.price !== l.rate) changed = true;
+        next.set(k, v ? { ...l, rate: v.price } : l);
+      }
+      return changed ? next : prev;
+    });
+  }, [data]);
 
   // Back from Cashfree's payment page (?paid=<order>): ask the server how it went. The webhook
   // may be a moment behind, so check a few times.
@@ -81,9 +101,9 @@ export default function CustomerOrder() {
   // Closed for the night: check again every minute so ordering opens on time.
   useEffect(() => {
     if (!data?.ordering?.closedForHours) return;
-    const t = setInterval(() => get(`/public/shop/${token}`).then(setData, () => {}), 60000);
+    const t = setInterval(() => get(menuUrl).then(setData, () => {}), 60000);
     return () => clearInterval(t);
-  }, [token, data?.ordering?.closedForHours]);
+  }, [menuUrl, data?.ordering?.closedForHours]);
 
   // Keep my recent orders' status fresh.
   useEffect(() => {
@@ -141,6 +161,7 @@ export default function CustomerOrder() {
     if (data && !helpOn && tab === "help") setTab("menu");
   }, [data, helpOn, tab]);
   const nudge = couponNudge(offers, total);
+  const deliveryGap = freeDeliveryGap({ delivery: data?.delivery }, total);
   const openOrders = mine.filter((o) => ["new", "accepted", "preparing", "ready", "served"].includes(o.status)).length;
 
   const add = (m, v, d = 1) => {
@@ -248,6 +269,18 @@ export default function CustomerOrder() {
 
       {count > 0 && tab !== "help" && (
         <div className="co-cart-wrap">
+          {data.delivery?.freeFrom > 0 && (
+            <div className={"co-nudge" + (deliveryGap ? "" : " done")}>
+              {deliveryGap ? (
+                <>
+                  <span>🛵 Add <b>{money(Math.ceil(deliveryGap), cur)}</b> more for <b>free delivery</b></span>
+                  <i className="co-nudge-bar"><i style={{ width: `${Math.round(Math.min(1, total / data.delivery.freeFrom) * 100)}%` }} /></i>
+                </>
+              ) : (
+                <span>🛵 Free delivery unlocked 🎉</span>
+              )}
+            </div>
+          )}
           {nudge && (
             <div className={"co-nudge" + (nudge.unlocked ? " done" : "")}>
               {nudge.unlocked ? (
@@ -326,6 +359,7 @@ export default function CustomerOrder() {
           payRule={data.payRule}
           offers={offers}
           initialCode={offerCode}
+          delivery={data.delivery || null}
           onPlaced={(o) => {
             const next = [...mine, o];
             setMine(next);

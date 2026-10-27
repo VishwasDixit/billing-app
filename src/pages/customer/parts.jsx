@@ -5,8 +5,9 @@ import { post } from "../../lib/api.js";
 import { money } from "../../lib/format.js";
 import { qrSvg } from "../../../shared/billQr.js";
 import { lineKey, couponNudge } from "./common.js";
+import { deliveryLine, freeDeliveryGap } from "../../../shared/tableGroups.js";
 
-export function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, payRule, offers, initialCode }) {
+export function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, payRule, offers, initialCode, delivery = null }) {
   const [note, setOrderNote] = useState("");
   // Name and mobile are needed to order; remembered on this phone for next time.
   const saved = (() => {
@@ -47,7 +48,10 @@ export function Review({ token, table, lines, cur, total, setNote, onClose, onPl
   useEffect(() => {
     if (initialCode) applyCode(initialCode);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const toPay = Math.max(0, total - (promo?.amount || 0));
+  // Far tables: a delivery charge on smaller orders (the server adds the same line).
+  const charge = deliveryLine({ delivery }, total)?.rate || 0;
+  const gap = freeDeliveryGap({ delivery }, total);
+  const toPay = Math.max(0, total - (promo?.amount || 0)) + charge;
   const place = async () => {
     if (!contactOk) return setError(name.trim().length < 2 ? "Please enter your name." : "Please enter a 10-digit mobile number.");
     setBusy(true);
@@ -133,7 +137,18 @@ export function Review({ token, table, lines, cur, total, setNote, onClose, onPl
             );
           })()}
         </div>
-        {promo && <div className="co-line-top small muted"><span>Items</span><span>{money(total, cur)}</span></div>}
+        {(promo || delivery) && <div className="co-line-top small muted"><span>Items</span><span>{money(total, cur)}</span></div>}
+        {delivery && (
+          <div className="co-line-top small muted">
+            <span>🛵 Delivery charge</span>
+            <span>{charge ? money(charge, cur) : "Free"}</span>
+          </div>
+        )}
+        {gap > 0 && (
+          <div className="co-nudge">
+            <span>🛵 Add <b>{money(Math.ceil(gap), cur)}</b> more for <b>free delivery</b> · <button className="link-btn" onClick={onClose}>Add more</button></span>
+          </div>
+        )}
         <div className="co-line-top"><b>Total</b><b>{money(toPay, cur)}</b></div>
         {error && <div className="error">{error}</div>}
         <button className="btn btn-primary btn-lg" disabled={busy || !contactOk} onClick={place}>{busy ? "Sending…" : "Place order"}</button>

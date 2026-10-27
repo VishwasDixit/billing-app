@@ -17,8 +17,11 @@ export function kotRows(shop, order, { reprint = false } = {}) {
   const d = new Date(order.createdAt);
   center(`${pad2(d.getHours())}:${pad2(d.getMinutes())}  ${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}  ${order.source === "qr" ? "QR order" : "Staff"}`);
   if (order.customerName) center(`For: ${order.customerName}`);
+  // Far tables: the delivery charge isn't a dish, but the kitchen packs it to go.
+  const dishes = order.items.filter((i) => !i.charge);
+  if (dishes.length < order.items.length) center("** DELIVERY - PACK **", { bold: true });
   sep("=");
-  for (const it of order.items) {
+  for (const it of dishes) {
     const name = it.variant ? `${it.name} (${it.variant})` : it.name;
     const qty = `${it.qty} x `;
     // Tall = double height only, so the full paper width is available.
@@ -26,7 +29,7 @@ export function kotRows(shop, order, { reprint = false } = {}) {
     if (it.note) wrap(`  > ${it.note}`, cols).forEach((l) => line(l));
   }
   sep("=");
-  const count = order.items.reduce((s, i) => s + i.qty, 0);
+  const count = dishes.reduce((s, i) => s + i.qty, 0);
   line(`Items: ${count}`);
   if (order.note) {
     sep();

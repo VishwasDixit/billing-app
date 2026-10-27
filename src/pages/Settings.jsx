@@ -4,6 +4,7 @@ import { useApp, accessState } from "../lib/store.jsx";
 import { del, get, post, put } from "../lib/api.js";
 import { fmtDate, money } from "../lib/format.js";
 import { promoSummary, DAY_NAMES, cleanCode, tablesText, timeText } from "../../shared/promo.js";
+import { groupPrice, deliveryText, deliveryRule, MAX_GROUPS } from "../../shared/tableGroups.js";
 import { storeOpen, hoursText, DEFAULT_CLOSED_MESSAGE, closureActive, istDay } from "../../shared/hours.js";
 import { HELP_ASKS, QUICK_ASKS, HELP_PRESETS, helpSettings } from "../../shared/tableHelp.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
@@ -200,6 +201,7 @@ export default function Settings() {
           <OnlinePaymentsCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} />
           <CustomerHelpCard f={f} set={set} dirty={dirty} />
           <TablesCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} access={access} />
+          {(shop.tables || []).length > 0 && <TableGroupsCard />}
 
           {user.role !== "admin" && <KitchenStaffCard />}
           <BillSafetyCard />
@@ -1017,6 +1019,171 @@ const BLANK_PROMO = {
   days: [], timeFrom: "", timeTo: "", maxUses: 0, onePerPhone: false, where: "both", showOnMenu: false,
 };
 const todayIST = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+// Table groups: far tables (e.g. QR codes at places that get deliveries) with their own prices
+// and a delivery charge on smaller orders.
+const pctText = (n) => (n > 0 ? `+${n}% prices` : n < 0 ? `${n}% prices` : "Menu prices");
+function TableGroupsCard() {
+  const { shop, saveShop } = useApp();
+  const toast = useToast();
+  const cur = shop.currency || "₹";
+  const tables = shop.tables || [];
+  const groups = shop.tableGroups || [];
+  const [edit, setEdit] = useState(null);
+  const { busy, error, run } = useAction();
+  const remove = (g) =>
+    confirm(`Delete “${g.name}”? Its tables go back to menu prices with no delivery charge.`) &&
+    run(async () => {
+      await saveShop({ tableGroups: groups.filter((x) => x.id !== g.id) });
+      toast(`${g.name} deleted`);
+    });
+  return (
+    <section className="card stack" id="table-groups">
+      <h2>Table groups · prices &amp; delivery</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        For tables whose QR codes are far away (deliveries): their own prices, and a delivery charge on smaller orders. Customers at these tables see only their prices. Other tables keep the menu prices.
+      </p>
+      {error && <div className="error">{error}</div>}
+      {groups.length === 0 ? (
+        <p className="muted small" style={{ margin: 0 }}>No groups yet. Example: <b>Delivery 1–3 km</b>, Table 50 – Table 80, +10% prices, {cur}30 delivery below {cur}300.</p>
+      ) : (
+        <div className="promo-list">
+          {groups.map((g) => {
+            const pct = Number(g.pricePercent) || 0;
+            const own = Object.keys(g.prices || {}).length;
+            return (
+              <div key={g.id} className="promo-row">
+                <div className="promo-main">
+                  <b>{g.name}</b>
+                  <span className="small">
+                    {g.tables.length ? tableRuns(g.tables, tables).map(([a, b]) => (a === b ? a.name : `${a.name} – ${b.name}`)).join(", ") : "No tables yet"}
+                  </span>
+                  <span className="small muted">
+                    {pctText(pct)}{own ? ` · own price for ${own} dish${own === 1 ? "" : "es"}` : ""} · {deliveryRule(g) ? deliveryText(deliveryRule(g), cur) : "no delivery charge"}
+                  </span>
+                </div>
+                <div className="btn-row">
+                  <button className="btn btn-sm" onClick={() => setEdit(g)}>Edit</button>
+                  <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => remove(g)}>Delete</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {groups.length < MAX_GROUPS && (
+        <button className="btn" onClick={() => setEdit({ id: "", name: "", tables: [], pricePercent: 0, prices: {}, delivery: { charge: 30, freeFrom: 300 } })}>+ New table group</button>
+      )}
+      {edit && (
+        <TableGroupModal
+          group={edit}
+          groups={groups}
+          cur={cur}
+          onClose={() => setEdit(null)}
+          onSave={async (next) => {
+            await saveShop({ tableGroups: next });
+            setEdit(null);
+            toast("Table group saved");
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function TableGroupModal({ group, groups, cur, onClose, onSave }) {
+  const { shop, menu } = useApp();
+  const tables = shop.tables || [];
+  const [g, setG] = useState(() => ({ ...group, prices: { ...(group.prices || {}) }, delivery: { ...group.delivery } }));
+  const [q, setQ] = useState("");
+  const { busy, error, run } = useAction();
+  const set = (k, v) => setG((x) => ({ ...x, [k]: v }));
+  const pct = Number(g.pricePercent) || 0;
+  const items = (menu || []).filter((m) => m.active !== false);
+  const sample = items.find((m) => m.variants?.[0]?.price > 0);
+  const own = items.filter((m) => g.prices[m.id]);
+  const found = q.trim() ? items.filter((m) => !g.prices[m.id] && m.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8) : [];
+  const setOwn = (m, label, v) =>
+    setG((x) => {
+      const prices = { ...x.prices, [m.id]: { ...(x.prices[m.id] || {}) } };
+      if (v === "") delete prices[m.id][label];
+      else prices[m.id][label] = Math.max(0, Number(v) || 0);
+      if (!Object.keys(prices[m.id]).length) delete prices[m.id];
+      return { ...x, prices };
+    });
+  const save = (e) => {
+    e.preventDefault();
+    run(async () => {
+      const mine = { ...g, id: g.id || `g${Date.now().toString(36)}`, name: g.name.trim(), pricePercent: pct, delivery: { charge: Math.max(0, Number(g.delivery.charge) || 0), freeFrom: Math.max(0, Number(g.delivery.freeFrom) || 0) } };
+      let others = groups.filter((x) => x.id !== group.id);
+      // A table can be in one group only: move it here, or leave it where it is.
+      const taken = others.filter((o) => o.tables.some((t) => mine.tables.includes(t)));
+      if (taken.length) {
+        const names = taken.map((o) => `“${o.name}”`).join(", ");
+        if (confirm(`Some of these tables are already in ${names}. Move them to “${mine.name}”?\n\nOK = move them here · Cancel = leave them where they are`))
+          others = others.map((o) => ({ ...o, tables: o.tables.filter((t) => !mine.tables.includes(t)) }));
+        else mine.tables = mine.tables.filter((t) => !taken.some((o) => o.tables.includes(t)));
+      }
+      await onSave(group.id ? groups.map((x) => (x.id === group.id ? mine : others.find((o) => o.id === x.id) || x)) : [...others, mine]);
+    });
+  };
+  const ownRow = (m) => (
+    <div key={m.id} className="group-price">
+      <span className="small"><b>{m.name}</b></span>
+      {m.variants.map((v) => (
+        <label key={v.label} className="group-price-in small">
+          {v.label || "Price"} <span className="muted">({money(v.price, cur)})</span>
+          <input type="number" min="0" step="1" inputMode="numeric" placeholder={String(groupPrice({ pricePercent: pct }, m.id, v.label, v.price))} value={g.prices[m.id]?.[v.label || ""] ?? ""} onChange={(e) => setOwn(m, v.label || "", e.target.value)} />
+        </label>
+      ))}
+      {g.prices[m.id] && <button type="button" className="chip-x" aria-label={`Use the group price for ${m.name}`} onClick={() => set("prices", Object.fromEntries(Object.entries(g.prices).filter(([k]) => k !== m.id)))}>✕</button>}
+    </div>
+  );
+  return (
+    <Modal title={group.id ? `Edit ${group.name}` : "New table group"} onClose={onClose} wide>
+      <form className="stack" onSubmit={save}>
+        <Field label="Group name" hint="e.g. Delivery 1–3 km">
+          <input required autoFocus={!group.id} maxLength={40} value={g.name} onChange={(e) => set("name", e.target.value)} />
+        </Field>
+        <div className="field">
+          Tables in this group
+          <TableRangePicker tables={tables} ids={g.tables} onChange={(ids) => set("tables", ids)} hint={`${g.tables.length} table${g.tables.length === 1 ? "" : "s"}. A table can be in one group only.`} />
+        </div>
+        <div className="grid2">
+          <Field label="Change all prices by (%)" hint="e.g. 10 = 10% more, −5 = 5% less, 0 = menu prices. Rounded to whole rupees.">
+            <input type="number" min="-50" max="200" step="1" inputMode="numeric" value={g.pricePercent} onChange={(e) => set("pricePercent", e.target.value)} />
+          </Field>
+          <div className="field">
+            Example
+            <span className="hint" style={{ fontSize: 14 }}>
+              {sample ? <>{sample.name}: {money(sample.variants[0].price, cur)} → <b>{money(groupPrice({ ...g, pricePercent: pct }, sample.id, sample.variants[0].label, sample.variants[0].price), cur)}</b></> : "Add dishes to the menu to see an example."}
+            </span>
+          </div>
+        </div>
+        <div className="field">
+          Own price for some dishes <span className="hint">Optional. Wins over the % change.</span>
+          {own.map(ownRow)}
+          <input type="search" placeholder="Search a dish to set its price…" value={q} onChange={(e) => setQ(e.target.value)} />
+          {found.map(ownRow)}
+        </div>
+        <div className="grid2">
+          <Field label={`Delivery charge (${cur})`} hint="0 = no delivery charge">
+            <input type="number" min="0" step="1" inputMode="numeric" value={g.delivery.charge} onChange={(e) => set("delivery", { ...g.delivery, charge: e.target.value })} />
+          </Field>
+          <Field label={`Free delivery from (${cur})`} hint="Order amount (food, before discount). 0 = always charge">
+            <input type="number" min="0" step="1" inputMode="numeric" value={g.delivery.freeFrom} onChange={(e) => set("delivery", { ...g.delivery, freeFrom: e.target.value })} />
+          </Field>
+        </div>
+        {Number(g.delivery.charge) > 0 && <p className="hint" style={{ margin: 0 }}>Customers see: {deliveryText({ charge: Number(g.delivery.charge), freeFrom: Number(g.delivery.freeFrom) || 0 }, cur)}</p>}
+        {error && <div className="error">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? "Saving…" : "Save group"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function promoStatus(p) {
   if (!p.active) return ["Paused", ""];
   if (p.validTo && p.validTo < todayIST()) return ["Expired", "bad"];
@@ -1100,6 +1267,41 @@ function PromosCard() {
   );
 }
 
+// Chosen tables as chips ("Table 5 – Table 9 ✕") and a from–to picker to add more.
+function TableRangePicker({ tables, ids, onChange, hint }) {
+  const [from, setFrom] = useState(0);
+  const [to, setTo] = useState(Math.min(9, Math.max(0, tables.length - 1)));
+  const addRange = () => {
+    const [a, b] = from <= to ? [from, to] : [to, from];
+    onChange([...new Set([...ids, ...tables.slice(a, b + 1).map((t) => t.id)])]);
+  };
+  return (
+    <>
+      {ids.length > 0 && (
+        <div className="chips">
+          {tableRuns(ids, tables).map(([a, b, run]) => (
+            <span key={a.id} className="chip on">
+              {a === b ? a.name : `${a.name} – ${b.name}`}{" "}
+              <button type="button" className="chip-x" aria-label="Remove these tables" onClick={() => onChange(ids.filter((id) => !run.includes(id)))}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="inline range-add">
+        <select value={from} onChange={(e) => setFrom(Number(e.target.value))} aria-label="From table">
+          {tables.map((t, i) => <option key={t.id} value={i}>{t.name}</option>)}
+        </select>
+        <span className="muted">to</span>
+        <select value={to} onChange={(e) => setTo(Number(e.target.value))} aria-label="To table">
+          {tables.map((t, i) => <option key={t.id} value={i}>{t.name}</option>)}
+        </select>
+        <button type="button" className="btn btn-sm" onClick={addRange}>+ Add</button>
+      </div>
+      {hint && <span className="hint">{hint}</span>}
+    </>
+  );
+}
+
 // Chosen table ids as runs in the shop's order: [firstTable, lastTable, ids].
 function tableRuns(ids, tables) {
   const want = new Set(ids);
@@ -1118,12 +1320,6 @@ function PromoModal({ promo, cur, onClose, onSaved }) {
   const { shop } = useApp();
   const tables = shop.tables || [];
   const [p, setP] = useState(() => ({ ...BLANK_PROMO, ...promo, tables: (promo.tables || []).filter((id) => tables.some((t) => t.id === id)) }));
-  const [from, setFrom] = useState(0);
-  const [to, setTo] = useState(Math.min(9, Math.max(0, tables.length - 1)));
-  const addRange = () => {
-    const [a, b] = from <= to ? [from, to] : [to, from];
-    set("tables", [...new Set([...p.tables, ...tables.slice(a, b + 1).map((t) => t.id)])]);
-  };
   const { busy, error, run } = useAction();
   const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
   const num = (v) => Math.max(0, Number(v) || 0);
@@ -1173,27 +1369,7 @@ function PromoModal({ promo, cur, onClose, onSaved }) {
             Which tables
             <Seg value={p.tables.length ? "some" : "all"} onChange={(v) => set("tables", v === "all" ? [] : p.tables.length ? p.tables : tables.slice(0, Math.min(10, tables.length)).map((t) => t.id))} options={[["all", "All tables"], ["some", "Only some tables"]]} />
             {p.tables.length > 0 && (
-              <>
-                <div className="chips">
-                  {tableRuns(p.tables, tables).map(([a, b, ids]) => (
-                    <span key={a.id} className="chip on">
-                      {a === b ? a.name : `${a.name} – ${b.name}`}{" "}
-                      <button type="button" className="chip-x" aria-label="Remove these tables" onClick={() => set("tables", p.tables.filter((id) => !ids.includes(id)))}>✕</button>
-                    </span>
-                  ))}
-                </div>
-                <div className="inline range-add">
-                  <select value={from} onChange={(e) => setFrom(Number(e.target.value))} aria-label="From table">
-                    {tables.map((t, i) => <option key={t.id} value={i}>{t.name}</option>)}
-                  </select>
-                  <span className="muted">to</span>
-                  <select value={to} onChange={(e) => setTo(Number(e.target.value))} aria-label="To table">
-                    {tables.map((t, i) => <option key={t.id} value={i}>{t.name}</option>)}
-                  </select>
-                  <button type="button" className="btn btn-sm" onClick={addRange}>+ Add</button>
-                </div>
-                <span className="hint">{p.tables.length} table{p.tables.length === 1 ? "" : "s"}. At Billing, it works on these tables' bills only, not counter bills.</span>
-              </>
+              <TableRangePicker tables={tables} ids={p.tables} onChange={(ids) => set("tables", ids)} hint={`${p.tables.length} table${p.tables.length === 1 ? "" : "s"}. At Billing, it works on these tables' bills only, not counter bills.`} />
             )}
           </div>
         )}

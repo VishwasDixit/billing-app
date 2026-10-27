@@ -19,6 +19,7 @@ import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.
 import { storeOpen, hoursText } from "../../shared/hours.js";
 import { helpSettings } from "../../shared/tableHelp.js";
 import { pushToShop, MONEY_ROLES } from "../push.js";
+import { groupOf, groupPrice, deliveryLine, deliveryRule } from "../../shared/tableGroups.js";
 import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
 
 // "unpaid": the table left without paying (closed by staff; not a sale).
@@ -55,6 +56,7 @@ const StaffOrderIn = z.object({
         qty: z.number().int().min(1).max(99),
         rate: z.number().min(0).max(1000000),
         note: z.string().trim().max(80).optional().default(""),
+        charge: z.boolean().optional(), // the delivery charge line (far tables)
       })
     )
     .min(1)
@@ -99,13 +101,14 @@ async function nextQrNumber(db, shopId) {
   return `Q${r.n}`;
 }
 
-const priceLines = (menuById, lines) =>
+// Server prices for the customer's lines (a table group's own prices when the table is in one).
+const priceLines = (menuById, lines, group = null) =>
   lines.map((l) => {
     const item = menuById.get(l.itemId);
     if (!item || item.active === false) throw new HttpError(400, "Some items are no longer on the menu. Please refresh the menu.");
     const v = item.variants.find((x) => (x.label || "") === (l.variant || "")) || (item.variants.length === 1 ? item.variants[0] : null);
     if (!v) throw new HttpError(400, `Please choose a size for ${item.name}.`);
-    return { itemId: String(item._id), name: item.name, variant: v.label || "", category: item.category || "", qty: l.qty, rate: v.price, note: l.note || "" };
+    return { itemId: String(item._id), name: item.name, variant: v.label || "", category: item.category || "", qty: l.qty, rate: groupPrice(group, String(item._id), v.label || "", v.price), note: l.note || "" };
   });
 
 // The customer's own order, checked with the key their phone got when ordering.
@@ -149,7 +152,7 @@ async function createOrderBill(db, shop, o, user) {
     orderNo: o.orderNo,
     table: o.tableName || o.table,
     orderIds: [o.clientId],
-    items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount }) => ({ itemId, name, variant, category, qty, rate, amount })),
+    items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }) })),
     itemCount: t.itemCount,
     subtotal: t.subtotal,
     discount: t.discount,
@@ -276,8 +279,10 @@ export default [
   [
     "GET",
     "/public/shop/:token",
-    async ({ db, params }) => {
+    async ({ db, params, query }) => {
       const shop = await shopByToken(db, params.token);
+      // The table's group (far tables): its prices and delivery charge, for this table only.
+      const group = tableById(shop, query.t) ? groupOf(shop, query.t) : null;
       const state = await orderingState(db, shop);
       await refreshDailyStock(db, shop._id);
       // Sold-out dishes are not shown to customers.
@@ -293,12 +298,13 @@ export default [
         popular: await popularItems(db, shop, menu),
         help: helpSettings(shop),
         hours: hoursText(shop.hours),
+        delivery: deliveryRule(group),
         menu: menu.map((m) => ({
           id: String(m._id),
           name: m.name,
           category: m.category || "Other",
           note: m.note || "",
-          variants: m.variants,
+          variants: group ? m.variants.map((v) => ({ ...v, price: groupPrice(group, String(m._id), v.label || "", v.price) })) : m.variants,
           image: m.image || "",
           ...(typeof m.stock === "number" && m.stock <= 10 && { left: m.stock }),
         })),
@@ -333,17 +339,22 @@ export default [
       await refreshDailyStock(db, shop._id);
       const menu = await db.collection("menuItems").find({ shopId: shop._id }).toArray();
       const menuById = new Map(menu.map((m) => [String(m._id), m]));
-      const items = priceLines(menuById, input.items);
+      const group = groupOf(shop, table.id);
+      const items = priceLines(menuById, input.items, group);
       const stockProblem = checkAvailable(menuById, items);
       if (stockProblem) throw new HttpError(409, stockProblem, { code: "STOCK" });
       const clientId = crypto.randomUUID();
+      // Free delivery and promo minimums go by the food, before any charge or discount.
+      const food = orderTotal(items);
       // A promo code: checked here with the server's prices, and one use taken for this order.
       let promo = null;
       if (input.promo) {
-        const { promo: p, amount } = await promoDiscount(db, shop, input.promo, { subtotal: orderTotal(items), where: "qr", phone: input.phone, table: table.id });
+        const { promo: p, amount } = await promoDiscount(db, shop, input.promo, { subtotal: food, where: "qr", phone: input.phone, table: table.id });
         await reservePromo(db, p, { ref: clientId, phone: input.phone, amount });
         promo = { code: p.code, amount };
       }
+      const delivery = deliveryLine(group, food);
+      if (delivery) items.push(delivery);
       const now = new Date();
       const customer = await upsertCustomerByPhone(db, shop._id, { name: input.name, phone: input.phone });
       const doc = {
@@ -373,7 +384,7 @@ export default [
         if (promo) await releasePromo(db, shop._id, clientId);
         throw err;
       }
-      const count = items.reduce((n, i) => n + i.qty, 0);
+      const count = items.reduce((n, i) => n + (i.charge ? 0 : i.qty), 0);
       await pushToShop(db, shop._id, { title: `🍽️ New order #${doc.orderNo} · ${table.name}`, body: `${count} item${count === 1 ? "" : "s"} · ${input.name}. Tap to open Orders.`, key: `order:${table.id}` });
       return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, pay: publicPay(doc), ...(promo && { promo }) };
     },
@@ -393,9 +404,12 @@ export default [
       if (ip) await rateLimit(db, `promo-try:ip:${ip}`, 30, "Too many tries. Please ask the staff.");
       await rateLimit(db, `promo-try:shop:${shop._id}`, 2000, "Too many tries. Please ask the staff.");
       const menu = await db.collection("menuItems").find({ shopId: shop._id }).toArray();
-      const items = priceLines(new Map(menu.map((m) => [String(m._id), m])), input.items);
-      const { promo, amount } = await promoDiscount(db, shop, input.code, { subtotal: orderTotal(items), where: "qr", phone: cleanMobile(input.phone) || "", table: input.table });
-      return { code: promo.code, amount, description: promo.description, payable: payableTotal(shop, items, { amount }) };
+      const group = tableById(shop, input.table) ? groupOf(shop, input.table) : null;
+      const items = priceLines(new Map(menu.map((m) => [String(m._id), m])), input.items, group);
+      const food = orderTotal(items);
+      const { promo, amount } = await promoDiscount(db, shop, input.code, { subtotal: food, where: "qr", phone: cleanMobile(input.phone) || "", table: input.table });
+      const delivery = deliveryLine(group, food);
+      return { code: promo.code, amount, description: promo.description, payable: payableTotal(shop, delivery ? [...items, delivery] : items, { amount }) };
     },
     { auth: false },
   ],

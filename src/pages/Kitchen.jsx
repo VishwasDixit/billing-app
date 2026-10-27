@@ -73,8 +73,9 @@ export default function Kitchen() {
                       <b className="kot-table">{o.pay?.state === "paid" && <span className="tag good kot-paid">PAID</span>} {o.tableName || o.table}</b>
                     </div>
                     <div className="small muted">{ago(o.acceptedAt || o.createdAt)}{o.source === "qr" ? " · QR" : ""}{o.customerName ? ` · ${o.customerName}` : ""}</div>
+                    {o.items.some((i) => i.charge) && <span className="tag warn">🛵 Delivery: pack to go</span>}
                     <ul className="kot-items">
-                      {o.items.map((i, k) => (
+                      {o.items.filter((i) => !i.charge).map((i, k) => (
                         <li key={k}>
                           <b>{i.qty}×</b> {i.name}{i.variant ? ` (${i.variant})` : ""}
                           {i.itemId && <button className="link-btn kot-recipe" onClick={() => setRecipe(i)} aria-label={`Recipe for ${i.name}`}>📖</button>}

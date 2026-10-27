@@ -14,6 +14,7 @@ import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
 import { isLibraryPhoto, CREDIT_URL } from "./images.js";
 import { StockIn, refreshDailyStock, stockDay } from "../stock.js";
 import { LANGUAGE_CODES } from "../../shared/messages.js";
+import { MAX_GROUPS } from "../../shared/tableGroups.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
 const MAX_QR_IMAGE = 200 * 1024;
@@ -28,6 +29,29 @@ export function publicShop(shop, isAdmin = false) {
   const { deviceSeq, billPinHash, gateway, ...rest } = shop;
   return { ...rest, gateway: publicGateway(gateway), billPin: !!billPinHash, id: String(shop._id), _id: undefined, status: subscriptionStatus(shop, { isAdmin }) };
 }
+
+// Table groups: their own prices (a percent, plus own prices for some dishes) and a delivery charge.
+const Money = z.number().min(0).max(100000);
+const TableGroup = z.object({
+  id: z.string().trim().regex(/^[A-Za-z0-9_-]{1,24}$/),
+  name: z.string().trim().min(1, "Give the group a name.").max(40),
+  tables: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,20}$/)).max(1000).transform((t) => [...new Set(t)]),
+  pricePercent: z.number().min(-50, "Prices can go down by 50% at most.").max(200, "Prices can go up by 200% at most.").default(0),
+  prices: z.record(z.string().regex(/^[a-f0-9]{24}$/), z.record(z.string().max(20), Money)).default({}),
+  delivery: z.object({ charge: Money.max(10000), freeFrom: Money }).default({ charge: 0, freeFrom: 0 }),
+});
+const TableGroups = z
+  .array(TableGroup)
+  .max(MAX_GROUPS, `You can have up to ${MAX_GROUPS} table groups.`)
+  .superRefine((groups, ctx) => {
+    if (new Set(groups.map((g) => g.id)).size !== groups.length) ctx.addIssue({ code: "custom", message: "table group ids must be different" });
+    const seen = new Map();
+    for (const g of groups)
+      for (const t of g.tables) {
+        if (seen.has(t)) ctx.addIssue({ code: "custom", message: `Table ${t} is in both “${seen.get(t)}” and “${g.name}”. A table can be in one group only.` });
+        seen.set(t, g.name);
+      }
+  });
 
 const ShopSettings = z
   .object({
@@ -68,6 +92,7 @@ const ShopSettings = z
       .max(1000, "You can have up to 1000 tables.")
       .refine((t) => new Set(t.map((x) => x.id)).size === t.length, "table ids must be different"),
     qrOrdering: z.boolean(),
+    tableGroups: TableGroups,
     // The customer QR page's Help: on/off, which one-tap buttons, and written questions.
     help: z.object({
       enabled: z.boolean(),
@@ -234,6 +259,11 @@ export default [
       if (next.qrMode === "upi" && !next.upiId) throw new HttpError(400, "Add your shop UPI ID to print a payment QR on bills.");
       if (next.qrMode === "image" && !next.qrImage) throw new HttpError(400, "Upload your QR picture, or choose another QR option.");
       if (input.printer) input.printer = { ...shop.printer, ...input.printer };
+      // Groups keep only tables that still exist (tables can be removed later).
+      if (input.tables || input.tableGroups) {
+        const ids = new Set((next.tables || []).map((t) => t.id));
+        input.tableGroups = (next.tableGroups || []).map((g) => ({ ...g, tables: g.tables.filter((t) => ids.has(t)) }));
+      }
       const updated = await db
         .collection("shops")
         .findOneAndUpdate({ _id: shop._id }, { $set: { ...input, updatedAt: new Date() } }, { returnDocument: "after" });

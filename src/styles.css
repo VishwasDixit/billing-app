@@ -1073,6 +1073,11 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .co-cart-go { margin-left: auto; }
 .co-cartbar.bump { animation: co-bump .35s ease; }
 @keyframes co-bump { 0% { transform: scale(1); } 40% { transform: scale(1.04); } 100% { transform: scale(1); } }
+.group-price { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.group-price > .small:first-child { flex: 1 1 140px; }
+.group-price-in { display: flex; align-items: center; gap: 6px; }
+.group-price-in input { width: 84px; }
+.co-delivery { padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 14px; }
 .co-nudge { display: grid; gap: 5px; padding: 8px 12px; border-radius: 12px; background: var(--panel); border: 1px dashed var(--accent); font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.1); }
 .co-nudge.done { border-style: solid; background: color-mix(in srgb, var(--good) 12%, var(--panel)); }
 .co-nudge .link-btn { font-weight: 700; text-align: left; }

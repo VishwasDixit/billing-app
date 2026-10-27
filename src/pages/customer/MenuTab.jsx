@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { money } from "../../lib/format.js";
 import { defaultImageFor } from "../../../shared/menuImages.js";
 import { promoSummary } from "../../../shared/promo.js";
+import { deliveryText } from "../../../shared/tableGroups.js";
 
 const imgOf = (m) => m.image || defaultImageFor(m.name, m.category);
 const fallback = (m) => (e) => (e.currentTarget.src = defaultImageFor(m.name, m.category));
@@ -95,6 +96,7 @@ export function MenuTab({ data, cur, offers, offerCode, setOfferCode, q, setQ, c
 
   return (
     <div className="co-menu-tab">
+      {data.delivery && <div className="co-delivery">{deliveryText(data.delivery, cur)}</div>}
       {offers.length > 0 && data.ordering.open && (
         <div className="co-offers">
           {offers.map((o) => (

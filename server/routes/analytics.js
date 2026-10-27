@@ -56,6 +56,8 @@ async function salesSummary(db, shopId, start, end) {
           ],
           topItems: [
             { $unwind: "$items" },
+            // Delivery charges are counted under the "Charges" category, not as a dish.
+            { $match: { "items.charge": { $ne: true } } },
             {
               $group: {
                 _id: { name: "$items.name", variant: "$items.variant" },
