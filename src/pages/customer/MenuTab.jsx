@@ -5,27 +5,28 @@ import { money } from "../../lib/format.js";
 import { defaultImageFor } from "../../../shared/menuImages.js";
 import { promoSummary } from "../../../shared/promo.js";
 import { deliveryText } from "../../../shared/tableGroups.js";
+import { needsChoice } from "./common.js";
 
 const imgOf = (m) => m.image || defaultImageFor(m.name, m.category);
 const fallback = (m) => (e) => (e.currentTarget.src = defaultImageFor(m.name, m.category));
 const priceText = (m, cur) => m.variants.map((v) => `${v.label ? v.label + " " : ""}${money(v.price, cur)}`).join(" · ");
 
-export function AddButton({ m, qty, canOrder, add, quickAdd, small }) {
+// Add / − n + on a dish. + on a customisable dish opens the customise or repeat sheet.
+export function AddButton({ m, qty, canOrder, quickAdd, less, small }) {
   if (!canOrder) return null;
-  if (m.variants.length > 1)
-    return (
-      <button className={"co-add" + (qty ? " has" : "") + (small ? " sm" : "")} onClick={() => quickAdd(m)}>
-        {qty ? `${qty} added` : "Add +"}
-      </button>
-    );
-  return qty ? (
-    <div className={"co-stepper" + (small ? " sm" : "")}>
-      <button onClick={() => add(m, m.variants[0], -1)} aria-label={`One less ${m.name}`}>−</button>
-      <span>{qty}</span>
-      <button onClick={() => add(m, m.variants[0], 1)} aria-label={`One more ${m.name}`}>+</button>
+  return (
+    <div className="co-addwrap">
+      {qty ? (
+        <div className={"co-stepper" + (small ? " sm" : "")}>
+          <button onClick={() => less(m)} aria-label={`One less ${m.name}`}>−</button>
+          <span>{qty}</span>
+          <button onClick={() => quickAdd(m)} aria-label={`One more ${m.name}`}>+</button>
+        </div>
+      ) : (
+        <button className={"co-add" + (small ? " sm" : "")} onClick={() => quickAdd(m)}>Add +</button>
+      )}
+      {needsChoice(m) && !small && <small className="co-customisable">customisable</small>}
     </div>
-  ) : (
-    <button className={"co-add" + (small ? " sm" : "")} onClick={() => add(m, m.variants[0], 1)}>Add +</button>
   );
 }
 
@@ -40,7 +41,7 @@ export function PopularCard({ m, cur, ...addProps }) {
   );
 }
 
-export function MenuTab({ data, cur, offers, offerCode, setOfferCode, q, setQ, canOrder, add, quickAdd, qtyOf }) {
+export function MenuTab({ data, cur, offers, offerCode, setOfferCode, q, setQ, canOrder, quickAdd, less, qtyOf }) {
   const menu = data.menu || [];
   const byId = useMemo(() => new Map(menu.map((m) => [m.id, m])), [menu]);
   const popular = (data.popular || []).map((id) => byId.get(id)).filter(Boolean);
@@ -51,7 +52,7 @@ export function MenuTab({ data, cur, offers, offerCode, setOfferCode, q, setQ, c
   const [active, setActive] = useState(categories[0]);
   const sections = useRef(new Map());
   const tabsRef = useRef(null);
-  const addProps = { canOrder, add, quickAdd };
+  const addProps = { canOrder, quickAdd, less };
 
   // The category tab follows the section being read.
   useEffect(() => {

@@ -1188,3 +1188,75 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .bell-help { margin: 2px 0 0; padding-left: 18px; display: grid; gap: 2px; }
 .bell-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .bell-row select { font-size: 13px; padding: 4px 6px; }
+
+/* Menu › Add-ons */
+.addon-opt { display: grid; grid-template-columns: 1fr 84px auto auto; gap: 6px; align-items: center; }
+.addon-off { display: flex; gap: 4px; align-items: center; white-space: nowrap; }
+
+/* Customer: add button, customise sheet, repeat sheet */
+.co-addwrap { display: grid; justify-items: center; gap: 2px; }
+.co-customisable { font-size: 10.5px; color: var(--muted); }
+.co-sheet-back:has(.co-custom) { z-index: 60; }
+.co-custom { padding: 0; gap: 0; max-height: 90dvh; display: flex; flex-direction: column; }
+.co-custom-head { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center; padding: 16px; border-bottom: 1px solid var(--border); }
+.co-custom-head img { width: 56px; height: 56px; border-radius: 12px; object-fit: cover; }
+.co-custom-head > div { display: grid; gap: 2px; }
+.co-x { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg); color: var(--text); cursor: pointer; font-size: 14px; }
+.co-custom-body { overflow: auto; padding: 12px 16px; display: grid; gap: 12px; background: var(--bg); }
+.co-group { border: 1px solid var(--border); border-radius: 14px; background: var(--panel); padding: 4px 14px 6px; margin: 0; min-width: 0; }
+.co-group.short { border-color: var(--danger); }
+.co-group legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 0 4px; float: left; width: 100%; }
+.co-req, .co-opt-tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.co-req { background: var(--warn-soft); color: var(--warn); }
+.co-opt-tag { background: var(--bg); color: var(--muted); }
+.co-opt { clear: both; display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; min-height: 46px; border-top: 1px dashed var(--border); cursor: pointer; }
+.co-opt input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+.co-opt.off { opacity: .5; cursor: not-allowed; }
+.co-custom > .error { margin: 8px 16px 0; }
+.co-custom-bar { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--panel); }
+.co-custom-add { height: 46px; font-size: 15px; font-weight: 700; border-radius: 12px; }
+.co-repeat { display: grid; gap: 2px; padding: 12px; border-radius: 12px; background: var(--bg); }
+.co-repeat-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.co-repeat-btns .btn { height: 44px; }
+
+/* Customer: the cart page */
+.co-cartpage { position: fixed; inset: 0; z-index: 40; background: var(--bg); display: flex; flex-direction: column; }
+.co-cp-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--panel); border-bottom: 1px solid var(--border); padding-top: calc(12px + env(safe-area-inset-top)); }
+.co-cp-head > div { display: grid; min-width: 0; }
+.co-back { width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--bg); color: var(--text); font-size: 20px; cursor: pointer; flex: none; }
+.co-cp-body { flex: 1; overflow: auto; padding: 12px 14px 24px; display: grid; gap: 12px; align-content: start; width: min(640px, 100%); margin: 0 auto; box-sizing: border-box; }
+.co-cp-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px; display: grid; gap: 10px; min-width: 0; }
+.co-cp-card h4, .co-cp-section h4 { margin: 0; font-size: 15px; }
+.co-cp-section { display: grid; gap: 8px; min-width: 0; }
+.co-cp-line { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: start; padding-bottom: 10px; border-bottom: 1px dashed var(--border); }
+.co-cp-line img { width: 44px; height: 44px; border-radius: 10px; object-fit: cover; }
+.co-cp-line-text { display: grid; gap: 2px; min-width: 0; justify-items: start; }
+.co-cp-line-text b { font-size: 14px; }
+.co-cp-line-right { display: grid; gap: 4px; justify-items: end; font-weight: 600; font-size: 14px; }
+.co-cp-line-right .co-stepper { width: 92px; }
+.co-cp-more { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 700; text-align: left; padding: 2px 0; cursor: pointer; }
+.co-billdetails .co-line-top { font-size: 14px; }
+.co-free { color: var(--good); }
+.co-save { color: var(--good); }
+.co-topay { border-top: 1px solid var(--border); padding-top: 10px; font-size: 16px; }
+.co-cp-hint { margin: 0; font-size: 13px; color: var(--muted); text-align: center; }
+.co-cp-bar { background: var(--panel); border-top: 1px solid var(--border); padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); display: grid; gap: 6px; box-shadow: 0 -4px 16px rgba(0,0,0,.08); }
+.co-cp-bar-row { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; width: min(612px, 100%); margin: 0 auto; }
+.co-cp-total { display: grid; line-height: 1.15; }
+.co-cp-total b { font-size: 18px; }
+.co-cp-total small { font-size: 10.5px; letter-spacing: .06em; color: var(--muted); }
+.co-cp-bar .btn-lg { height: 50px; border-radius: 12px; }
+
+/* Customer: instructions on My orders */
+.co-ins { display: grid; gap: 8px; }
+.co-ins-wait { margin: 0; }
+.co-ins-add { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px dashed var(--accent); background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
+.co-ins-row { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: start; padding: 10px 12px; border-radius: 12px; background: var(--bg); }
+.co-ins-row > div { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.co-ins-edit { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--bg); }
+
+/* Staff: add-ons and customer instructions on orders */
+.kot-addons { font-size: 14px; font-weight: 700; }
+.cust-ins { display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; background: var(--warn-soft); border-left: 4px solid var(--warn); font-size: 14px; overflow-wrap: anywhere; }
+.cust-ins .tag { justify-self: start; }
+.cust-ins.big { font-size: 16px; }

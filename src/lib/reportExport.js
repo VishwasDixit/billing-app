@@ -1,6 +1,7 @@
 // Dashboard reports for shop owners (paid plans): Profit & Loss as PDF, and the same
 // data plus every bill as Excel. Libraries load only when a report is downloaded.
 import { get } from "./api.js";
+import { lineLabel } from "../../shared/addons.js";
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pct = (g) => (g === null || g === undefined ? "new" : `${g > 0 ? "+" : ""}${g}%`);
@@ -110,7 +111,7 @@ export async function downloadReportExcel(shop, d, range) {
       bills.map((x) => [
         { value: new Date(x.createdAt), type: Date, format: "dd mmm yyyy hh:mm" },
         x.billNo,
-        x.items.map((i) => `${i.qty}x ${i.name}${i.variant ? ` (${i.variant})` : ""}`).join(", "),
+        x.items.map((i) => `${i.qty}x ${lineLabel(i)}`).join(", "),
         x.subtotal,
         x.discount?.amount || 0,
         x.gst?.amount || 0,

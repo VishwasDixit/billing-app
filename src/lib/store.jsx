@@ -319,7 +319,7 @@ export function AppProvider({ children }) {
           ...(backdated ? { backdated: true, enteredAt: now.toISOString() } : {}),
           ...(table ? { table } : {}),
           ...(orderIds?.length ? { orderIds } : {}),
-          items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount }) => ({ itemId, name, variant, category, qty, rate, amount })),
+          items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge, addons }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }), ...(addons?.length && { addons }) })),
           itemCount: t.itemCount,
           subtotal: t.subtotal,
           discount: t.discount,

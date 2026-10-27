@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { useOrders, allOrders, setOrderStatus } from "../lib/orders.js";
 import { bell } from "../lib/ringer.js";
 import { useToast } from "../components/ui.jsx";
-import { useOrderPolling, useKotPrinter, ago } from "./Orders.jsx";
+import { useOrderPolling, useKotPrinter, ago, CustomerInstructions } from "./Orders.jsx";
+import { addonText } from "../../shared/addons.js";
 import { RecipeView } from "./kitchen/Recipes.jsx";
 import { useApp } from "../lib/store.jsx";
 
@@ -79,11 +80,13 @@ export default function Kitchen() {
                         <li key={k}>
                           <b>{i.qty}×</b> {i.name}{i.variant ? ` (${i.variant})` : ""}
                           {i.itemId && <button className="link-btn kot-recipe" onClick={() => setRecipe(i)} aria-label={`Recipe for ${i.name}`}>📖</button>}
+                          {i.addons?.length > 0 && <div className="kot-addons">+ {addonText(i.addons)}</div>}
                           {i.note && <div className="kot-note">↳ {i.note}</div>}
                         </li>
                       ))}
                     </ul>
                     {o.note && <div className="kot-note">📝 {o.note}</div>}
+                    <CustomerInstructions o={o} kitchen />
                     <div className="btn-row">
                       <button className="btn btn-primary" onClick={() => move(o, next)}>{action}</button>
                       <button className="btn btn-ghost btn-sm" onClick={() => kot(o, { force: true, reprint: true })} aria-label="Print KOT">🖨️</button>

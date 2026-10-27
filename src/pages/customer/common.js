@@ -1,4 +1,6 @@
 // Shared bits of the customer QR page.
+import { addonKey } from "../../../shared/addons.js";
+
 export const STEPS = [
   ["new", "Sent", "Waiting for the staff to confirm", "📨"],
   ["accepted", "In the kitchen", "The kitchen has your order", "👨‍🍳"],
@@ -7,7 +9,10 @@ export const STEPS = [
   ["served", "Served", "Enjoy your meal!", "😋"],
 ];
 export const stepIndex = (s) => Math.max(0, STEPS.findIndex(([k]) => k === s));
-export const lineKey = (id, v) => `${id}|${v}`;
+// One cart line per dish, size and set of add-ons.
+export const lineKey = (id, v, addonIds) => (addonIds?.length ? `${id}|${v}|${addonKey(addonIds)}` : `${id}|${v}`);
+// Dishes with sizes or add-ons open the customise sheet instead of adding straight away.
+export const needsChoice = (m) => m.variants.length > 1 || (m.addons || []).length > 0;
 
 export function loadMine(token) {
   try {

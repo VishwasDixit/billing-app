@@ -9,6 +9,7 @@ import { printBill } from "../printer/index.js";
 import { explainPrintError } from "../printer/transports.js";
 import { shareBillPdf } from "../printer/pdf.js";
 import { DELETE_REASONS, BIN_DAYS, isOldBill } from "../../shared/billChanges.js";
+import { addonText } from "../../shared/addons.js";
 
 export default function Bills() {
   const { shop, sync, online } = useApp();
@@ -219,6 +220,7 @@ export function BillDetail({ bill, onClose, onChanged }) {
               <tr key={i}>
                 <td>
                   {it.name} {it.variant && <span className="tag">{it.variant}</span>}
+                  {it.addons?.length > 0 && <div className="small">+ {addonText(it.addons)}</div>}
                   <div className="muted small">{it.qty} × {money(it.rate, cur)}</div>
                 </td>
                 <td className="num">{money(it.amount, cur)}</td>

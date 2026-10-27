@@ -15,6 +15,7 @@ import { isLibraryPhoto, CREDIT_URL } from "./images.js";
 import { StockIn, refreshDailyStock, stockDay } from "../stock.js";
 import { LANGUAGE_CODES } from "../../shared/messages.js";
 import { MAX_GROUPS } from "../../shared/tableGroups.js";
+import { MAX_ADDON_GROUPS, MAX_ADDON_OPTIONS } from "../../shared/addons.js";
 
 const MAX_LOGO = 80 * 1024; // data-URL characters (~60 KB image)
 const MAX_QR_IMAGE = 200 * 1024;
@@ -51,6 +52,35 @@ const TableGroups = z
         if (seen.has(t)) ctx.addIssue({ code: "custom", message: `Table ${t} is in both “${seen.get(t)}” and “${g.name}”. A table can be in one group only.` });
         seen.set(t, g.name);
       }
+  });
+
+// Add-on groups (Menu › Add-ons): e.g. "Sauces", on some dishes or whole categories.
+const ShortId = z.string().trim().regex(/^[A-Za-z0-9_-]{1,24}$/);
+const AddonGroup = z
+  .object({
+    id: ShortId,
+    name: z.string().trim().min(1, "Give the add-on group a name.").max(40),
+    min: z.number().int().min(0).max(MAX_ADDON_OPTIONS).default(0),
+    max: z.number().int().min(1).max(MAX_ADDON_OPTIONS).default(1),
+    options: z
+      .array(z.object({ id: ShortId, name: z.string().trim().min(1, "Give each add-on a name.").max(30), price: z.number().min(0).max(10000), off: z.boolean().optional().default(false) }))
+      .min(1, "Add at least one choice to the group.")
+      .max(MAX_ADDON_OPTIONS, `A group can have up to ${MAX_ADDON_OPTIONS} choices.`),
+    items: z.array(z.string().regex(/^[a-f0-9]{24}$/)).max(500).default([]).transform((t) => [...new Set(t)]),
+    categories: z.array(z.string().trim().min(1).max(30)).max(50).default([]).transform((t) => [...new Set(t)]),
+  })
+  .superRefine((g, ctx) => {
+    if (g.min > g.max) ctx.addIssue({ code: "custom", message: `${g.name}: the least to pick can't be more than the most.` });
+    if (g.min > g.options.length) ctx.addIssue({ code: "custom", message: `${g.name}: customers must pick ${g.min}, but there are only ${g.options.length} choices.` });
+    if (new Set(g.options.map((o) => o.id)).size !== g.options.length) ctx.addIssue({ code: "custom", message: "add-on ids must be different" });
+  });
+const AddonGroups = z
+  .array(AddonGroup)
+  .max(MAX_ADDON_GROUPS, `You can have up to ${MAX_ADDON_GROUPS} add-on groups.`)
+  .superRefine((groups, ctx) => {
+    if (new Set(groups.map((g) => g.id)).size !== groups.length) ctx.addIssue({ code: "custom", message: "add-on group ids must be different" });
+    const opts = groups.flatMap((g) => g.options.map((o) => o.id));
+    if (new Set(opts).size !== opts.length) ctx.addIssue({ code: "custom", message: "add-on ids must be different" });
   });
 
 const ShopSettings = z
@@ -93,6 +123,7 @@ const ShopSettings = z
       .refine((t) => new Set(t.map((x) => x.id)).size === t.length, "table ids must be different"),
     qrOrdering: z.boolean(),
     tableGroups: TableGroups,
+    addonGroups: AddonGroups,
     // The customer QR page's Help: on/off, which one-tap buttons, and written questions.
     help: z.object({
       enabled: z.boolean(),

@@ -27,6 +27,7 @@ const BillIn = z.object({
         qty: z.number().int().positive().max(10000),
         rate: z.number().min(0).max(1000000),
         charge: z.boolean().optional(), // a delivery charge, not a dish
+        addons: z.array(z.object({ name: z.string().trim().min(1).max(30), price: z.number().min(0).max(10000) })).max(10).optional(),
       })
     )
     .min(1)
@@ -208,7 +209,7 @@ export default [
           ...(b.backdated ? { backdated: true, enteredAt: new Date() } : {}),
           ...(b.table ? { table: b.table } : {}),
           ...(b.orderIds?.length ? { orderIds: b.orderIds } : {}),
-          items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }) })),
+          items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge, addons }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }), ...(addons?.length && { addons }) })),
           itemCount: t.itemCount,
           subtotal: t.subtotal,
           discount: t.discount,
@@ -295,7 +296,7 @@ export default [
       if (e.customer) await upsertCustomer(db, shop._id, e.customer);
       const at = new Date();
       const next = {
-        items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }) })),
+        items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge, addons }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }), ...(addons?.length && { addons }) })),
         itemCount: t.itemCount, subtotal: t.subtotal, discount: t.discount, gst: t.gst, total: t.total,
         paymentMode: e.paymentMode, paidNow, creditAmount: round2(t.total - paidNow),
         customer: e.customer ? { clientId: e.customer.clientId, name: e.customer.name, phone: e.customer.phone } : null,

@@ -85,7 +85,9 @@ describe("QR table ordering", () => {
     const list = (await c("GET", "/orders")).body.orders;
     expect(list[0]).toMatchObject({ orderNo: "Q1", source: "qr", table: "T2", status: "new" });
     expect(list[0]).not.toHaveProperty("customerKey");
-    expect(list[0].items[1]).toMatchObject({ variant: two.variants[1].label, note: "less spicy" });
+    // Customers add instructions after the order is accepted: notes sent with the order are dropped.
+    expect(list[0].items[1]).toMatchObject({ variant: two.variants[1].label, note: "" });
+    expect(list[0].note).toBe("");
 
     expect((await c("POST", `/orders/${placed.body.orderId}/status`, { status: "accepted" })).body.status).toBe("accepted");
     expect((await c("POST", `/orders/${placed.body.orderId}/status`, { status: "accepted" })).status).toBe(409);

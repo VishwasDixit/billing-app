@@ -8,6 +8,8 @@ import { ItemPicture } from "../components/ItemPicture.jsx";
 import { PhotoSearch } from "../components/PhotoSearch.jsx";
 import { StockPill, StockPanel } from "../components/Stock.jsx";
 import { post, put } from "../lib/api.js";
+import { AddonGroupsPanel } from "../components/AddonGroups.jsx";
+import { addonGroupsFor } from "../../shared/addons.js";
 
 const PRESETS = {
   single: [{ label: "", price: 0 }],
@@ -19,6 +21,7 @@ export default function Menu() {
   const { menu, shop, resetMenu, addDefaultPictures } = useApp();
   const [autoPick, setAutoPick] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
+  const [addonsOpen, setAddonsOpen] = useState(false);
   const plainItems = menu.filter((m) => !m.image || isDefaultImage(m.image));
   const toast = useToast();
   const cur = shop.currency || "₹";
@@ -45,6 +48,7 @@ export default function Menu() {
         <div className="btn-row">
           <input className="input" style={{ width: 180 }} type="search" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="btn" onClick={() => setStockOpen(true)}>🥟 Stock</button>
+          <button className="btn" onClick={() => setAddonsOpen(true)}>🧀 Add-ons</button>
           <button className="btn btn-primary" onClick={() => setEditing({ name: "", category: "", note: "", variants: PRESETS.single, active: true })}>
             + Add item
           </button>
@@ -59,6 +63,7 @@ export default function Menu() {
       )}
       {autoPick && <AutoPick items={plainItems} onClose={() => setAutoPick(false)} />}
       {stockOpen && <StockPanel onClose={() => setStockOpen(false)} />}
+      {addonsOpen && <AddonGroupsPanel onClose={() => setAddonsOpen(false)} />}
 
       {missingPictures > 0 && (
         <div className="card" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -87,6 +92,7 @@ export default function Menu() {
                     <td>
                       {m.name} {m.active === false && <span className="tag">hidden</span>}
                       {m.note && <div className="muted small">{m.note}</div>}
+                      {addonGroupsFor(shop.addonGroups, m).length > 0 && <div className="muted small">🧀 {addonGroupsFor(shop.addonGroups, m).map((g) => g.name).join(", ")}</div>}
                     </td>
                     <td className="num">
                       {m.variants.map((v) => (v.label ? `${v.label} ${money(v.price, cur)}` : money(v.price, cur))).join(" · ")}
@@ -121,7 +127,7 @@ export default function Menu() {
 }
 
 function ItemEditor({ item, categories, onClose }) {
-  const { saveMenuItem, deleteMenuItem, setMenuPhoto, removeMenuPhoto, setItemStock } = useApp();
+  const { shop, saveMenuItem, deleteMenuItem, setMenuPhoto, removeMenuPhoto, setItemStock } = useApp();
   const [stock, setStock] = useState({ soldOut: !!item.soldOut, stock: item.stock ?? "", dailyStock: item.dailyStock ?? "" });
   const toast = useToast();
   const [f, setF] = useState({ ...item, variants: item.variants.map((v) => ({ ...v })) });
@@ -258,6 +264,11 @@ function ItemEditor({ item, categories, onClose }) {
             </button>
           )}
         </div>
+        {item.id && (
+          <p className="small muted" style={{ margin: 0 }}>
+            🧀 Add-ons: {addonGroupsFor(shop.addonGroups, f).map((g) => g.name).join(", ") || "none"} · change them with the 🧀 Add-ons button on the Menu page.
+          </p>
+        )}
         <Field label="Note (optional)" hint="Shown when picking the item, e.g. what a thali includes.">
           <input maxLength={160} value={f.note || ""} onChange={(e) => setF({ ...f, note: e.target.value })} />
         </Field>

@@ -15,6 +15,8 @@ import { explainPrintError } from "../printer/transports.js";
 import { usePref } from "../lib/prefs.js";
 import { storeOpen } from "../../shared/hours.js";
 import { groupOf, groupPrice, deliveryLine } from "../../shared/tableGroups.js";
+import { addonText, addonGroupsFor, addonKey, addonsTotal, lineLabel } from "../../shared/addons.js";
+import { Customize } from "./customer/Customize.jsx";
 
 export const STATUS_LABEL = { new: "New", accepted: "To cook", preparing: "Cooking", ready: "Ready", served: "Served", billed: "Paid", rejected: "Rejected", unpaid: "Left unpaid" };
 const STATUS_TAG = { new: "warn", accepted: "accent", preparing: "accent", ready: "good", served: "", billed: "", rejected: "bad", unpaid: "bad" };
@@ -22,7 +24,7 @@ export const ago = (t) => {
   const m = Math.max(0, Math.round((Date.now() - new Date(t)) / 60000));
   return m < 1 ? "just now" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} m`;
 };
-const itemsText = (o) => o.items.map((i) => `${i.qty}× ${i.name}${i.variant ? ` (${i.variant})` : ""}`).join(", ");
+const itemsText = (o) => o.items.map((i) => `${i.qty}× ${lineLabel(i)}`).join(", ");
 
 // Refreshes the order list every few seconds while a screen that shows orders is open.
 export function useOrderPolling(ms = 5000) {
@@ -274,10 +276,15 @@ export default function Orders() {
                 )}
                 <ul className="order-items">
                   {o.items.map((i, k) => (
-                    <li key={k}><b>{i.qty}×</b> {i.name}{i.variant ? ` (${i.variant})` : ""}{i.note && <div className="small muted">↳ {i.note}</div>}</li>
+                    <li key={k}>
+                      <b>{i.qty}×</b> {i.name}{i.variant ? ` (${i.variant})` : ""}
+                      {i.addons?.length > 0 && <div className="small">+ {addonText(i.addons)}</div>}
+                      {i.note && <div className="small muted">↳ {i.note}</div>}
+                    </li>
                   ))}
                 </ul>
                 {o.note && <div className="small">📝 {o.note}</div>}
+                <CustomerInstructions o={o} />
                 <PayChip o={o} cur={cur} />
                 <div className="order-top">
                   <b>{money(o.total, cur)}</b>
@@ -348,9 +355,9 @@ export default function Orders() {
             const lines = new Map();
             for (const o of toBill)
               for (const i of o.items) {
-                const k = `${i.itemId || i.name}|${i.variant || ""}|${i.rate}`;
+                const k = `${i.itemId || i.name}|${i.variant || ""}|${i.rate}|${addonText(i.addons)}`;
                 const l = lines.get(k);
-                lines.set(k, l ? { ...l, qty: l.qty + i.qty } : { itemId: i.itemId || i.name, name: i.name, variant: i.variant || "", category: i.category || "", rate: i.rate, qty: i.qty });
+                lines.set(k, l ? { ...l, qty: l.qty + i.qty } : { itemId: i.itemId || i.name, name: i.name, variant: i.variant || "", category: i.category || "", rate: i.rate, qty: i.qty, ...(i.addons?.length && { addons: i.addons }), ...(i.charge && { charge: true }) });
               }
             // Orders paid but without their own bill (older ones) come off what's left to collect.
             const paid = toBill.filter((o) => o.pay?.state === "paid");
@@ -499,16 +506,35 @@ function OrderPicker({ table, onClose, onPlaced }) {
   const active = menu.filter((m) => m.active !== false);
   const cats = ["All", ...new Set(active.map((m) => m.category || "Other"))];
   const shown = active.filter((m) => (cat === "All" || (m.category || "Other") === cat) && (!q || m.name.toLowerCase().includes(q.toLowerCase())));
-  const add = (m, v, d) => {
-    if (d > 0 && m.soldOut && !lines.get(`${m.id}|${v.label}`) && !confirm(`${m.name} is marked sold out. Add it anyway?`)) return;
+  const [custom, setCustom] = useState(null); // { m, v }: picking add-ons for this dish and size
+  const groupsOf = (m) => addonGroupsFor(shop.addonGroups, m);
+  const qtyOf = (m, v) => [...lines.values()].filter((l) => l.itemId === m.id && l.variant === (v.label || "")).reduce((s, l) => s + l.qty, 0);
+  // One line per dish, size and add-ons; the rate includes the add-ons.
+  const addLine = (m, v, picked, d) =>
     setLines((prev) => {
-      const k = `${m.id}|${v.label}`;
+      const k = `${m.id}|${v.label || ""}|${addonKey(picked.map((a) => a.id))}`;
       const next = new Map(prev);
       const qty = (next.get(k)?.qty || 0) + d;
+      const addons = picked.map(({ name, price }) => ({ name, price }));
       if (qty <= 0) next.delete(k);
-      else next.set(k, { itemId: m.id, name: m.name, variant: v.label || "", category: m.category || "", rate: priceOf(m, v), qty, note: next.get(k)?.note || "" });
+      else next.set(k, { key: k, itemId: m.id, name: m.name, variant: v.label || "", category: m.category || "", rate: priceOf(m, v) + addonsTotal(addons), qty: Math.min(qty, 99), note: next.get(k)?.note || "", ...(addons.length && { addons }) });
       return next;
     });
+  const add = (m, v, d) => {
+    if (d > 0 && m.soldOut && !qtyOf(m, v) && !confirm(`${m.name} is marked sold out. Add it anyway?`)) return;
+    if (d > 0 && groupsOf(m).length) return setCustom({ m, v });
+    if (d < 0) {
+      const of = [...lines.values()].filter((l) => l.itemId === m.id && l.variant === (v.label || ""));
+      if (of.length > 1) return toast("Take it off in the list below (it has different add-ons).");
+      if (of[0]) return setLines((prev) => {
+        const next = new Map(prev);
+        if (of[0].qty <= 1) next.delete(of[0].key);
+        else next.set(of[0].key, { ...of[0], qty: of[0].qty - 1 });
+        return next;
+      });
+      return;
+    }
+    addLine(m, v, [], d);
   };
   const list = [...lines.values()];
   const food = list.reduce((s, l) => s + l.qty * l.rate, 0);
@@ -531,17 +557,18 @@ function OrderPicker({ table, onClose, onPlaced }) {
         <div className="picker-list">
           {shown.map((m) =>
             m.variants.map((v) => {
-              const l = lines.get(`${m.id}|${v.label}`);
+              const n = qtyOf(m, v);
               return (
                 <div key={m.id + v.label} className={"picker-row" + (m.soldOut ? " out" : "")}>
                   <ItemPicture item={m} size={36} />
                   <span className="picker-name">
                     {m.name}{v.label ? ` (${v.label})` : ""}<span className="small muted"> {money(priceOf(m, v), cur)}</span>
+                    {groupsOf(m).length > 0 && <span className="small muted"> · 🧀 add-ons</span>}
                     {m.soldOut ? <span className="tag bad" style={{ marginLeft: 4 }}>sold out</span> : typeof m.stock === "number" && <span className="tag warn" style={{ marginLeft: 4 }}>{m.stock} left</span>}
                   </span>
                   <div className="qty">
-                    <button onClick={() => add(m, v, -1)} disabled={!l} aria-label="Less">−</button>
-                    <span className="picker-qty">{l?.qty || 0}</span>
+                    <button onClick={() => add(m, v, -1)} disabled={!n} aria-label="Less">−</button>
+                    <span className="picker-qty">{n}</span>
                     <button onClick={() => add(m, v, 1)} aria-label="More">+</button>
                   </div>
                 </div>
@@ -552,15 +579,18 @@ function OrderPicker({ table, onClose, onPlaced }) {
         {list.length > 0 && (
           <div className="stack picker-summary">
             {list.map((l) => (
-              <div key={l.itemId + l.variant} className="order-top">
-                <span className="small"><b>{l.qty}×</b> {l.name}{l.variant ? ` (${l.variant})` : ""}</span>
+              <div key={l.key} className="order-top">
+                <span className="small">
+                  <b>{l.qty}×</b> {lineLabel(l)}
+                  {l.addons?.length > 0 && <button className="link-btn" style={{ marginLeft: 6 }} onClick={() => setLines((prev) => { const next = new Map(prev); next.delete(l.key); return next; })} aria-label={`Remove ${lineLabel(l)}`}>✕</button>}
+                </span>
                 <input
                   className="input"
                   style={{ maxWidth: 180, padding: "4px 8px", fontSize: 13 }}
                   placeholder="Kitchen note"
                   maxLength={80}
                   value={l.note}
-                  onChange={(e) => setLines((prev) => new Map(prev).set(`${l.itemId}|${l.variant}`, { ...l, note: e.target.value }))}
+                  onChange={(e) => setLines((prev) => new Map(prev).set(l.key, { ...l, note: e.target.value }))}
                 />
               </div>
             ))}
@@ -572,6 +602,18 @@ function OrderPicker({ table, onClose, onPlaced }) {
               </div>
             )}
           </div>
+        )}
+        {custom && (
+          <Customize
+            m={{ ...custom.m, variants: [{ ...custom.v, price: priceOf(custom.m, custom.v) }], addons: groupsOf(custom.m) }}
+            cur={cur}
+            onClose={() => setCustom(null)}
+            onAdd={({ addonIds, qty }) => {
+              const picked = groupsOf(custom.m).flatMap((g) => g.options.filter((o) => addonIds.includes(o.id)));
+              addLine(custom.m, custom.v, picked, qty);
+              setCustom(null);
+            }}
+          />
         )}
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>Cancel</button>
@@ -648,4 +690,18 @@ function PayChip({ o, cur }) {
     refunded: ["", `↩️ Refunded ${amt}`],
   }[p.state] || ["", ""];
   return text || hasExtra ? <div className="pay-chip-row">{text && <span className={"tag " + cls}>{text}</span>}{promo}</div> : null;
+}
+
+// What the customer added after the order was accepted (QR page › My orders), marked NEW for 10 minutes.
+export function CustomerInstructions({ o, kitchen = false }) {
+  const ins = o.instructions;
+  if (!ins?.cooking && !ins?.delivery) return null;
+  const fresh = ins.at && Date.now() - new Date(ins.at).getTime() < 10 * 60e3;
+  return (
+    <div className={"cust-ins" + (kitchen ? " big" : "")}>
+      {fresh && <span className="tag warn">NEW</span>}
+      {ins.cooking && <div>👨‍🍳 <b>Cooking:</b> {ins.cooking}</div>}
+      {ins.delivery && <div>🛵 <b>Delivery:</b> {ins.delivery}</div>}
+    </div>
+  );
 }

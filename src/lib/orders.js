@@ -115,7 +115,7 @@ export async function createStaffOrder({ table, tableName, items, note = "" }) {
     status: "accepted",
     source: "staff",
     createdAt: new Date().toISOString(),
-    items: items.map(({ itemId, name, variant = "", category = "", qty, rate, note: n = "", charge }) => ({ itemId, name, variant, category, qty, rate, note: n, ...(charge && { charge }) })),
+    items: items.map(({ itemId, name, variant = "", category = "", qty, rate, note: n = "", charge, addons }) => ({ itemId, name, variant, category, qty, rate, note: n, ...(charge && { charge }), ...(addons?.length && { addons }) })),
   };
   order.total = Math.round(order.items.reduce((s, i) => s + i.qty * i.rate, 0) * 100) / 100;
   const pending = [...state.pending, order];

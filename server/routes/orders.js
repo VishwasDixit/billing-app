@@ -20,6 +20,7 @@ import { storeOpen, hoursText } from "../../shared/hours.js";
 import { helpSettings } from "../../shared/tableHelp.js";
 import { pushToShop, MONEY_ROLES } from "../push.js";
 import { groupOf, groupPrice, deliveryLine, deliveryRule } from "../../shared/tableGroups.js";
+import { addonGroupsFor, checkAddons, addonsTotal, MAX_LINE_ADDONS } from "../../shared/addons.js";
 import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
 
 // "unpaid": the table left without paying (closed by staff; not a sale).
@@ -30,12 +31,15 @@ const MAX_LINES = 60;
 const TZ_OFFSET = 5.5 * 3600e3;
 const ymd = (d = new Date()) => new Date(d.getTime() + TZ_OFFSET).toISOString().slice(0, 10);
 
+// A customer's line: the dish, its size and the add-ons picked (option ids). Customers add
+// instructions after the shop accepts the order, so notes sent by older pages are ignored.
 const LineIn = z.object({
   itemId: z.string().max(40),
   variant: z.string().trim().max(20).optional().default(""),
   qty: z.number().int().min(1).max(99),
-  note: z.string().trim().max(80).optional().default(""),
+  addons: z.array(z.string().max(24)).max(MAX_LINE_ADDONS).optional().default([]),
 });
+const Addon = z.object({ name: z.string().trim().min(1).max(30), price: z.number().min(0).max(10000) });
 
 // Staff order (created on a device, possibly offline). Prices come from the device's menu.
 const StaffOrderIn = z.object({
@@ -56,6 +60,7 @@ const StaffOrderIn = z.object({
         qty: z.number().int().min(1).max(99),
         rate: z.number().min(0).max(1000000),
         note: z.string().trim().max(80).optional().default(""),
+        addons: z.array(Addon).max(MAX_LINE_ADDONS).optional(),
         charge: z.boolean().optional(), // the delivery charge line (far tables)
       })
     )
@@ -102,13 +107,17 @@ async function nextQrNumber(db, shopId) {
 }
 
 // Server prices for the customer's lines (a table group's own prices when the table is in one).
-const priceLines = (menuById, lines, group = null) =>
+// Add-ons are checked against the dish's groups and priced by the server; the line's rate includes them.
+const priceLines = (menuById, lines, group = null, addonGroups = []) =>
   lines.map((l) => {
     const item = menuById.get(l.itemId);
     if (!item || item.active === false) throw new HttpError(400, "Some items are no longer on the menu. Please refresh the menu.");
     const v = item.variants.find((x) => (x.label || "") === (l.variant || "")) || (item.variants.length === 1 ? item.variants[0] : null);
     if (!v) throw new HttpError(400, `Please choose a size for ${item.name}.`);
-    return { itemId: String(item._id), name: item.name, variant: v.label || "", category: item.category || "", qty: l.qty, rate: groupPrice(group, String(item._id), v.label || "", v.price), note: l.note || "" };
+    const { addons, error } = checkAddons(addonGroupsFor(addonGroups, item), l.addons);
+    if (error) throw new HttpError(400, `${item.name}: ${error}`, { code: "ADDONS" });
+    const rate = round2(groupPrice(group, String(item._id), v.label || "", v.price) + addonsTotal(addons));
+    return { itemId: String(item._id), name: item.name, variant: v.label || "", category: item.category || "", qty: l.qty, rate, note: "", ...(addons.length && { addons }) };
   });
 
 // The customer's own order, checked with the key their phone got when ordering.
@@ -152,7 +161,7 @@ async function createOrderBill(db, shop, o, user) {
     orderNo: o.orderNo,
     table: o.tableName || o.table,
     orderIds: [o.clientId],
-    items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }) })),
+    items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge, addons }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }), ...(addons?.length && { addons }) })),
     itemCount: t.itemCount,
     subtotal: t.subtotal,
     discount: t.discount,
@@ -292,6 +301,7 @@ export default [
         tables: tablesOf(shop).map(({ id, name }) => ({ id, name })),
         ordering: state,
         payRule: payRuleOf(shop),
+        gst: shop.gstPercent || 0, // so the cart's "To pay" matches what the shop asks for
         upi: !!shop.upiId,
         offers: await menuOffers(db, shop),
         online: !!shop.gateway?.name,
@@ -305,6 +315,8 @@ export default [
           category: m.category || "Other",
           note: m.note || "",
           variants: group ? m.variants.map((v) => ({ ...v, price: groupPrice(group, String(m._id), v.label || "", v.price) })) : m.variants,
+          // The dish's add-on groups (Extra cheese, Sauces…), with today's unavailable ones marked.
+          addons: addonGroupsFor(shop.addonGroups, m).map(({ id, name, min, max, options }) => ({ id, name, min, max, options: options.map(({ id, name, price, off }) => ({ id, name, price, ...(off && { off: true }) })) })),
           image: m.image || "",
           ...(typeof m.stock === "number" && m.stock <= 10 && { left: m.stock }),
         })),
@@ -321,7 +333,6 @@ export default [
         .object({
           table: z.string().max(20),
           items: z.array(LineIn).min(1, "add at least one item").max(MAX_LINES),
-          note: z.string().trim().max(160).optional().default(""),
           // Name and mobile are asked before ordering: fewer prank orders, and the shop can call back.
           name: z.string().trim().min(2, "Please enter your name.").max(40),
           phone: z.string().trim().max(16).transform((p, ctx) => cleanMobile(p) || (ctx.addIssue({ code: "custom", message: "Please enter a 10-digit mobile number." }), z.NEVER)),
@@ -340,7 +351,7 @@ export default [
       const menu = await db.collection("menuItems").find({ shopId: shop._id }).toArray();
       const menuById = new Map(menu.map((m) => [String(m._id), m]));
       const group = groupOf(shop, table.id);
-      const items = priceLines(menuById, input.items, group);
+      const items = priceLines(menuById, input.items, group, shop.addonGroups);
       const stockProblem = checkAvailable(menuById, items);
       if (stockProblem) throw new HttpError(409, stockProblem, { code: "STOCK" });
       const clientId = crypto.randomUUID();
@@ -367,7 +378,7 @@ export default [
         customerName: input.name,
         customerPhone: input.phone,
         customer: { ...customer, name: input.name },
-        note: input.note,
+        note: "",
         items,
         total: orderTotal(items),
         status: "new",
@@ -405,7 +416,7 @@ export default [
       await rateLimit(db, `promo-try:shop:${shop._id}`, 2000, "Too many tries. Please ask the staff.");
       const menu = await db.collection("menuItems").find({ shopId: shop._id }).toArray();
       const group = tableById(shop, input.table) ? groupOf(shop, input.table) : null;
-      const items = priceLines(new Map(menu.map((m) => [String(m._id), m])), input.items, group);
+      const items = priceLines(new Map(menu.map((m) => [String(m._id), m])), input.items, group, shop.addonGroups);
       const food = orderTotal(items);
       const { promo, amount } = await promoDiscount(db, shop, input.code, { subtotal: food, where: "qr", phone: cleanMobile(input.phone) || "", table: input.table });
       const delivery = deliveryLine(group, food);
@@ -433,13 +444,14 @@ export default [
         online: !!shop.gateway?.name,
         laterOk: canPayLater(shop, o.pay || {}),
         createdAt: o.createdAt,
+        instructions: o.instructions || null,
         billRequest: o.billRequest || null,
         pay: publicPay(o),
         upi: shop.upiId ? { id: shop.upiId, name: shop.name } : null,
         bill: bill && {
           id: bill.clientId,
           billNo: bill.billNo,
-          items: bill.items.map(({ name, variant, qty, rate, amount }) => ({ name, variant, qty, rate, amount })),
+          items: bill.items.map(({ name, variant, qty, rate, amount, addons }) => ({ name, variant, qty, rate, amount, ...(addons?.length && { addons }) })),
           subtotal: bill.subtotal,
           discount: bill.discount,
           gst: bill.gst,
@@ -452,6 +464,40 @@ export default [
           createdAt: bill.createdAt,
         },
       };
+    },
+    { auth: false },
+  ],
+
+  // Instructions the customer adds once the shop accepts the order: cooking ones until the food
+  // is ready, delivery ones until it's served. Each new or changed one alerts the kitchen.
+  [
+    "POST",
+    "/public/shop/:token/orders/:id/instructions",
+    async ({ db, params, body }) => {
+      const shop = await shopByToken(db, params.token);
+      const input = z
+        .object({ key: z.string().max(40), cooking: z.string().trim().max(160).optional(), delivery: z.string().trim().max(160).optional() })
+        .parse(body);
+      const o = await customerOrder(db, shop, params.id, input.key);
+      if (o.status === "new") throw new HttpError(409, "You can add instructions once the restaurant accepts your order.");
+      const cur = o.instructions || {};
+      const set = {};
+      if (input.cooking !== undefined && input.cooking !== (cur.cooking || "")) {
+        if (!["accepted", "preparing"].includes(o.status)) throw new HttpError(409, "The kitchen has already finished cooking this order.");
+        set.cooking = input.cooking;
+      }
+      if (input.delivery !== undefined && input.delivery !== (cur.delivery || "")) {
+        if (!["accepted", "preparing", "ready"].includes(o.status)) throw new HttpError(409, "This order has already been served.");
+        set.delivery = input.delivery;
+      }
+      if (!Object.keys(set).length) return { ok: true, instructions: o.instructions || null };
+      await rateLimit(db, `qr-instructions:${o.clientId}`, 10, "Too many changes. Please tell the staff.");
+      const instructions = { cooking: cur.cooking || "", delivery: cur.delivery || "", ...set, at: new Date() };
+      await db.collection("orders").updateOne({ _id: o._id }, { $set: { instructions, updatedAt: new Date() } });
+      const what = set.cooking !== undefined && set.delivery !== undefined ? "instructions" : set.cooking !== undefined ? "cooking instructions" : "delivery instructions";
+      const text = [set.cooking, set.delivery].filter(Boolean).join(" · ");
+      await pushToShop(db, shop._id, { title: `📝 ${o.tableName || o.table} · #${o.orderNo} added ${what}`, body: text || "Instructions removed.", key: `instr:${o.clientId}` });
+      return { ok: true, instructions };
     },
     { auth: false },
   ],

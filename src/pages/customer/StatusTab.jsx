@@ -3,10 +3,11 @@ import { useMemo } from "react";
 import { post } from "../../lib/api.js";
 import { money } from "../../lib/format.js";
 import { STEPS, stepIndex } from "./common.js";
-import { OrderPay, BillBox } from "./parts.jsx";
+import { OrderPay, BillBox, Instructions } from "./parts.jsx";
+import { lineLabel } from "../../../shared/addons.js";
 import { PopularCard } from "./MenuTab.jsx";
 
-export function StatusTab({ token, data, mine, cur, returning, canOrder, refreshMine, onAskBill, add, quickAdd, qtyOf, onMenu, helpOn = true }) {
+export function StatusTab({ token, data, mine, cur, returning, canOrder, refreshMine, onAskBill, quickAdd, less, qtyOf, onMenu, helpOn = true }) {
   const list = [...mine].reverse().filter((o) => o.status !== "billed");
   const cooking = mine.some((o) => ["new", "accepted", "preparing", "ready", "served"].includes(o.status));
   const byId = useMemo(() => new Map((data.menu || []).map((m) => [m.id, m])), [data.menu]);
@@ -71,7 +72,8 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
                 </ol>
               </>
             )}
-            <div className="small muted">{(o.items || []).map((i) => `${i.qty}× ${i.name}${i.variant ? ` (${i.variant})` : ""}`).join(", ")}</div>
+            <div className="small muted">{(o.items || []).filter((i) => !i.charge).map((i) => `${i.qty}× ${lineLabel(i)}`).join(", ")}</div>
+            <Instructions token={token} order={o} delivery={!!data.delivery || (o.items || []).some((i) => i.charge)} onSaved={refreshMine} />
             <OrderPay token={token} order={o} cur={cur} upiOn={data.upi} onlineOn={data.online} onChange={refreshMine} />
           </div>
         );
@@ -86,7 +88,7 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
           <h3>Add more while it cooks 🍳</h3>
           <div className="co-pop-row">
             {more.map((m) => (
-              <PopularCard key={m.id} m={m} cur={cur} qty={qtyOf(m.id)} canOrder add={add} quickAdd={quickAdd} />
+              <PopularCard key={m.id} m={m} cur={cur} qty={qtyOf(m.id)} canOrder quickAdd={quickAdd} less={less} />
             ))}
           </div>
         </section>

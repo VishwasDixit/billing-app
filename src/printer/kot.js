@@ -26,6 +26,7 @@ export function kotRows(shop, order, { reprint = false } = {}) {
     const qty = `${it.qty} x `;
     // Tall = double height only, so the full paper width is available.
     wrap(qty + name, cols - 4).forEach((l, i) => line(i === 0 ? l : "    " + l, { bold: true, tall: true }));
+    for (const a of it.addons || []) wrap(`  + ${ascii(a.name)}`, cols).forEach((l) => line(l, { bold: true }));
     if (it.note) wrap(`  > ${it.note}`, cols).forEach((l) => line(l));
   }
   sep("=");
@@ -35,5 +36,10 @@ export function kotRows(shop, order, { reprint = false } = {}) {
     sep();
     wrap("Note: " + ascii(order.note), cols).forEach((l) => line(l, { bold: true }));
   }
+  // What the customer added after the order was accepted.
+  const ins = order.instructions || {};
+  if (ins.cooking || ins.delivery) sep();
+  if (ins.cooking) wrap("Cooking: " + ascii(ins.cooking), cols).forEach((l) => line(l, { bold: true }));
+  if (ins.delivery) wrap("Delivery: " + ascii(ins.delivery), cols).forEach((l) => line(l, { bold: true }));
   return { logo: false, qr: null, rows, cols };
 }

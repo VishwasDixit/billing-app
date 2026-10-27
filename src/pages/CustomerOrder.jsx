@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { get } from "../lib/api.js";
 import { money } from "../lib/format.js";
-import { lineKey, loadMine, saveMine, deviceKey, couponNudge } from "./customer/common.js";
-import { Review, BillAsk } from "./customer/parts.jsx";
+import { lineKey, loadMine, saveMine, deviceKey, couponNudge, needsChoice } from "./customer/common.js";
+import { BillAsk } from "./customer/parts.jsx";
+import { Cart } from "./customer/Cart.jsx";
+import { Customize, RepeatSheet } from "./customer/Customize.jsx";
 import { MenuTab } from "./customer/MenuTab.jsx";
 import { StatusTab } from "./customer/StatusTab.jsx";
 import { HelpTab } from "./customer/HelpTab.jsx";
 import { DEFAULT_HELP } from "../../shared/tableHelp.js";
 import { freeDeliveryGap } from "../../shared/tableGroups.js";
+import { addonsTotal } from "../../shared/addons.js";
 
 // The page a customer sees after scanning a table's QR code: menu, cart, their orders and help.
 // Three tabs at the bottom (Menu · My orders · Help), the cart bar just above them.
@@ -20,7 +23,8 @@ export default function CustomerOrder() {
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [cart, setCart] = useState(() => new Map());
-  const [picker, setPicker] = useState(null);
+  const [custom, setCustom] = useState(null); // { m, line? }: the customise sheet (line = editing it)
+  const [repeat, setRepeat] = useState(null); // { m, line }: "repeat last?"
   const [review, setReview] = useState(false);
   const [mine, setMine] = useState(() => loadMine(token));
   const [tab, setTab] = useState(() =>
@@ -58,8 +62,9 @@ export default function CustomerOrder() {
       const next = new Map();
       for (const [k, l] of prev) {
         const v = byId.get(l.itemId)?.variants.find((x) => (x.label || "") === l.variant);
-        if (v && v.price !== l.rate) changed = true;
-        next.set(k, v ? { ...l, rate: v.price } : l);
+        const rate = v ? v.price + addonsTotal(l.addons) : l.rate;
+        if (rate !== l.rate) changed = true;
+        next.set(k, { ...l, rate });
       }
       return changed ? next : prev;
     });
@@ -164,21 +169,52 @@ export default function CustomerOrder() {
   const deliveryGap = freeDeliveryGap({ delivery: data?.delivery }, total);
   const openOrders = mine.filter((o) => ["new", "accepted", "preparing", "ready", "served"].includes(o.status)).length;
 
-  const add = (m, v, d = 1) => {
-    if (d > 0) setBump((n) => n + 1);
+  // A dish in a size with some add-ons (option ids); the line's rate includes the add-ons.
+  const addLine = (m, v, addonIds = [], qty = 1, replaceKey = null) => {
+    setBump((n) => n + 1);
     setCart((prev) => {
-      const k = lineKey(m.id, v.label || "");
       const next = new Map(prev);
-      const l = next.get(k);
-      const qty = (l?.qty || 0) + d;
-      if (qty <= 0) next.delete(k);
-      else next.set(k, { itemId: m.id, name: m.name, variant: v.label || "", rate: v.price, qty: Math.min(qty, 99), note: l?.note || "" });
+      if (replaceKey) next.delete(replaceKey);
+      const k = lineKey(m.id, v.label || "", addonIds);
+      const addons = (m.addons || []).flatMap((g) => g.options.filter((o) => addonIds.includes(o.id))).map(({ name, price }) => ({ name, price }));
+      const had = next.get(k)?.qty || 0;
+      next.set(k, { key: k, itemId: m.id, name: m.name, variant: v.label || "", rate: v.price + addonsTotal(addons), qty: Math.min(had + qty, 99), addonIds, addons });
       return next;
     });
   };
-  // One tap: dishes with sizes open the size sheet.
-  const quickAdd = (m) => (m.variants.length > 1 ? setPicker(m) : add(m, m.variants[0], 1));
+  const changeQty = (k, d) => {
+    if (d > 0) setBump((n) => n + 1);
+    setCart((prev) => {
+      const l = prev.get(k);
+      if (!l) return prev;
+      const next = new Map(prev);
+      const qty = l.qty + d;
+      if (qty <= 0) next.delete(k);
+      else next.set(k, { ...l, qty: Math.min(qty, 99) });
+      return next;
+    });
+  };
+  // One tap: plain dishes go straight in; customisable ones open the sheet (or "repeat last?").
+  const quickAdd = (m) => {
+    if (!needsChoice(m)) return addLine(m, m.variants[0]);
+    const last = lines.filter((l) => l.itemId === m.id).at(-1);
+    return last ? setRepeat({ m, line: last }) : setCustom({ m });
+  };
+  // − on the menu: one line takes one off; several (different add-ons) open the cart to choose.
+  const less = (m) => {
+    const of = lines.filter((l) => l.itemId === m.id);
+    if (of.length === 1) changeQty(of[0].key, -1);
+    else if (of.length > 1) setReview(true);
+  };
   const qtyOf = (id) => lines.filter((l) => l.itemId === id).reduce((s, l) => s + l.qty, 0);
+  // Everything taken out of the cart: back to the menu.
+  useEffect(() => {
+    if (review && !count) setReview(false);
+  }, [review, count]);
+  const editLine = (l) => {
+    const m = data.menu.find((x) => x.id === l.itemId);
+    if (m) setCustom({ m, line: l });
+  };
   const go = (t) => {
     setTab(t);
     top.current?.scrollIntoView({ block: "start" });
@@ -231,7 +267,7 @@ export default function CustomerOrder() {
 
       <main className="co-main">
         {tab === "menu" && (
-          <MenuTab data={data} cur={cur} offers={offers} offerCode={offerCode} setOfferCode={setOfferCode} q={q} setQ={setQ} canOrder={canOrder} add={add} quickAdd={quickAdd} qtyOf={qtyOf} />
+          <MenuTab data={data} cur={cur} offers={offers} offerCode={offerCode} setOfferCode={setOfferCode} q={q} setQ={setQ} canOrder={canOrder} quickAdd={quickAdd} less={less} qtyOf={qtyOf} />
         )}
         {tab === "orders" && (
           <StatusTab
@@ -243,8 +279,8 @@ export default function CustomerOrder() {
             canOrder={canOrder}
             refreshMine={refreshMine}
             onAskBill={() => setBillAsk(true)}
-            add={add}
             quickAdd={quickAdd}
+            less={less}
             qtyOf={qtyOf}
             onMenu={() => go("menu")}
             helpOn={helpOn}
@@ -296,7 +332,7 @@ export default function CustomerOrder() {
           <button key={bump} className="co-cartbar bump" onClick={() => setReview(true)}>
             <span className="co-cart-count">{count}</span>
             <span>{count === 1 ? "item" : "items"} · <b>{money(total, cur)}</b></span>
-            <b className="co-cart-go">View order →</b>
+            <b className="co-cart-go">View cart →</b>
           </button>
         </div>
       )}
@@ -313,26 +349,28 @@ export default function CustomerOrder() {
         )}
       </nav>
 
-      {picker && (
-        <div className="co-sheet-back" onClick={(e) => e.target === e.currentTarget && setPicker(null)}>
-          <div className="co-sheet">
-            <b>{picker.name}</b>
-            {picker.variants.map((v) => {
-              const l = cart.get(lineKey(picker.id, v.label || ""));
-              return (
-                <div key={v.label} className="co-variant">
-                  <span>{v.label} · {money(v.price, cur)}</span>
-                  <div className="qty co-qty">
-                    <button onClick={() => add(picker, v, -1)} disabled={!l} aria-label="Less">−</button>
-                    <span>{l?.qty || 0}</span>
-                    <button onClick={() => add(picker, v, 1)} aria-label="More">+</button>
-                  </div>
-                </div>
-              );
-            })}
-            <button className="btn btn-primary" onClick={() => setPicker(null)}>Done</button>
-          </div>
-        </div>
+      {custom && (
+        <Customize
+          key={custom.line?.key || custom.m.id}
+          m={custom.m}
+          cur={cur}
+          editing={!!custom.line}
+          initial={custom.line && { variant: custom.line.variant, addonIds: custom.line.addonIds, qty: custom.line.qty }}
+          onClose={() => setCustom(null)}
+          onAdd={({ v, addonIds, qty }) => {
+            addLine(custom.m, v, addonIds, qty, custom.line?.key);
+            setCustom(null);
+          }}
+        />
+      )}
+      {repeat && (
+        <RepeatSheet
+          line={repeat.line}
+          cur={cur}
+          onClose={() => setRepeat(null)}
+          onChoose={() => (setCustom({ m: repeat.m }), setRepeat(null))}
+          onRepeat={() => (changeQty(repeat.line.key, 1), setRepeat(null))}
+        />
       )}
 
       {billAsk && (
@@ -347,19 +385,20 @@ export default function CustomerOrder() {
         />
       )}
 
-      {review && (
-        <Review
+      {review && table && count > 0 && (
+        <Cart
           token={token}
+          data={data}
           table={table}
           lines={lines}
           cur={cur}
           total={total}
-          setNote={(k, note) => setCart((prev) => new Map(prev).set(k, { ...prev.get(k), note }))}
+          changeQty={changeQty}
+          onEdit={editLine}
           onClose={() => setReview(false)}
-          payRule={data.payRule}
           offers={offers}
           initialCode={offerCode}
-          delivery={data.delivery || null}
+          cardProps={{ quickAdd, less }}
           onPlaced={(o) => {
             const next = [...mine, o];
             setMine(next);

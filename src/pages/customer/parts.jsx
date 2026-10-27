@@ -1,164 +1,10 @@
-// The customer page's order pieces: review sheet, paying for an order (Cashfree, UPI, counter),
-// and the table's bill. Moved here unchanged from CustomerOrder.jsx.
+// The customer page's order pieces: paying for an order (Cashfree, UPI, counter), the table's bill,
+// and instructions for an accepted order. (The cart is in Cart.jsx.)
 import { useEffect, useState } from "react";
 import { post } from "../../lib/api.js";
 import { money } from "../../lib/format.js";
 import { qrSvg } from "../../../shared/billQr.js";
-import { lineKey, couponNudge } from "./common.js";
-import { deliveryLine, freeDeliveryGap } from "../../../shared/tableGroups.js";
-
-export function Review({ token, table, lines, cur, total, setNote, onClose, onPlaced, payRule, offers, initialCode, delivery = null }) {
-  const [note, setOrderNote] = useState("");
-  // Name and mobile are needed to order; remembered on this phone for next time.
-  const saved = (() => {
-    try {
-      return JSON.parse(localStorage.getItem("coContact") || "{}");
-    } catch {
-      return {};
-    }
-  })();
-  const [name, setName] = useState(saved.name || "");
-  const [phone, setPhone] = useState(saved.phone || "");
-  const mobile = phone.replace(/\D/g, "").replace(/^(91|0)(?=\d{10}$)/, "");
-  const contactOk = name.trim().length >= 2 && /^[6-9]\d{9}$/.test(mobile);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  // Promo code: checked by the server with its own prices (and this mobile, for once-per-mobile codes).
-  const [code, setCode] = useState(initialCode || "");
-  const [promo, setPromo] = useState(null); // { code, amount }
-  const [promoErr, setPromoErr] = useState("");
-  const [checking, setChecking] = useState(false);
-  const items = lines.map((l) => ({ itemId: l.itemId, variant: l.variant, qty: l.qty, note: l.note }));
-  const applyCode = async (c = code) => {
-    c = c.trim().toUpperCase();
-    if (!c) return;
-    setChecking(true);
-    setPromoErr("");
-    try {
-      const r = await post(`/public/shop/${token}/promo`, { code: c, items, phone: mobile, table: table.id });
-      setPromo({ code: r.code, amount: r.amount });
-      setCode(r.code);
-    } catch (err) {
-      setPromo(null);
-      setPromoErr(err.offline ? "No internet on this phone. Please try again." : err.message);
-    } finally {
-      setChecking(false);
-    }
-  };
-  useEffect(() => {
-    if (initialCode) applyCode(initialCode);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // Far tables: a delivery charge on smaller orders (the server adds the same line).
-  const charge = deliveryLine({ delivery }, total)?.rate || 0;
-  const gap = freeDeliveryGap({ delivery }, total);
-  const toPay = Math.max(0, total - (promo?.amount || 0)) + charge;
-  const place = async () => {
-    if (!contactOk) return setError(name.trim().length < 2 ? "Please enter your name." : "Please enter a 10-digit mobile number.");
-    setBusy(true);
-    setError("");
-    try {
-      localStorage.setItem("coContact", JSON.stringify({ name: name.trim(), phone: mobile }));
-    } catch {
-      /* private mode */
-    }
-    try {
-      const r = await post(`/public/shop/${token}/orders`, {
-        table: table.id,
-        items,
-        note,
-        name: name.trim(),
-        phone: mobile,
-        ...(promo && { promo: promo.code }),
-      });
-      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, promo: r.promo || null, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
-    } catch (err) {
-      // The code stopped working (used up, wrong time, used on this mobile): say so and let them order without it.
-      if (err.data?.code === "PROMO") {
-        setPromo(null);
-        setPromoErr(err.message);
-        setError("");
-      } else setError(err.offline ? "No internet on this phone. Please try again, or order with the staff." : err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="co-sheet-back" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="co-sheet">
-        <div className="co-order-head">
-          <b>Your order · {table.name}</b>
-          <button className="btn btn-sm btn-ghost" onClick={onClose}>Edit</button>
-        </div>
-        {lines.map((l) => (
-          <div key={lineKey(l.itemId, l.variant)} className="co-line">
-            <div className="co-line-top">
-              <span>{l.qty}× {l.name}{l.variant ? ` (${l.variant})` : ""}</span>
-              <span>{money(l.qty * l.rate, cur)}</span>
-            </div>
-            <input className="input" placeholder="Note for the kitchen (e.g. less spicy)" maxLength={80} value={l.note} onChange={(e) => setNote(lineKey(l.itemId, l.variant), e.target.value)} />
-          </div>
-        ))}
-        <input className="input" placeholder="Any other request (optional)" maxLength={160} value={note} onChange={(e) => setOrderNote(e.target.value)} />
-        <div className="co-contact">
-          <input className="input" placeholder="Your name *" autoComplete="name" maxLength={40} value={name} onChange={(e) => setName(e.target.value)} required />
-          <input className="input" placeholder="Mobile number *" type="tel" inputMode="tel" autoComplete="tel" maxLength={16} value={phone} onChange={(e) => setPhone(e.target.value)} required />
-          <span className="small muted">So the restaurant can reach you about your order.</span>
-        </div>
-        <div className="co-promo">
-          {promo ? (
-            <div className="co-line-top">
-              <span>🏷 <b>{promo.code}</b> applied</span>
-              <span>−{money(promo.amount, cur)} <button className="link-btn" onClick={() => (setPromo(null), setCode(""))}>Remove</button></span>
-            </div>
-          ) : (
-            <form className="co-promo-row" onSubmit={(e) => (e.preventDefault(), applyCode())}>
-              <input className="input" placeholder="Have a promo code?" autoCapitalize="characters" maxLength={20} value={code} onChange={(e) => (setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "")), setPromoErr(""))} />
-              <button className="btn" disabled={!code || checking}>{checking ? "…" : "Apply"}</button>
-            </form>
-          )}
-          {!promo && !code && offers.length > 0 && (
-            <div className="chips">
-              {offers.map((o) => (
-                <button key={o.code} className="chip" onClick={() => applyCode(o.code)}>🏷 {o.code}</button>
-              ))}
-            </div>
-          )}
-          {promoErr && <div className="error small">{promoErr}</div>}
-          {!promo && (() => {
-            const n = couponNudge(offers, total);
-            if (!n) return null;
-            return n.unlocked ? (
-              <button className="co-nudge done link-btn" onClick={() => applyCode(n.offer.code)}>🎉 {n.offer.code} unlocked: tap to apply</button>
-            ) : (
-              <div className="co-nudge">
-                <span>Add <b>{money(Math.ceil(n.short), cur)}</b> more to use <b>{n.offer.code}</b>{n.offer.description ? ` · ${n.offer.description}` : ""}</span>
-                <i className="co-nudge-bar"><i style={{ width: `${Math.round(n.progress * 100)}%` }} /></i>
-              </div>
-            );
-          })()}
-        </div>
-        {(promo || delivery) && <div className="co-line-top small muted"><span>Items</span><span>{money(total, cur)}</span></div>}
-        {delivery && (
-          <div className="co-line-top small muted">
-            <span>🛵 Delivery charge</span>
-            <span>{charge ? money(charge, cur) : "Free"}</span>
-          </div>
-        )}
-        {gap > 0 && (
-          <div className="co-nudge">
-            <span>🛵 Add <b>{money(Math.ceil(gap), cur)}</b> more for <b>free delivery</b> · <button className="link-btn" onClick={onClose}>Add more</button></span>
-          </div>
-        )}
-        <div className="co-line-top"><b>Total</b><b>{money(toPay, cur)}</b></div>
-        {error && <div className="error">{error}</div>}
-        <button className="btn btn-primary btn-lg" disabled={busy || !contactOk} onClick={place}>{busy ? "Sending…" : "Place order"}</button>
-        <p className="small muted" style={{ margin: 0, textAlign: "center" }}>
-          {payRule === "first" ? "Please pay after placing the order. It's cooked once the payment is confirmed." : payRule === "choose" ? "You can pay now by UPI, or at the end." : "You pay after your meal."}
-        </p>
-      </div>
-    </div>
-  );
-}
+import { lineLabel } from "../../../shared/addons.js";
 
 const upiLinkFor = (upi, amount, note) =>
   "upi://pay?" +
@@ -271,7 +117,7 @@ export function OrderPay({ token, order, cur, upiOn, onlineOn, onChange }) {
           <details className="small co-mini-bill">
             <summary>See bill</summary>
             {order.bill.items.map((i, k) => (
-              <div key={k} className="co-line-top"><span>{i.qty}× {i.name}{i.variant ? ` (${i.variant})` : ""}</span><span>{money(i.amount, cur)}</span></div>
+              <div key={k} className="co-line-top"><span>{i.qty}× {lineLabel(i)}</span><span>{money(i.amount, cur)}</span></div>
             ))}
             {order.bill.discount?.amount > 0 && <div className="co-line-top"><span>{order.promo ? `Promo ${order.promo.code}` : "Discount"}</span><span>−{money(order.bill.discount.amount, cur)}</span></div>}
             {order.bill.gst?.amount > 0 && <div className="co-line-top"><span>GST</span><span>{money(order.bill.gst.amount, cur)}</span></div>}
@@ -447,7 +293,7 @@ export function BillCard({ token, order, cur, onChange }) {
       <div className="co-bill-lines">
         {b.items.map((i, k) => (
           <div key={k} className="co-line-top small">
-            <span>{i.qty}× {i.name}{i.variant ? ` (${i.variant})` : ""}</span>
+            <span>{i.qty}× {lineLabel(i)}</span>
             <span>{money(i.amount ?? i.qty * i.rate, cur)}</span>
           </div>
         ))}
@@ -483,6 +329,71 @@ export function BillCard({ token, order, cur, onChange }) {
       ) : (
         <div className="co-note">💵 Please pay {money(balance, cur)} at the cash counter.</div>
       )}
+    </div>
+  );
+}
+
+// Instructions for an accepted order: cooking ones until the food is ready, delivery ones (far
+// tables) until it's served. Before the shop accepts, just a line saying when they can be added.
+export function Instructions({ token, order, delivery, onSaved }) {
+  const ins = order.instructions || {};
+  const st = order.status;
+  if (!["new", "accepted", "preparing", "ready", "served"].includes(st)) return null;
+  if (st === "new") return <p className="small muted co-ins-wait">📝 You can add cooking{delivery ? " and delivery" : ""} instructions once the restaurant accepts your order.</p>;
+  return (
+    <div className="co-ins">
+      <InstructionRow token={token} order={order} kind="cooking" icon="👨‍🍳" label="Cooking instructions" placeholder="e.g. less spicy, no onion, extra crispy" text={ins.cooking || ""} open={["accepted", "preparing"].includes(st)} onSaved={onSaved} />
+      {delivery && <InstructionRow token={token} order={order} kind="delivery" icon="🛵" label="Delivery instructions" placeholder="e.g. Gate 2, call when outside, leave at reception" text={ins.delivery || ""} open={["accepted", "preparing", "ready"].includes(st)} onSaved={onSaved} />}
+    </div>
+  );
+}
+
+function InstructionRow({ token, order, kind, icon, label, placeholder, text, open, onSaved }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!open && !text) return null;
+  if (!open || (!editing && text))
+    return (
+      <div className="co-ins-row">
+        <span>{icon}</span>
+        <div>
+          <b className="small">{label}</b>
+          <div>{text}</div>
+          {!open && <span className="small muted">✓ Sent to the kitchen</span>}
+        </div>
+        {open && <button className="link-btn small" onClick={() => (setDraft(text), setEditing(true))}>Edit</button>}
+      </div>
+    );
+  if (!editing)
+    return (
+      <button className="co-ins-add" onClick={() => setEditing(true)}>
+        {icon} Add {label.toLowerCase()} <span aria-hidden="true">›</span>
+      </button>
+    );
+  const save = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await post(`/public/shop/${token}/orders/${order.id}/instructions`, { key: order.key, [kind]: draft.trim() });
+      setEditing(false);
+      await onSaved();
+    } catch (err) {
+      setError(err.offline ? "No internet on this phone. Please try again." : err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="co-ins-edit">
+      <b className="small">{icon} {label}</b>
+      <textarea className="input" rows={2} maxLength={160} placeholder={placeholder} value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
+      {error && <div className="error small">{error}</div>}
+      <div className="btn-row">
+        <button className="btn btn-sm" onClick={() => setEditing(false)}>Cancel</button>
+        <button className="btn btn-sm btn-primary" disabled={busy || draft.trim() === text} onClick={save}>{busy ? "Sending…" : "Send to kitchen"}</button>
+      </div>
     </div>
   );
 }

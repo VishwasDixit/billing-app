@@ -103,6 +103,7 @@ export function receiptRows(shop, bill) {
 
   for (const it of bill.items) {
     wrap(it.variant ? `${it.name} (${it.variant})` : it.name, cols).forEach((l) => line(l));
+    if (it.addons?.length) wrap(`  + ${it.addons.map((a) => ascii(a.name)).join(", ")}`, cols).forEach((l) => line(l));
     pair(`  ${it.qty} x ${n2(it.rate)}`, n2(it.amount ?? it.qty * it.rate));
   }
   sep();

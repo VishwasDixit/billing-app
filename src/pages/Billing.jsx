@@ -14,8 +14,10 @@ import { shareBillPdf } from "../printer/pdf.js";
 import { ItemPicture } from "../components/ItemPicture.jsx";
 import { useShowPictures } from "../lib/prefs.js";
 import { CustomerPicker } from "../components/CustomerPicker.jsx";
+import { addonText } from "../../shared/addons.js";
 
-const lineKey = (itemId, variant) => `${itemId}|${variant}`;
+// Lines with add-ons (from QR or staff orders) stay apart from the plain dish.
+const lineKey = (itemId, variant, addons) => (addons?.length ? `${itemId}|${variant}|${addonText(addons)}` : `${itemId}|${variant}`);
 
 export default function Billing() {
   const { shop, menu, recordBill, customers, user } = useApp();
@@ -87,7 +89,7 @@ export default function Billing() {
     setEditBill({ id: b.id, billNo: b.billNo, createdAt: b.createdAt, total: b.total });
     setTableBill(null);
     setBillDate("");
-    setCart(new Map(b.items.map((l) => [lineKey(l.itemId || l.name, l.variant || ""), { itemId: l.itemId, name: l.name, variant: l.variant || "", category: l.category || "", rate: l.rate, qty: l.qty }])));
+    setCart(new Map(b.items.map((l) => [lineKey(l.itemId || l.name, l.variant || "", l.addons), { itemId: l.itemId, name: l.name, variant: l.variant || "", category: l.category || "", rate: l.rate, qty: l.qty, ...(l.charge && { charge: true }), ...(l.addons?.length && { addons: l.addons }) }])));
     setDiscount({ type: b.discount?.type || "percent", value: b.discount?.value || 0 });
     setPromo(null);
     setGstPercent(b.gst?.percent || 0);
@@ -116,7 +118,7 @@ export default function Billing() {
     if (!tb) return;
     restored.current = true;
     setTableBill(tb);
-    setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant), { ...l }])));
+    setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant, l.addons), { ...l }])));
     if (tb.payMode) setPaymentMode(tb.payMode);
     if (tb.customer) setCustomer(tb.customer);
     // Codes the customers used on these QR orders (already counted with the orders).
@@ -274,7 +276,7 @@ export default function Billing() {
     setBusy(kind);
     try {
       const bill = await put(`/bills/${editBill.id}`, {
-        items: lines.map(([, l]) => ({ itemId: l.itemId || "", name: l.name, variant: l.variant || "", category: l.category || "", qty: l.qty, rate: l.rate })),
+        items: lines.map(([, l]) => ({ itemId: l.itemId || "", name: l.name, variant: l.variant || "", category: l.category || "", qty: l.qty, rate: l.rate, ...(l.charge && { charge: true }), ...(l.addons?.length && { addons: l.addons }) })),
         discount: { type: discount.type, value: Number(discount.value) || 0 },
         gstPercent: Number(gstPercent) || 0,
         paymentMode,
@@ -420,6 +422,7 @@ export default function Billing() {
                   {l.name}
                   {l.variant && <span className="tag" style={{ marginLeft: 6 }}>{l.variant}</span>}
                 </div>
+                {l.addons?.length > 0 && <div className="small muted">+ {addonText(l.addons)}</div>}
                 <div className="ln-rate">{money(l.rate, cur)}</div>
               </div>
               <div className="qty">
