@@ -1163,5 +1163,12 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 @keyframes ring-glow { 50% { box-shadow: 0 4px 24px rgba(234,88,12,.6); } }
 @media (prefers-reduced-motion: reduce) { .ring-bell, .ringbar.ringing { animation: none; } }
 .bell-settings { display: grid; gap: 6px; }
+/* "Get ready for orders in the background" bars (sound unlock, alerts when closed) */
+.setupbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; font-size: 14px; border-bottom: 1px solid var(--border); }
+.setupbar.sound { background: var(--warn-soft); color: var(--warn); justify-content: center; }
+.setupbar.push { background: var(--panel); }
+.setupbar .setup-text { flex: 1; min-width: 200px; }
+.setupbar .setup-text .small { display: block; color: var(--muted); }
+.bell-help { margin: 2px 0 0; padding-left: 18px; display: grid; gap: 2px; }
 .bell-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .bell-row select { font-size: 13px; padding: 4px 6px; }

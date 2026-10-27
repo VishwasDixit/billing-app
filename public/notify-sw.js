@@ -24,16 +24,20 @@ self.addEventListener("push", (event) => {
   } catch {
     d = { body: event.data ? event.data.text() : "" };
   }
-  event.waitUntil(
-    self.registration.showNotification(d.title || "🔔 New order", {
-      body: d.body || "Open Orders to see it.",
-      tag: d.tag || "orders",
-      renotify: true,
-      requireInteraction: true,
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
-      vibrate: [300, 150, 300, 150, 300],
-      data: { url: d.url || "/orders" },
-    })
-  );
+  // Open app windows (even in a background tab) fetch the new orders at once and ring the bell.
+  const wake = self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => list.forEach((c) => c.postMessage({ type: "orders-alert" })));
+  event.waitUntil(Promise.all([wake.catch(() => {}), show(d)]));
 });
+
+function show(d) {
+  return self.registration.showNotification(d.title || "🔔 New order", {
+    body: d.body || "Open Orders to see it.",
+    tag: d.tag || "orders",
+    renotify: true,
+    requireInteraction: true,
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    vibrate: [300, 150, 300, 150, 300],
+    data: { url: d.url || "/orders" },
+  });
+}

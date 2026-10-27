@@ -13,8 +13,7 @@ const wanted = () => {
   }
 };
 
-// Must be called from a tap (browsers only ask then).
-export async function askNotify() {
+async function requestPermission() {
   if (!notifySupported()) return "unsupported";
   const r = await Notification.requestPermission();
   try {
@@ -22,6 +21,14 @@ export async function askNotify() {
   } catch {
     /* private mode */
   }
+  return r;
+}
+
+// Must be called from a tap (browsers only ask then). Turning notifications on also turns on
+// alerts for when the app is closed (Web Push), unless this device turned those off.
+export async function askNotify() {
+  const r = await requestPermission();
+  if (r === "granted" && !pushTurnedOff()) await subscribePush().catch(() => {});
   return r;
 }
 
@@ -66,18 +73,39 @@ const keyBytes = (b64) => {
   return Uint8Array.from(s, (c) => c.charCodeAt(0));
 };
 
+const PUSH_OFF = "pushOff";
+export const pushTurnedOff = () => {
+  try {
+    return localStorage.getItem(PUSH_OFF) === "1";
+  } catch {
+    return false;
+  }
+};
+const setPushTurnedOff = (off) => {
+  try {
+    off ? localStorage.setItem(PUSH_OFF, "1") : localStorage.removeItem(PUSH_OFF);
+  } catch {
+    /* private mode */
+  }
+};
+
+// Who's listening for "this device's push changed" (the setup bar, the Alerts panel).
+const pushListeners = new Set();
+export const onPushChange = (l) => (pushListeners.add(l), () => pushListeners.delete(l));
+const pushChanged = () => pushListeners.forEach((l) => l());
+
 export async function pushSubscription() {
   if (!pushSupported()) return null;
   const reg = await registration();
   return (await reg?.pushManager.getSubscription().catch(() => null)) || null;
 }
 
-// Must be called from a tap. Returns "on", "denied", "unsupported" or "not-set-up".
-export async function pushOn() {
+// Subscribes this device (permission must already be granted). Returns "on", "unsupported" or
+// "not-set-up".
+async function subscribePush() {
   if (!pushSupported()) return "unsupported";
   const { publicKey } = await get("/push/key");
   if (!publicKey) return "not-set-up";
-  if ((await askNotify()) !== "granted") return "denied";
   const reg = await registration();
   if (!reg) return "unsupported";
   let sub = await reg.pushManager.getSubscription();
@@ -89,18 +117,45 @@ export async function pushOn() {
   }
   sub ||= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
   await post("/push/subscribe", sub.toJSON());
+  pushChanged();
   return "on";
 }
 
-export async function pushOff() {
-  const sub = await pushSubscription();
-  if (!sub) return;
-  await post("/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {});
-  await sub.unsubscribe().catch(() => {});
+// Must be called from a tap. Returns "on", "denied", "unsupported" or "not-set-up".
+export async function pushOn() {
+  if (!pushSupported()) return "unsupported";
+  setPushTurnedOff(false);
+  if ((await requestPermission()) !== "granted") return "denied";
+  return subscribePush();
 }
 
-// On app start: tell the server again (it forgets devices that moved shop or stopped answering).
-export async function refreshPush() {
+export async function pushOff() {
+  setPushTurnedOff(true);
   const sub = await pushSubscription();
-  if (sub) await post("/push/subscribe", sub.toJSON()).catch(() => {});
+  if (sub) {
+    await post("/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {});
+    await sub.unsubscribe().catch(() => {});
+  }
+  pushChanged();
+}
+
+// On app start: with notifications already allowed, make sure this device gets alerts when the
+// app is closed (no tap needed), and tell the server again (it forgets devices that moved shop
+// or stopped answering).
+export async function ensurePush() {
+  try {
+    if (!pushSupported() || pushNeedsHomeScreen()) return;
+    const sub = await pushSubscription();
+    if (sub) await post("/push/subscribe", sub.toJSON()).catch(() => {});
+    else if (notifyPermission() === "granted" && !pushTurnedOff()) await subscribePush();
+  } catch {
+    /* tried again next start */
+  }
+}
+
+// "Send a test alert" to this device. Throws with the server's message on failure.
+export async function testPush() {
+  const sub = await pushSubscription();
+  if (!sub) throw new Error("Turn on alerts for when the app is closed first.");
+  await post("/push/test", { endpoint: sub.endpoint });
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { HELP_ASKS, helpText } from "../../shared/tableHelp.js";
 import { bell } from "../lib/ringer.js";
-import { askNotify, notifyPermission, notifySupported, pushSupported, pushNeedsHomeScreen, pushSubscription, pushOn, pushOff } from "../lib/notify.js";
+import { askNotify, notifyPermission, notifySupported, pushSupported, pushNeedsHomeScreen, pushSubscription, pushOn, pushOff, onPushChange, testPush } from "../lib/notify.js";
 import { useNavigate } from "react-router-dom";
 import { get, post } from "../lib/api.js";
 import { useOrders, chime } from "../lib/orders.js";
@@ -45,10 +45,13 @@ function useLockScreenAlerts() {
   useEffect(() => {
     if (pushNeedsHomeScreen()) return setState("home");
     if (!pushSupported()) return setState("unsupported");
-    Promise.all([get("/push/key"), pushSubscription()]).then(
-      ([k, sub]) => setState(!k.publicKey ? "not-set-up" : sub ? "on" : "off"),
-      () => setState("off")
-    );
+    const check = () =>
+      Promise.all([get("/push/key"), pushSubscription()]).then(
+        ([k, sub]) => setState(!k.publicKey ? "not-set-up" : sub ? "on" : "off"),
+        () => setState("off")
+      );
+    check();
+    return onPushChange(check);
   }, []);
   const toggle = async (on) => {
     setBusy(true);
@@ -71,16 +74,50 @@ function useLockScreenAlerts() {
   return { state, busy, error, toggle };
 }
 
+// Where alerts can and can't reach, by device (what the browser allows, not a setting of ours).
+const isAndroid = () => /Android/i.test(navigator.userAgent);
+const isMac = () => /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
+const isWindows = () => /Win/.test(navigator.platform);
+function BackgroundHelp() {
+  const tip = isAndroid()
+    ? "Works with the phone locked and Chrome closed. Keep the phone's notification sound on, and don't put Chrome to sleep in battery saver."
+    : isWindows()
+      ? "Works with Chrome's windows closed if Chrome › Settings › System › “Continue running background apps” is on."
+      : isMac()
+        ? "Closing the window is fine, but quitting Chrome (⌘Q) stops alerts. Allow Google Chrome in Mac Settings › Notifications, with sound."
+        : "";
+  return <span className="small muted">With the app closed, the alert uses the device's notification sound (the bell needs the app open). {tip}</span>;
+}
+
 function LockScreenRow({ state, busy, error, toggle, onPerm }) {
+  const [test, setTest] = useState("");
+  const sendTest = async () => {
+    setTest("sending");
+    try {
+      await testPush();
+      setTest("Sent. Switch to another app or lock the screen: it should pop up within a few seconds.");
+    } catch (e) {
+      setTest(e.message || "Couldn't send it.");
+    }
+  };
   if (state === "home")
     return <span className="small muted">🔒 For alerts on the lock screen, add this app to the Home Screen (Share › Add to Home Screen), open it from there and turn them on here. Needs iOS 16.4 or newer.</span>;
   if (!state || state === "unsupported" || state === "not-set-up") return null;
   return (
     <>
       <label className="check small">
-        <input type="checkbox" checked={state === "on"} disabled={busy} onChange={async (e) => (await toggle(e.target.checked), onPerm(notifyPermission()))} /> 🔒 Alerts on the lock screen (even when the app is closed)
+        <input type="checkbox" checked={state === "on"} disabled={busy} onChange={async (e) => (await toggle(e.target.checked), onPerm(notifyPermission()))} /> 🔒 Alerts when the app is in the background or closed
       </label>
       {error && <div className="error small">{error}</div>}
+      {state === "on" && (
+        <>
+          <div className="bell-row small">
+            <button className="btn btn-sm" disabled={test === "sending"} onClick={sendTest}>{test === "sending" ? "Sending…" : "📨 Send a test alert"}</button>
+          </div>
+          {test && test !== "sending" && <span className="small">{test}</span>}
+          <BackgroundHelp />
+        </>
+      )}
     </>
   );
 }

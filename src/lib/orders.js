@@ -196,4 +196,4 @@ export async function confirmPayment(claim, mode = "upi") {
 }
 
 // Sounds live in sound.js (re-exported here for existing imports).
-export { unlockAudio, beep, chime, audioContext, soundOn } from "./sound.js";
+export { unlockAudio, audioReady, onAudioChange, beep, chime, audioContext, soundOn } from "./sound.js";

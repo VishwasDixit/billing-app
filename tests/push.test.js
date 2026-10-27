@@ -189,6 +189,33 @@ describe("lock-screen alerts", () => {
     expect(to()).toEqual([kitchen.endpoint, other.endpoint].sort());
   });
 
+  it("a test alert goes to this device only, if it's saved for this shop", async () => {
+    const mine = sub("tester");
+    expect((await client()("POST", "/push/test", { endpoint: mine.endpoint })).status).toBe(401);
+    // Not subscribed yet, or saved for another shop: refused, nothing sent.
+    expect((await A.c("POST", "/push/test", { endpoint: mine.endpoint })).status).toBe(404);
+    await A.c("POST", "/push/subscribe", mine);
+    expect((await B.c("POST", "/push/test", { endpoint: mine.endpoint })).status).toBe(404);
+    expect(sent.calls).toHaveLength(0);
+
+    expect((await A.c("POST", "/push/test", { endpoint: mine.endpoint })).status).toBe(200);
+    expect(to()).toEqual([mine.endpoint]);
+    expect(sent.calls[0].payload.title).toMatch(/Test alert/);
+    expect((await A.c("POST", "/push/test", { endpoint: "https://push.example.com/x" })).status).toBe(400);
+
+    // A gone device is forgotten and the user is told.
+    sent.dead.add(mine.endpoint);
+    expect((await A.c("POST", "/push/test", { endpoint: mine.endpoint })).status).toBe(502);
+    expect(await (await getDb()).collection("pushSubs").countDocuments({ endpoint: mine.endpoint })).toBe(0);
+
+    // At most 10 an hour per device.
+    const again = sub("again");
+    await A.c("POST", "/push/subscribe", again);
+    for (let i = 0; i < 10; i++) expect((await A.c("POST", "/push/test", { endpoint: again.endpoint })).status).toBe(200);
+    expect((await A.c("POST", "/push/test", { endpoint: again.endpoint })).status).toBe(429);
+    await A.c("POST", "/push/unsubscribe", { endpoint: again.endpoint });
+  });
+
   it("without server keys nothing is offered or sent", async () => {
     const keep = process.env.VAPID_PRIVATE_KEY;
     delete process.env.VAPID_PRIVATE_KEY;

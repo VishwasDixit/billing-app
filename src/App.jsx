@@ -20,10 +20,11 @@ import Help from "./pages/Help.jsx";
 import CustomerOrder from "./pages/CustomerOrder.jsx";
 import Orders from "./pages/Orders.jsx";
 import Kitchen from "./pages/Kitchen.jsx";
-import { initOrders, refreshOrders, useOrders, chime, unlockAudio } from "./lib/orders.js";
+import { initOrders, refreshOrders, useOrders, chime, unlockAudio, audioReady } from "./lib/orders.js";
 import { startRinging, stopRinging, clearRinging, ringerState, nextReminderAt, remindMinutes } from "./lib/ringer.js";
-import { notifyOrders, clearOrderNotifications, refreshPush } from "./lib/notify.js";
+import { notifyOrders, clearOrderNotifications, ensurePush } from "./lib/notify.js";
 import { RingBar } from "./components/RingBar.jsx";
+import { AlertSetupBar } from "./components/AlertSetupBar.jsx";
 import { AlertsButton, AlertsPanel, useAlertCount } from "./components/AlertsPanel.jsx";
 import { useToast } from "./components/ui.jsx";
 import { signOutStaff } from "./lib/kitchen.js";
@@ -149,6 +150,10 @@ function useKitchenAlerts(enabled) {
   return [n, check];
 }
 
+// Someone is looking at the app: it's on screen and the window is the active one (another app
+// in front, or another Chrome window, counts as not looking).
+const looking = () => document.visibilityState === "visible" && document.hasFocus();
+
 // Keeps table orders fresh on every screen, rings the bell when something new needs staff
 // (QR order, bill request, payment, table help) until someone stops it, and rings again every
 // few minutes (device setting, 5 by default) while anything is still waiting.
@@ -157,9 +162,9 @@ function useOrderAlerts(shop, isKitchen) {
   const loc = useLocation();
   const st = useOrders();
   const hasTables = (shop.tables || []).length > 0;
-  // Lock-screen alerts: remind the server about this device once per app start.
+  // Alerts while the app is closed: on whenever notifications are allowed (once per app start).
   useEffect(() => {
-    refreshPush();
+    ensurePush();
   }, [shop._id]);
   // Kitchen phones ring for new tickets and table help; the counter for everything waiting.
   const attention = isKitchen ? st.waiting + (st.helpOpen || 0) : st.attention;
@@ -178,6 +183,14 @@ function useOrderAlerts(shop, isKitchen) {
     }, 5000);
     return () => clearInterval(t);
   }, [hasTables]);
+  // A push from the server (public/notify-sw.js) wakes this page at once, even in a background
+  // tab whose timers the browser slows down: fetch now, and the bell rings for what's new.
+  useEffect(() => {
+    if (!hasTables || !("serviceWorker" in navigator)) return;
+    const onMsg = (e) => e.data?.type === "orders-alert" && refreshOrders().catch(() => {});
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, [hasTables]);
   const what = () => {
     const parts = [];
     if (st.waiting) parts.push(`${st.waiting} new order${st.waiting === 1 ? "" : "s"}`);
@@ -188,7 +201,7 @@ function useOrderAlerts(shop, isKitchen) {
   };
   const ring = (reminder) => {
     startRinging();
-    if (document.visibilityState !== "visible") notifyOrders(reminder ? `🔔 Still waiting: ${what()}` : `🔔 ${what()}`, `${shop.name}: open Orders to see it.`);
+    if (!looking()) notifyOrders(reminder ? `🔔 Still waiting: ${what()}` : `🔔 ${what()}`, `${shop.name}: open Orders to see it.`);
   };
   const prev = useRef(attention);
   useEffect(() => {
@@ -206,7 +219,7 @@ function useOrderAlerts(shop, isKitchen) {
   useEffect(() => {
     if (loc.pathname === "/orders" || (isKitchen && loc.pathname === "/kitchen")) {
       if (ringerState().ringing) stopRinging();
-      if (document.visibilityState === "visible") clearOrderNotifications();
+      if (looking()) clearOrderNotifications();
     }
   }, [loc.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   // The reminder: checked every 15 s.
@@ -277,13 +290,15 @@ function Shell({ children }) {
   const [kitchenAlerts, recheckKitchen] = useKitchenAlerts(true);
   const alertCount = useAlertCount(kitchenAlerts, isKitchen);
   const [alertsOpen, setAlertsOpen] = useState(null); // "drop" (wide screens) | "sheet" (phones)
-  // Browsers only play sound after a tap: unlock it on the first one.
+  // Browsers only play sound after a tap or key press (and phones may pause it again after a
+  // call or a while in the background): any tap or key unlocks it whenever it's not running.
   useEffect(() => {
-    const once = () => (unlockAudio(), window.removeEventListener("pointerdown", once));
-    window.addEventListener("pointerdown", once);
-    return () => window.removeEventListener("pointerdown", once);
+    const events = ["pointerdown", "keydown"];
+    const unlock = () => audioReady() || unlockAudio();
+    events.forEach((e) => window.addEventListener(e, unlock, true));
+    return () => events.forEach((e) => window.removeEventListener(e, unlock, true));
   }, []);
-  const { waiting, attention, what } = useOrderAlerts(shop, isKitchen);
+  const { waiting, attention, what, hasTables } = useOrderAlerts(shop, isKitchen);
   const loc = useLocation();
   const nav = useNavigate();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -295,7 +310,7 @@ function Shell({ children }) {
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => (setMoreOpen(false), setAlertsOpen(null)), [loc.pathname]);
   const links = useNavLinks({ isAdmin, isKitchen, isManager, paid, waiting, helpUnread, kitchenAlerts });
-  if (loc.pathname === "/kitchen") return <ToastFree><RingBar attention={attention} what={what} kitchen />{children}<StaffGate /></ToastFree>;
+  if (loc.pathname === "/kitchen") return <ToastFree><RingBar attention={attention} what={what} kitchen />{hasTables && !isAdmin && <AlertSetupBar />}{children}<StaffGate /></ToastFree>;
   const onTop = links.some((l) => l.top && !l.bottom && (loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
   const inMore = !links.some((l) => l.bottom && (l.to === "/" ? loc.pathname === "/" : loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
 
@@ -334,6 +349,7 @@ function Shell({ children }) {
         </nav>
       </header>
       {loc.pathname !== "/orders" && <RingBar attention={attention} what={what} />}
+      {hasTables && !isAdmin && <AlertSetupBar />}
       {!isKitchen && !isManager && <AccessBanner access={access} blocked={sync.blocked} />}
       <main className="main">
         <Suspense fallback={<div className="empty">Loading…</div>}>{children}</Suspense>

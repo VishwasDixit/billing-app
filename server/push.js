@@ -64,6 +64,13 @@ async function firstInGap(db, key) {
   }
 }
 
+// Sends one alert to one device (the Alerts panel's "Send a test alert"). Returns true or throws.
+export async function pushToEndpoint(sub, { title, body, url = "/orders" }) {
+  const payload = JSON.stringify({ title, body, url, tag: "orders" });
+  await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload, { vapidDetails: vapid(), TTL: 60, urgency: "high", timeout: 5000 });
+  return true;
+}
+
 // Sends one alert to the shop's subscribed devices with one of `roles`. Never throws: an order
 // must not fail because a phone couldn't be reached. Returns how many devices were reached.
 export async function pushToShop(db, shopId, { title, body, roles = STAFF, key, url = "/orders" }) {

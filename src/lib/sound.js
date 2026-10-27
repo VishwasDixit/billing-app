@@ -1,18 +1,32 @@
 // Sounds made in code (no sound file). One shared audio context, unlocked by the first tap,
 // because browsers block sound until the user has touched the page.
 let audio = null;
+const audioListeners = new Set();
 function ctx() {
-  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  if (!audio) {
+    audio = new (window.AudioContext || window.webkitAudioContext)();
+    audio.onstatechange = () => audioListeners.forEach((l) => l());
+  }
   return audio;
 }
 export const audioContext = ctx;
 export function unlockAudio() {
   try {
-    ctx().resume();
+    return ctx().resume();
   } catch {
     /* no audio */
   }
 }
+// False while the browser still blocks sound (after a reload, before any tap). A device with no
+// audio at all counts as ready: there's nothing to unlock.
+export function audioReady() {
+  try {
+    return ctx().state === "running";
+  } catch {
+    return true;
+  }
+}
+export const onAudioChange = (l) => (audioListeners.add(l), () => audioListeners.delete(l));
 export const soundOn = () => {
   try {
     return JSON.parse(localStorage.getItem("alertSound") ?? "true") !== false;
