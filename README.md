@@ -55,6 +55,15 @@ npm test
    Without Razorpay keys, the Plans page offers only UPI QR payment, which you approve in **Admin**.
 4. Register using your `ADMIN_EMAIL`. Your shop gets the Admin tab and never expires.
 
+## Lock-screen order alerts (Web Push)
+Staff phones can get new QR orders, table requests, bill requests and "I paid by UPI" claims as notifications even when the phone is locked or the app is closed. While the app is open it also rings the bell (Alerts panel settings).
+
+- **Setup:** run `npx web-push generate-vapid-keys` once and add `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in Vercel → Settings → Environment Variables, then redeploy. Keep the private key secret. Changing the keys means every phone has to turn alerts on again.
+- **On each phone:** open the app, tap **🔔 Alerts**, tick **🔒 Alerts on the lock screen** and allow notifications. Logging out turns it off for that phone.
+- **Who gets what:** new orders and table help go to the owner, managers and kitchen phones. Bill requests and payment claims go to the owner and managers only. The same table and kind alerts at most once per 30 seconds, and each alert replaces the last one on the phone.
+- **Android:** works in Chrome, best with the app installed (Add to Home screen). If alerts are late, set the browser/app's battery use to **Unrestricted**.
+- **iPhone:** needs iOS 16.4 or newer, and only works in the app added to the Home Screen (Safari → Share → **Add to Home Screen**), opened from there. In Safari itself there are no web notifications. iOS may silently stop alerts if many arrive and the app is never opened; opening it now and then keeps them flowing. The bell can't ring in the background on iPhone: the notification uses the phone's normal notification sound.
+
 ## Printing to a Bluetooth thermal printer
 Cheap Bluetooth thermal printers (e.g. Seznik) have no driver. The app sends ESC/POS commands to them directly. Set it up in **Settings → Printer**:
 - **Paper size:** 58 / 80 / 110 mm. This sets the characters per line: 32 / 48 / 64.

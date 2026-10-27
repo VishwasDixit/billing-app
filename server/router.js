@@ -21,6 +21,8 @@ import kitchenRoutes from "./routes/kitchen.js";
 import staffRoutes from "./routes/staff.js";
 import promoRoutes from "./routes/promos.js";
 import tableHelpRoutes from "./routes/tableHelp.js";
+import pushRoutes from "./routes/push.js";
+import { pushReady } from "./push.js";
 
 // Each route: [method, "/path/:param", handler, { auth = true, admin = false }]
 const ROUTES = [
@@ -40,6 +42,7 @@ const ROUTES = [
   ...staffRoutes,
   ...promoRoutes,
   ...tableHelpRoutes,
+  ...pushRoutes,
 ].map(([method, path, handler, opts = {}]) => {
   const keys = [];
   const re = new RegExp(
@@ -139,6 +142,7 @@ async function health() {
     CRON_SECRET: !!process.env.CRON_SECRET,
     PEXELS_API_KEY: pexelsReady(),
     SUPPORT_WHATSAPP: !!process.env.SUPPORT_WHATSAPP,
+    VAPID_KEYS: pushReady(),
   };
   try {
     const db = await getDb();

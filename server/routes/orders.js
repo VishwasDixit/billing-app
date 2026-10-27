@@ -18,6 +18,7 @@ import { refreshDailyStock, takeStock, checkAvailable } from "../stock.js";
 import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.js";
 import { storeOpen, hoursText } from "../../shared/hours.js";
 import { helpSettings } from "../../shared/tableHelp.js";
+import { pushToShop, MONEY_ROLES } from "../push.js";
 import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
 
 // "unpaid": the table left without paying (closed by staff; not a sale).
@@ -372,6 +373,8 @@ export default [
         if (promo) await releasePromo(db, shop._id, clientId);
         throw err;
       }
+      const count = items.reduce((n, i) => n + i.qty, 0);
+      await pushToShop(db, shop._id, { title: `🍽️ New order #${doc.orderNo} · ${table.name}`, body: `${count} item${count === 1 ? "" : "s"} · ${input.name}. Tap to open Orders.`, key: `order:${table.id}` });
       return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, pay: publicPay(doc), ...(promo && { promo }) };
     },
     { auth: false },
@@ -453,6 +456,8 @@ export default [
         .collection("orders")
         .updateMany({ shopId: shop._id, table: o.table, status: { $in: OPEN.filter((s) => s !== "new") } }, { $set: { billRequest, updatedAt: new Date() } });
       if (!modifiedCount) throw new HttpError(400, "There's nothing to bill yet. Please wait until your order is in the kitchen.");
+      const how = method === "paid" ? "has paid and is leaving" : `asks for the bill · will pay ${method === "upi" ? "by UPI" : "at the counter"}`;
+      await pushToShop(db, shop._id, { title: `🧾 ${o.tableName || o.table} ${how}`, body: shop.name, roles: MONEY_ROLES, key: `bill:${o.table}` });
       return { ok: true, billRequest };
     },
     { auth: false },
@@ -472,6 +477,7 @@ export default [
         .collection("bills")
         .updateOne({ shopId: shop._id, clientId: params.billId, paymentConfirmedAt: { $exists: false } }, { $set: { customerPaid: { at: new Date(), utr } } });
       if (!r.matchedCount) return { ok: true, alreadyConfirmed: true };
+      await pushToShop(db, shop._id, { title: `💰 ${o.tableName || o.table} says they paid by UPI`, body: "Check the money came in, then confirm.", roles: MONEY_ROLES, key: `paid:${params.billId}` });
       return { ok: true };
     },
     { auth: false },
@@ -502,6 +508,7 @@ export default [
             ? { ...pay, state: "due", method: "counter", amount: orderPayable(shop, o) }
             : { ...pay, state: "end", method: "" };
       const u = await db.collection("orders").findOneAndUpdate({ _id: o._id }, { $set: { pay: next, updatedAt: new Date() } }, { returnDocument: "after" });
+      if (next.state === "claimed") await pushToShop(db, shop._id, { title: `💳 #${o.orderNo} · ${o.tableName || o.table} says paid by UPI`, body: "Check the money came in, then confirm.", roles: MONEY_ROLES, key: `paid:${o.clientId}` });
       return { ok: true, pay: publicPay(u) };
     },
     { auth: false },

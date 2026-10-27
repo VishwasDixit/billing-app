@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { HELP_ASKS, helpText } from "../../shared/tableHelp.js";
 import { bell } from "../lib/ringer.js";
-import { askNotify, notifyPermission, notifySupported } from "../lib/notify.js";
+import { askNotify, notifyPermission, notifySupported, pushSupported, pushNeedsHomeScreen, pushSubscription, pushOn, pushOff } from "../lib/notify.js";
 import { useNavigate } from "react-router-dom";
 import { get, post } from "../lib/api.js";
 import { useOrders, chime } from "../lib/orders.js";
@@ -36,6 +36,55 @@ export function useAlertCount(kitchenCount, isKitchen) {
   return (isKitchen ? st.waiting + (st.helpOpen || 0) : st.attention) + (kitchenCount || 0);
 }
 
+// Lock-screen alerts (Web Push) for this device: null while checking, then "on", "off",
+// "home" (iPhone: add to Home Screen first), "unsupported" or "not-set-up" (no server keys).
+function useLockScreenAlerts() {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (pushNeedsHomeScreen()) return setState("home");
+    if (!pushSupported()) return setState("unsupported");
+    Promise.all([get("/push/key"), pushSubscription()]).then(
+      ([k, sub]) => setState(!k.publicKey ? "not-set-up" : sub ? "on" : "off"),
+      () => setState("off")
+    );
+  }, []);
+  const toggle = async (on) => {
+    setBusy(true);
+    setError("");
+    try {
+      if (on) {
+        const r = await pushOn();
+        setState(r === "on" ? "on" : r === "denied" ? "off" : r);
+        if (r === "denied") setError("Notifications are blocked for this site in the browser settings.");
+      } else {
+        await pushOff();
+        setState("off");
+      }
+    } catch (e) {
+      setError(e.message || "Couldn't change it. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { state, busy, error, toggle };
+}
+
+function LockScreenRow({ state, busy, error, toggle, onPerm }) {
+  if (state === "home")
+    return <span className="small muted">🔒 For alerts on the lock screen, add this app to the Home Screen (Share › Add to Home Screen), open it from there and turn them on here. Needs iOS 16.4 or newer.</span>;
+  if (!state || state === "unsupported" || state === "not-set-up") return null;
+  return (
+    <>
+      <label className="check small">
+        <input type="checkbox" checked={state === "on"} disabled={busy} onChange={async (e) => (await toggle(e.target.checked), onPerm(notifyPermission()))} /> 🔒 Alerts on the lock screen (even when the app is closed)
+      </label>
+      {error && <div className="error small">{error}</div>}
+    </>
+  );
+}
+
 // 🔔 in the top bar on wide screens.
 export function AlertsButton({ count, onClick, open }) {
   return (
@@ -58,6 +107,7 @@ export function AlertsPanel({ onClose, isKitchen, isOwner, sheet, onKitchenChang
   const [notifyOn, setNotifyOn] = usePref("notifyOn", true);
   const [perm, setPerm] = useState(notifyPermission());
   const [changes, setChanges] = useState(null);
+  const lock = useLockScreenAlerts();
   const load = () => get("/kitchen/alerts").then((r) => setKitchen(r.alerts), () => setKitchen([]));
   useEffect(() => {
     load();
@@ -148,6 +198,7 @@ export function AlertsPanel({ onClose, isKitchen, isOwner, sheet, onKitchenChang
               ) : (
                 <button className="btn btn-sm" onClick={async () => setPerm(await askNotify())}>📲 Turn on notifications</button>
               ))}
+            <LockScreenRow {...lock} onPerm={setPerm} />
           </div>
           <button className="link-btn small" onClick={() => go("/kitchen-manage?tab=alerts")}>All kitchen alerts →</button>
         </div>

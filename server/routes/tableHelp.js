@@ -5,7 +5,8 @@ import { z } from "zod";
 import { HttpError } from "../http.js";
 import { rateLimit, clientIp } from "../limits.js";
 import { shopByToken, tableById } from "./orders.js";
-import { QUICK_ASKS, helpSettings } from "../../shared/tableHelp.js";
+import { QUICK_ASKS, helpSettings, helpText } from "../../shared/tableHelp.js";
+import { pushToShop } from "../push.js";
 
 export const HELP_KINDS = [...QUICK_ASKS, "question"];
 const DeviceKey = z.string().regex(/^[A-Za-z0-9_-]{16,40}$/, "Please reload the page.");
@@ -58,6 +59,7 @@ export default [
         deviceKey: input.deviceKey, status: "open", count: 1, createdAt: now, updatedAt: now,
       };
       doc._id = (await db.collection("tableHelp").insertOne(doc)).insertedId;
+      await pushToShop(db, shop._id, { title: `🙋 ${table.name}${input.name ? ` · ${input.name}` : ""}: ${helpText(doc)}`, body: "Tap to open Orders.", key: `help:${table.id}:${input.kind}` });
       return forCustomer(doc);
     },
     { auth: false },

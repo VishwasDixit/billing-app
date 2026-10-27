@@ -78,6 +78,8 @@ async function ensureIndexes(db) {
     db.collection("customers").createIndex({ shopId: 1, name: 1 }),
     db.collection("customers").createIndex({ shopId: 1, phone: 1 }),
     db.collection("promos").createIndex({ shopId: 1, code: 1 }, { unique: true }),
+    db.collection("pushSubs").createIndex({ endpoint: 1 }, { unique: true }),
+    db.collection("pushSubs").createIndex({ shopId: 1, role: 1 }),
     db.collection("tableHelp").createIndex({ shopId: 1, status: 1, createdAt: 1 }),
     db.collection("tableHelp").createIndex({ shopId: 1, deviceKey: 1, createdAt: -1 }),
     db.collection("tableHelp").createIndex({ createdAt: 1 }, { expireAfterSeconds: 2 * 86400 }),

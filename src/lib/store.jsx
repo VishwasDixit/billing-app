@@ -5,6 +5,7 @@ import { computeTotals } from "../../shared/totals.js";
 import { uuid } from "./format.js";
 import { warmLogo } from "../printer/index.js";
 import { setKitchenShop, flushMoves, signOutStaff } from "./kitchen.js";
+import { pushOff } from "./notify.js";
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -213,6 +214,8 @@ export function AppProvider({ children }) {
       },
       async logout() {
         await syncNow().catch(() => {});
+        // This phone stops getting the shop's lock-screen alerts.
+        await pushOff().catch(() => {});
         try {
           await post("/auth/logout");
         } catch {

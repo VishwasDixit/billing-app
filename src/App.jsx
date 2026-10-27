@@ -22,7 +22,7 @@ import Orders from "./pages/Orders.jsx";
 import Kitchen from "./pages/Kitchen.jsx";
 import { initOrders, refreshOrders, useOrders, chime, unlockAudio } from "./lib/orders.js";
 import { startRinging, stopRinging, clearRinging, ringerState, nextReminderAt, remindMinutes } from "./lib/ringer.js";
-import { notifyOrders, clearOrderNotifications } from "./lib/notify.js";
+import { notifyOrders, clearOrderNotifications, refreshPush } from "./lib/notify.js";
 import { RingBar } from "./components/RingBar.jsx";
 import { AlertsButton, AlertsPanel, useAlertCount } from "./components/AlertsPanel.jsx";
 import { useToast } from "./components/ui.jsx";
@@ -157,6 +157,10 @@ function useOrderAlerts(shop, isKitchen) {
   const loc = useLocation();
   const st = useOrders();
   const hasTables = (shop.tables || []).length > 0;
+  // Lock-screen alerts: remind the server about this device once per app start.
+  useEffect(() => {
+    refreshPush();
+  }, [shop._id]);
   // Kitchen phones ring for new tickets and table help; the counter for everything waiting.
   const attention = isKitchen ? st.waiting + (st.helpOpen || 0) : st.attention;
   useEffect(() => {
