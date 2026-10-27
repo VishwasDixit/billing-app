@@ -5,6 +5,7 @@ import { Field } from "../components/ui.jsx";
 import { DoorDog } from "../components/DoorDog.jsx";
 import { useDogAuth } from "../lib/useDogAuth.js";
 import { GoogleButton, OrDivider } from "../components/GoogleButton.jsx";
+import { IosInstallBar } from "../components/IosInstall.jsx";
 
 export function useResendTimer() {
   const [left, setLeft] = useState(0);
@@ -51,6 +52,7 @@ export default function Login() {
           <h1>Log in</h1>
           <p className="muted small" style={{ margin: 0 }}>Billing, printing and sales reports for your shop.</p>
         </div>
+        <IosInstallBar compact />
 
         {googleClientId && (
           <>

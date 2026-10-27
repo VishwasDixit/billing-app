@@ -25,6 +25,7 @@ import { startRinging, stopRinging, clearRinging, ringerState, nextReminderAt, r
 import { notifyOrders, clearOrderNotifications, ensurePush } from "./lib/notify.js";
 import { RingBar } from "./components/RingBar.jsx";
 import { AlertSetupBar } from "./components/AlertSetupBar.jsx";
+import { IosInstallBar } from "./components/IosInstall.jsx";
 import { AlertsButton, AlertsPanel, useAlertCount } from "./components/AlertsPanel.jsx";
 import { useToast } from "./components/ui.jsx";
 import { signOutStaff } from "./lib/kitchen.js";
@@ -350,6 +351,7 @@ function Shell({ children }) {
       </header>
       {loc.pathname !== "/orders" && <RingBar attention={attention} what={what} />}
       {hasTables && !isAdmin && <AlertSetupBar />}
+      {!isAdmin && <IosInstallBar />}
       {!isKitchen && !isManager && <AccessBanner access={access} blocked={sync.blocked} />}
       <main className="main">
         <Suspense fallback={<div className="empty">Loading…</div>}>{children}</Suspense>

@@ -1169,6 +1169,17 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .setupbar.push { background: var(--panel); }
 .setupbar .setup-text { flex: 1; min-width: 200px; }
 .setupbar .setup-text .small { display: block; color: var(--muted); }
+.setupbar.ios { background: var(--accent-soft); }
+.setupbar.ios { flex-wrap: nowrap; }
+.setupbar.ios img { border-radius: 8px; flex: none; }
+.setupbar.ios .setup-text { min-width: 0; }
+.ios-x { border: none; background: none; color: var(--muted); font-size: 16px; padding: 4px; cursor: pointer; flex: none; }
+.setupbar.ios.compact { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
+.ios-head { display: flex; gap: 12px; align-items: center; }
+.ios-head img { border-radius: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.ios-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.ios-steps li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--bg); }
+.ios-steps li > span { font-size: 20px; width: 28px; text-align: center; flex: none; }
 .bell-help { margin: 2px 0 0; padding-left: 18px; display: grid; gap: 2px; }
 .bell-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .bell-row select { font-size: 13px; padding: 4px 6px; }
