@@ -1145,3 +1145,23 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .co-status, .co-help, .co-section, .co-sheet { grid-template-columns: minmax(0, 1fr); }
 .co-app { overflow-x: clip; }
 .co-quick.one { grid-template-columns: 1fr; }
+
+/* Order bell bar (every staff screen) */
+.ringbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; padding: 10px 14px; font-size: 14px; }
+.ringbar.ringing { background: linear-gradient(90deg, #b91c1c, #ea580c); color: #fff; box-shadow: 0 4px 16px rgba(185,28,28,.35); animation: ring-glow 1.2s ease-in-out infinite; }
+.ringbar.waiting { background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); padding: 8px 14px; }
+.ring-bell { font-size: 28px; display: inline-block; transform-origin: 50% 8%; animation: ring-swing .5s ease-in-out infinite alternate; }
+.ring-text { display: grid; flex: 1; min-width: 160px; line-height: 1.25; }
+.ring-text b { font-size: 16px; }
+.ring-text span { font-size: 12px; opacity: .9; }
+.ring-text-small { flex: 1; min-width: 0; }
+.ring-actions { display: flex; gap: 8px; }
+.ringbar .ring-open { background: #fff; color: #b91c1c; border-color: #fff; font-weight: 700; }
+.ringbar .ring-stop { background: rgba(255,255,255,.18); color: #fff; border-color: rgba(255,255,255,.5); }
+.ringbar .ring-notify { background: var(--panel); color: var(--text); }
+@keyframes ring-swing { from { transform: rotate(-18deg); } to { transform: rotate(18deg); } }
+@keyframes ring-glow { 50% { box-shadow: 0 4px 24px rgba(234,88,12,.6); } }
+@media (prefers-reduced-motion: reduce) { .ring-bell, .ringbar.ringing { animation: none; } }
+.bell-settings { display: grid; gap: 6px; }
+.bell-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.bell-row select { font-size: 13px; padding: 4px 6px; }

@@ -20,7 +20,10 @@ import Help from "./pages/Help.jsx";
 import CustomerOrder from "./pages/CustomerOrder.jsx";
 import Orders from "./pages/Orders.jsx";
 import Kitchen from "./pages/Kitchen.jsx";
-import { initOrders, refreshOrders, useOrders, beep, chime, unlockAudio } from "./lib/orders.js";
+import { initOrders, refreshOrders, useOrders, chime, unlockAudio } from "./lib/orders.js";
+import { startRinging, stopRinging, clearRinging, ringerState, nextReminderAt, remindMinutes } from "./lib/ringer.js";
+import { notifyOrders, clearOrderNotifications } from "./lib/notify.js";
+import { RingBar } from "./components/RingBar.jsx";
 import { AlertsButton, AlertsPanel, useAlertCount } from "./components/AlertsPanel.jsx";
 import { useToast } from "./components/ui.jsx";
 import { signOutStaff } from "./lib/kitchen.js";
@@ -146,29 +149,74 @@ function useKitchenAlerts(enabled) {
   return [n, check];
 }
 
-// Keeps table orders fresh on every screen and rings when a QR order is waiting.
-function useOrderAlerts(shop) {
+// Keeps table orders fresh on every screen, rings the bell when something new needs staff
+// (QR order, bill request, payment, table help) until someone stops it, and rings again every
+// few minutes (device setting, 5 by default) while anything is still waiting.
+function useOrderAlerts(shop, isKitchen) {
   const toast = useToast();
   const loc = useLocation();
   const st = useOrders();
   const hasTables = (shop.tables || []).length > 0;
+  // Kitchen phones ring for new tickets and table help; the counter for everything waiting.
+  const attention = isKitchen ? st.waiting + (st.helpOpen || 0) : st.attention;
   useEffect(() => {
     initOrders(shop.id).then(() => hasTables && refreshOrders().catch(() => {}));
   }, [shop.id, hasTables]);
+  // Every 15 s on screen; every 30 s in the background, so the bell and notifications still come.
   useEffect(() => {
     if (!hasTables) return;
-    const t = setInterval(() => document.visibilityState === "visible" && refreshOrders().catch(() => {}), 15000);
+    let last = 0;
+    const t = setInterval(() => {
+      const gap = document.visibilityState === "visible" ? 15000 : 30000;
+      if (Date.now() - last < gap - 500) return;
+      last = Date.now();
+      refreshOrders().catch(() => {});
+    }, 5000);
     return () => clearInterval(t);
   }, [hasTables]);
-  const prev = useRef(st.attention);
+  const what = () => {
+    const parts = [];
+    if (st.waiting) parts.push(`${st.waiting} new order${st.waiting === 1 ? "" : "s"}`);
+    if (st.helpOpen) parts.push(`${st.helpOpen} table request${st.helpOpen === 1 ? "" : "s"}`);
+    const other = attention - st.waiting - (st.helpOpen || 0);
+    if (!isKitchen && other > 0) parts.push(`${other} bill/payment${other === 1 ? "" : "s"}`);
+    return parts.join(" · ") || `${attention} waiting`;
+  };
+  const ring = (reminder) => {
+    startRinging();
+    if (document.visibilityState !== "visible") notifyOrders(reminder ? `🔔 Still waiting: ${what()}` : `🔔 ${what()}`, `${shop.name}: open Orders to see it.`);
+  };
+  const prev = useRef(attention);
   useEffect(() => {
-    if (st.attention > prev.current) {
-      beep();
-      if (loc.pathname !== "/orders") toast(`🔔 ${st.attention} table request${st.attention === 1 ? "" : "s"} waiting (orders, bills or payments). Open Orders.`);
+    if (attention > prev.current) {
+      ring(false);
+      if (loc.pathname !== "/orders" && !isKitchen) toast(`🔔 ${what()}. Open Orders.`);
     }
-    prev.current = st.attention;
-  }, [st.attention]); // eslint-disable-line react-hooks/exhaustive-deps
-  return { hasTables, waiting: st.attention };
+    if (attention === 0) {
+      clearRinging();
+      clearOrderNotifications();
+    }
+    prev.current = attention;
+  }, [attention]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Opening Orders (or the kitchen screen) means someone is looking: stop ringing.
+  useEffect(() => {
+    if (loc.pathname === "/orders" || (isKitchen && loc.pathname === "/kitchen")) {
+      if (ringerState().ringing) stopRinging();
+      if (document.visibilityState === "visible") clearOrderNotifications();
+    }
+  }, [loc.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The reminder: checked every 15 s.
+  const latest = useRef({ attention, ring });
+  latest.current = { attention, ring };
+  useEffect(() => {
+    const t = setInterval(() => {
+      const { attention: n, ring: r } = latest.current;
+      const due = nextReminderAt({ lastAlertAt: ringerState().lastAlertAt, intervalMin: remindMinutes(), attention: n });
+      if (due && Date.now() >= due && !ringerState().ringing) r(true);
+    }, 15000);
+    return () => clearInterval(t);
+  }, []);
+  return { hasTables, waiting: st.attention, attention, what };
 }
 
 // Page links. `bottom` ones sit in the phone's bottom bar; the rest live in the ☰ More sheet
@@ -231,7 +279,7 @@ function Shell({ children }) {
     window.addEventListener("pointerdown", once);
     return () => window.removeEventListener("pointerdown", once);
   }, []);
-  const { waiting } = useOrderAlerts(shop);
+  const { waiting, attention, what } = useOrderAlerts(shop, isKitchen);
   const loc = useLocation();
   const nav = useNavigate();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -243,7 +291,7 @@ function Shell({ children }) {
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => (setMoreOpen(false), setAlertsOpen(null)), [loc.pathname]);
   const links = useNavLinks({ isAdmin, isKitchen, isManager, paid, waiting, helpUnread, kitchenAlerts });
-  if (loc.pathname === "/kitchen") return <ToastFree>{children}<StaffGate /></ToastFree>;
+  if (loc.pathname === "/kitchen") return <ToastFree><RingBar attention={attention} what={what} kitchen />{children}<StaffGate /></ToastFree>;
   const onTop = links.some((l) => l.top && !l.bottom && (loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
   const inMore = !links.some((l) => l.bottom && (l.to === "/" ? loc.pathname === "/" : loc.pathname === l.to || loc.pathname.startsWith(l.to + "/")));
 
@@ -273,7 +321,7 @@ function Shell({ children }) {
                 </span>
               </NavLink>
             ))}
-          <AlertsButton count={alertCount} open={alertsOpen === "drop"} onClick={() => setAlertsOpen(alertsOpen ? null : "drop")} />
+          <AlertsButton count={alertCount} open={alertsOpen === "drop"} onClick={() => (stopRinging(), setAlertsOpen(alertsOpen ? null : "drop"))} />
           <button type="button" className={"more-btn" + (isKitchen || isManager ? " keep" : "") + (inMore || moreOpen ? " active" : "") + (onTop && !moreOpen ? " on-top" : "")} onClick={() => setMoreOpen(true)} aria-label="More pages">
             <span className="ico" aria-hidden="true">☰</span>
             <span className="lbl">More</span>
@@ -281,6 +329,7 @@ function Shell({ children }) {
           </button>
         </nav>
       </header>
+      {loc.pathname !== "/orders" && <RingBar attention={attention} what={what} />}
       {!isKitchen && !isManager && <AccessBanner access={access} blocked={sync.blocked} />}
       <main className="main">
         <Suspense fallback={<div className="empty">Loading…</div>}>{children}</Suspense>

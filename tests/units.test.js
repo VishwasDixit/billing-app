@@ -154,3 +154,18 @@ describe("opening hours", () => {
     expect(hoursText({ ...h, closedDays: [1] })).toBe("10 am – 9 pm · closed Mon");
   });
 });
+
+import { nextReminderAt } from "../src/lib/ringer.js";
+
+describe("bell reminders", () => {
+  const t0 = Date.parse("2026-10-27T10:00:00Z");
+  it("rings again every N minutes after the last ring or stop, while something waits", () => {
+    expect(nextReminderAt({ lastAlertAt: t0, intervalMin: 5, attention: 2 })).toBe(t0 + 5 * 60e3);
+    expect(nextReminderAt({ lastAlertAt: t0, intervalMin: 2, attention: 1 })).toBe(t0 + 2 * 60e3);
+  });
+  it("never when nothing waits or reminders are off", () => {
+    expect(nextReminderAt({ lastAlertAt: t0, intervalMin: 5, attention: 0 })).toBeNull();
+    expect(nextReminderAt({ lastAlertAt: t0, intervalMin: 0, attention: 3 })).toBeNull();
+    expect(nextReminderAt({ lastAlertAt: 0, intervalMin: 5, attention: 3 })).toBeNull(); // nothing rang yet
+  });
+});

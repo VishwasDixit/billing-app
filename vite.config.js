@@ -33,6 +33,8 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Opens Orders when an order notification is tapped.
+        importScripts: ["notify-sw.js"],
         navigateFallback: "/index.html",
         // A new version takes over open pages straight away (src/main.jsx then reloads them).
         skipWaiting: true,

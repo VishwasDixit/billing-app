@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useOrders, allOrders, setOrderStatus, beep } from "../lib/orders.js";
+import { useOrders, allOrders, setOrderStatus } from "../lib/orders.js";
+import { bell } from "../lib/ringer.js";
 import { useToast } from "../components/ui.jsx";
 import { useOrderPolling, useKotPrinter, ago } from "./Orders.jsx";
 import { RecipeView } from "./kitchen/Recipes.jsx";
@@ -28,11 +29,11 @@ export default function Kitchen() {
   }, []);
 
   const orders = allOrders(st);
-  // Beep when a new order reaches the kitchen.
+  // The bell when a new ticket reaches the kitchen (orders staff took too, not only QR ones).
   const seen = useRef(null);
   useEffect(() => {
     const ids = orders.filter((o) => o.status === "accepted").map((o) => o.clientId);
-    if (seen.current && ids.some((id) => !seen.current.has(id))) beep();
+    if (seen.current && ids.some((id) => !seen.current.has(id))) bell();
     seen.current = new Set(ids);
   }, [orders]);
 

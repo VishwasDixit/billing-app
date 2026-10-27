@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { HELP_ASKS, helpText } from "../../shared/tableHelp.js";
+import { bell } from "../lib/ringer.js";
+import { askNotify, notifyPermission, notifySupported } from "../lib/notify.js";
 import { useNavigate } from "react-router-dom";
 import { get, post } from "../lib/api.js";
 import { useOrders, chime } from "../lib/orders.js";
@@ -51,6 +53,10 @@ export function AlertsPanel({ onClose, isKitchen, isOwner, sheet, onKitchenChang
   const st = useOrders();
   const [kitchen, setKitchen] = useState(null);
   const [sound, setSound] = usePref("alertSound", true);
+  const [bellMode, setBellMode] = usePref("bellMode", "loop");
+  const [remindMin, setRemindMin] = usePref("remindMin", 5);
+  const [notifyOn, setNotifyOn] = usePref("notifyOn", true);
+  const [perm, setPerm] = useState(notifyPermission());
   const [changes, setChanges] = useState(null);
   const load = () => get("/kitchen/alerts").then((r) => setKitchen(r.alerts), () => setKitchen([]));
   useEffect(() => {
@@ -115,9 +121,34 @@ export function AlertsPanel({ onClose, isKitchen, isOwner, sheet, onKitchenChang
           {!kitchen && <div className="empty small">Loading…</div>}
         </div>
         <div className="alerts-foot">
-          <label className="check small">
-            <input type="checkbox" checked={sound} onChange={(e) => (setSound(e.target.checked), e.target.checked && chime())} /> 🔊 Sound on this device
-          </label>
+          <div className="bell-settings">
+            <label className="check small">
+              <input type="checkbox" checked={sound} onChange={(e) => (setSound(e.target.checked), e.target.checked && bell({ force: true }))} /> 🔊 Bell on this device
+            </label>
+            {sound && (
+              <div className="bell-row small">
+                <select value={bellMode} onChange={(e) => setBellMode(e.target.value)} aria-label="Bell style">
+                  <option value="loop">Ring until stopped</option>
+                  <option value="once">Ring once</option>
+                </select>
+                <select value={remindMin} onChange={(e) => setRemindMin(Number(e.target.value))} aria-label="Remind every">
+                  {[2, 5, 10, 15].map((m) => <option key={m} value={m}>Remind every {m} min</option>)}
+                  <option value={0}>No reminders</option>
+                </select>
+                <button className="btn btn-sm" onClick={() => bell({ force: true })}>🔔 Test</button>
+              </div>
+            )}
+            {notifySupported() &&
+              (perm === "granted" ? (
+                <label className="check small">
+                  <input type="checkbox" checked={notifyOn} onChange={(e) => setNotifyOn(e.target.checked)} /> 📲 Notifications when the app isn't on screen
+                </label>
+              ) : perm === "denied" ? (
+                <span className="small muted">📲 Notifications are blocked for this site in the browser settings.</span>
+              ) : (
+                <button className="btn btn-sm" onClick={async () => setPerm(await askNotify())}>📲 Turn on notifications</button>
+              ))}
+          </div>
           <button className="link-btn small" onClick={() => go("/kitchen-manage?tab=alerts")}>All kitchen alerts →</button>
         </div>
       </div>
