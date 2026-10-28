@@ -98,6 +98,7 @@ input, select, textarea, button { font: inherit; color: inherit; }
 
 .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
 .chips::-webkit-scrollbar { display: none; }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }
 .chip { font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; white-space: nowrap; }
 .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 

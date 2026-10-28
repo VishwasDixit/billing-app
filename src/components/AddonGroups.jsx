@@ -112,7 +112,7 @@ function AddonGroupModal({ group, onClose, onSave }) {
           <input className="input" maxLength={40} placeholder="e.g. Sauces, Extra cheese, Choose bread" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus />
         </Field>
         <Field label="Customer picks">
-          <div className="chips">
+          <div className="chips wrap">
             <button type="button" className={"chip" + (mode === "optional" ? " on" : "")} onClick={() => setMode("optional")}>One, if they want</button>
             <button type="button" className={"chip" + (mode === "many" ? " on" : "")} onClick={() => setMode("many")}>Several, if they want</button>
             <button type="button" className={"chip" + (mode === "one" ? " on" : "")} onClick={() => setMode("one")}>Exactly one (must pick)</button>
@@ -144,7 +144,7 @@ function AddonGroupModal({ group, onClose, onSave }) {
         </div>
         <div className="field">
           Use on whole categories
-          <div className="chips">
+          <div className="chips wrap">
             {categories.map((c) => (
               <button type="button" key={c} className={"chip" + (f.categories.includes(c) ? " on" : "")} onClick={() => toggle("categories", c)}>{c}</button>
             ))}
@@ -154,7 +154,7 @@ function AddonGroupModal({ group, onClose, onSave }) {
           And on these dishes
           <input className="input" type="search" placeholder="Search a dish to add…" value={q} onChange={(e) => setQ(e.target.value)} />
           {found.length > 0 && (
-            <div className="chips">
+            <div className="chips wrap">
               {found.map((m) => (
                 <button type="button" key={m.id} className={"chip" + (f.items.includes(m.id) ? " on" : "")} onClick={() => toggle("items", m.id)}>
                   {f.items.includes(m.id) ? "✓ " : "+ "}{m.name}
@@ -163,7 +163,7 @@ function AddonGroupModal({ group, onClose, onSave }) {
             </div>
           )}
           {f.items.length > 0 && (
-            <div className="chips">
+            <div className="chips wrap">
               {f.items.map((id) => {
                 const m = menu.find((x) => x.id === id);
                 return m ? <button type="button" key={id} className="chip on" onClick={() => toggle("items", id)}>{m.name} ✕</button> : null;
