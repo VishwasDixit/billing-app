@@ -17,7 +17,7 @@ import { planName } from "../../shared/plans.js";
 import { useShowPictures } from "../lib/prefs.js";
 import { useTheme } from "../lib/theme.js";
 import { usePref } from "../lib/prefs.js";
-import { downloadTableQrs, orderUrl } from "../lib/tableQr.js";
+import { downloadTableQrs, orderUrl, parseTableNumbers } from "../lib/tableQr.js";
 import { LANGUAGE_OPTIONS, DEFAULT_LANGUAGE, DEFAULT_TEMPLATE, reminderText } from "../../shared/messages.js";
 import {
   printer, bleConnect, bleWrite, shortUuid, saveChannel, savedChannelFor, onPrinterChange, explainPrintError, isIOS, BLUEFY_URL,
@@ -591,8 +591,22 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
   };
   // Many tables: search, and 50 at a time.
   const listed = tables.map((t, i) => [t, i]).filter(([t]) => !q || t.name.toLowerCase().includes(q.toLowerCase()) || t.id.toLowerCase() === q.toLowerCase());
+  // Which tables' QR cards to download: all, or the ones picked.
+  const [qrPick, setQrPick] = usePref("qrPick", "all");
+  const [picked, setPicked] = useState(() => new Set());
+  const [pickQ, setPickQ] = useState("");
+  const [nums, setNums] = useState("");
+  const savedTables = shop.tables || [];
+  const qrTables = qrPick === "all" ? savedTables : savedTables.filter((t) => picked.has(t.id));
   const qrBatches = [];
-  for (let i = 0; i < (shop.tables || []).length; i += QR_BATCH) qrBatches.push([i, Math.min(i + QR_BATCH, shop.tables.length)]);
+  for (let i = 0; i < qrTables.length; i += QR_BATCH) qrBatches.push([i, Math.min(i + QR_BATCH, qrTables.length)]);
+  const pickShown = savedTables.filter((t) => !pickQ || t.name.toLowerCase().includes(pickQ.toLowerCase()));
+  const togglePick = (id) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   const rename = (i, name) => set("tables", tables.map((t, j) => (j === i ? { ...t, name } : t)));
   const remove = (i) => set("tables", tables.filter((_, j) => j !== i));
   const paid = access.state === "paid" || access.state === "admin";
@@ -656,19 +670,49 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
           {!paid && <div className="banner warn" style={{ borderRadius: 8 }}>Customers can order once you're on a paid plan. You can set up and print the QR codes now.</div>}
           {shop.orderToken ? (
             <>
+              <div className="field">
+                Which tables?
+                <Seg value={qrPick} onChange={(v) => (setQrPick(v), setRange(0))} options={[["all", `All tables (${savedTables.length})`], ["pick", "Choose tables"]]} />
+              </div>
+              {qrPick === "pick" && (
+                <div className="qr-pick stack">
+                  <div className="grid2">
+                    <input className="input" inputMode="numeric" placeholder="Numbers, e.g. 1-10, 15" value={nums} onChange={(e) => setNums(e.target.value)} onBlur={() => nums.trim() && (setPicked((prev) => new Set([...prev, ...parseTableNumbers(nums, savedTables)])), setNums(""))} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} aria-label="Table numbers" />
+                    {savedTables.length > 12 && <input className="input" type="search" placeholder="Find a table" value={pickQ} onChange={(e) => setPickQ(e.target.value)} />}
+                  </div>
+                  <div className="chips wrap qr-pick-list">
+                    {pickShown.slice(0, 200).map((t) => (
+                      <button key={t.id} type="button" className={"chip" + (picked.has(t.id) ? " on" : "")} onClick={() => togglePick(t.id)}>
+                        {picked.has(t.id) ? "✓ " : ""}{t.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="btn-row small">
+                    <button type="button" className="link-btn" onClick={() => setPicked((prev) => new Set([...prev, ...pickShown.map((t) => t.id)]))}>Select all shown</button>
+                    <button type="button" className="link-btn" onClick={() => setPicked(new Set())}>Clear</button>
+                    <span className="muted">{picked.size} picked</span>
+                  </div>
+                </div>
+              )}
               <div className="btn-row">
                 {qrBatches.length > 1 && (
-                  <select value={range} onChange={(e) => setRange(Number(e.target.value))} aria-label="Which tables">
+                  <select value={range} onChange={(e) => setRange(Number(e.target.value))} aria-label="Which part">
                     {qrBatches.map(([a, b], k) => (
-                      <option key={k} value={k}>{shop.tables[a].name} – {shop.tables[b - 1].name}</option>
+                      <option key={k} value={k}>{qrTables[a].name} – {qrTables[b - 1].name}</option>
                     ))}
                   </select>
                 )}
-                <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => run(() => downloadTableQrs(shop, shop.tables.slice(...(qrBatches[range] || qrBatches[0])), { part: qrBatches.length > 1 ? range + 1 : 0 }))}>
-                  ⬇️ Download table QR codes (PDF)
+                <button
+                  className="btn btn-primary btn-sm"
+                  disabled={busy || !qrTables.length}
+                  onClick={() => run(() => downloadTableQrs(shop, qrTables.slice(...(qrBatches[range] || qrBatches[0])), { part: qrBatches.length > 1 ? range + 1 : 0 }))}
+                >
+                  ⬇️ Download {qrBatches.length > 1 ? "these" : qrTables.length} QR card{qrTables.length === 1 ? "" : "s"} (PDF)
                 </button>
                 <a className="btn btn-sm" href={orderUrl(shop, shop.tables[0].id)} target="_blank" rel="noopener noreferrer">👀 See customer page</a>
               </div>
+              {qrBatches.length > 1 && <span className="hint">{qrTables.length} cards download {QR_BATCH} at a time so the phone doesn't freeze: pick each part above.</span>}
+              <span className="hint">4 cards per A4 page, with your logo (Settings › Shop) and “scan with camera or Google Lens” steps. The QR codes stay the same as the ones you already printed.</span>
               <div className="order-link">
                 <code>{orderUrl(shop, shop.tables[0].id)}</code>
               </div>

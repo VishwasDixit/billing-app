@@ -1284,3 +1284,5 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .co-past-row > div:first-child { min-width: 0; }
 .co-past-right { display: grid; justify-items: end; gap: 4px; flex-shrink: 0; }
 .co-price-note { background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+.qr-pick { gap: 8px; }
+.qr-pick-list { max-height: 220px; overflow-y: auto; }
