@@ -31,6 +31,14 @@ describe("add-on rules", () => {
     expect(addonKey(["b", "a"])).toBe(addonKey(["a", "b"]));
   });
 
+  it("rejection reasons shown to customers hide staff-only ones", async () => {
+    const { customerReason } = await import("../src/pages/customer/common.js");
+    expect(customerReason("Bill P-6 deleted")).toBe("");
+    expect(customerReason("ok")).toBe("");
+    expect(customerReason("Not paid in 15 minutes")).toBe("Payment wasn't received in time.");
+    expect(customerReason("Kitchen closed")).toBe("Kitchen closed.");
+  });
+
   it("the kitchen ticket prints add-ons and the customer's instructions", async () => {
     const { kotRows } = await import("../src/printer/kot.js");
     const order = { orderNo: "Q1", tableName: "Table 1", source: "qr", createdAt: new Date().toISOString(), items: [{ name: "Burger", qty: 1, rate: 135, addons: [{ name: "Extra cheese", price: 20 }] }], instructions: { cooking: "No onion", delivery: "" } };

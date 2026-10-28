@@ -55,3 +55,12 @@ export function couponNudge(offers, total) {
   if (reached) return { offer: reached, unlocked: true };
   return null;
 }
+
+// Why an order was turned down, in words for the customer. Staff-only reasons (a deleted bill,
+// a two-letter test) are hidden.
+export function customerReason(reason) {
+  const r = String(reason || "").trim();
+  if (r.length < 3 || /^Bill .* deleted$/i.test(r)) return "";
+  if (/^Not paid in \d+ minutes$/i.test(r)) return "Payment wasn't received in time.";
+  return /[.!?]$/.test(r) ? r : `${r}.`;
+}

@@ -1261,3 +1261,25 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .cust-ins { display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; background: var(--warn-soft); border-left: 4px solid var(--warn); font-size: 14px; overflow-wrap: anywhere; }
 .cust-ins .tag { justify-self: start; }
 .cust-ins.big { font-size: 16px; }
+
+/* Customer: My orders list */
+.co-order-head > div { display: grid; gap: 2px; min-width: 0; }
+.co-pill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.co-pill.new { background: var(--warn-soft); color: var(--warn); }
+.co-pill.cook { background: color-mix(in srgb, #2563eb 14%, var(--panel)); color: color-mix(in srgb, #2563eb 80%, var(--text)); }
+.co-pill.ready { background: color-mix(in srgb, var(--good) 15%, var(--panel)); color: var(--good); }
+.co-pill.served, .co-pill.off { background: color-mix(in srgb, var(--muted) 14%, var(--panel)); color: var(--muted); }
+.co-order-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.co-item-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: start; font-size: 14px; }
+.co-item-row.muted { color: var(--muted); }
+.co-item-qty { color: var(--muted); font-weight: 600; }
+.co-item-name small { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+.co-order-foot { display: grid; gap: 4px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.co-order-total { display: flex; justify-content: space-between; align-items: center; font-size: 15px; }
+.co-order.muted { border-left: 3px solid color-mix(in srgb, var(--danger) 55%, var(--panel)); gap: 10px; }
+.co-noactive { display: grid; justify-items: center; gap: 6px; text-align: center; padding: 20px 16px; }
+.co-past { border: 1px solid var(--border); border-radius: 14px; background: var(--panel); overflow: hidden; }
+.co-past-toggle { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: none; border: none; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
+.co-past-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--border); }
+.co-past-row > div:first-child { min-width: 0; }
+.co-past-right { display: grid; justify-items: end; gap: 4px; flex-shrink: 0; }
