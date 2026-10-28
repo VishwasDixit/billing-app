@@ -285,6 +285,18 @@ const appOrigin = (req) => process.env.APP_URL || `${req.headers["x-forwarded-pr
 
 export default [
   // ---------- Public: the customer's phone after scanning a table QR ----------
+  // Open menus check this every few seconds and fetch the menu again only when it changed.
+  [
+    "GET",
+    "/public/shop/:token/menu-version",
+    async ({ db, params }) => {
+      if (!/^[A-Za-z0-9_-]{16,40}$/.test(params.token || "")) throw new HttpError(404, "This QR code isn't valid any more. Please ask the staff.");
+      const shop = await db.collection("shops").findOne({ orderToken: params.token }, { projection: { menuVersion: 1 } });
+      if (!shop) throw new HttpError(404, "This QR code isn't valid any more. Please ask the staff.");
+      return { v: shop.menuVersion || 0 };
+    },
+    { auth: false },
+  ],
   [
     "GET",
     "/public/shop/:token",
@@ -297,6 +309,7 @@ export default [
       // Sold-out dishes are not shown to customers.
       const menu = await db.collection("menuItems").find({ shopId: shop._id, active: { $ne: false }, soldOut: { $ne: true } }).sort({ sort: 1 }).toArray();
       return {
+        menuVersion: shop.menuVersion || 0,
         shop: { name: shop.name, logo: shop.logo || "", currency: shop.currency || "₹", address: shop.address || "" },
         tables: tablesOf(shop).map(({ id, name }) => ({ id, name })),
         ordering: state,

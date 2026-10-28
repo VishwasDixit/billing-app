@@ -3,6 +3,7 @@
 // Table orders count when they reach the kitchen; counter bills count when they upload.
 import { z } from "zod";
 import { useIngredients, returnIngredients } from "./kitchen/inventory.js";
+import { bumpMenu } from "./menuVersion.js";
 
 let clock = () => new Date();
 export function setStockClock(fn) {
@@ -20,9 +21,10 @@ export const StockIn = z.object({
 // Items with a daily amount start each new day full again.
 export async function refreshDailyStock(db, shopId) {
   const today = stockDay();
-  await db.collection("menuItems").updateMany({ shopId, dailyStock: { $gt: 0 }, stockDay: { $ne: today } }, [
+  const r = await db.collection("menuItems").updateMany({ shopId, dailyStock: { $gt: 0 }, stockDay: { $ne: today } }, [
     { $set: { stock: "$dailyStock", soldOut: false, stockDay: today } },
   ]);
+  if (r.modifiedCount) await bumpMenu(db, shopId);
 }
 
 // Takes ordered quantities off counted items; an item that reaches 0 becomes Sold out.
@@ -43,7 +45,8 @@ export async function takeStock(db, shopId, items, ref = {}) {
       updateOne: { filter: { _id: new ObjectId(id), shopId, stock: { $type: "number" } }, update: { $inc: { stock: -qty } } },
     }))
   );
-  await db.collection("menuItems").updateMany({ _id: { $in: ids }, shopId, stock: { $lte: 0 } }, { $set: { stock: 0, soldOut: true } });
+  const out = await db.collection("menuItems").updateMany({ _id: { $in: ids }, shopId, stock: { $lte: 0 } }, { $set: { stock: 0, soldOut: true } });
+  if (out.modifiedCount) await bumpMenu(db, shopId); // something just sold out
 }
 
 // The reverse of takeStock: a bill deleted before the food was made, or edited down.
@@ -61,6 +64,7 @@ export async function putBackStock(db, shopId, items, ref = {}) {
       updateOne: { filter: { _id: new ObjectId(id), shopId, stock: { $type: "number" } }, update: { $inc: { stock: qty }, $set: { soldOut: false } } },
     }))
   );
+  await bumpMenu(db, shopId);
 }
 
 // For a customer's order: refuses sold-out dishes and more than what's left.

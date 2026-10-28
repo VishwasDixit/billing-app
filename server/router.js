@@ -23,6 +23,7 @@ import promoRoutes from "./routes/promos.js";
 import tableHelpRoutes from "./routes/tableHelp.js";
 import pushRoutes from "./routes/push.js";
 import { pushReady } from "./push.js";
+import { bumpMenu, changesMenu } from "./menuVersion.js";
 
 // Each route: [method, "/path/:param", handler, { auth = true, admin = false }]
 const ROUTES = [
@@ -113,6 +114,7 @@ export async function handle(req, res) {
     }
 
     const out = await match.route.handler(ctx);
+    if (ctx.shop && changesMenu(req.method, path)) await bumpMenu(db, ctx.shop._id);
     if (res.writableEnded) return;
     if (out && out.__response) return send(res, out.status, out.data, out.headers);
     if (out && out.__raw) {

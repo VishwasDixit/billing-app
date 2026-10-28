@@ -11,7 +11,7 @@ import { deliveryLine, freeDeliveryGap } from "../../../shared/tableGroups.js";
 import { addonText } from "../../../shared/addons.js";
 import { defaultImageFor } from "../../../shared/menuImages.js";
 
-export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit, onClose, onPlaced, offers, initialCode, cardProps }) {
+export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit, onClose, onPlaced, offers, initialCode, cardProps, priceNote }) {
   const delivery = data.delivery || null;
   const byId = new Map((data.menu || []).map((m) => [m.id, m]));
   // Name and mobile are needed to order; remembered on this phone for next time.
@@ -111,6 +111,7 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
       </header>
 
       <div className="co-cp-body">
+        {priceNote && <div className="co-nudge co-price-note">🔄 {priceNote}</div>}
         <section className="co-cp-card">
           {lines.map((l) => {
             const m = byId.get(l.itemId);

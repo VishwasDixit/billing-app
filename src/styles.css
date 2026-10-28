@@ -1283,3 +1283,4 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .co-past-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--border); }
 .co-past-row > div:first-child { min-width: 0; }
 .co-past-right { display: grid; justify-items: end; gap: 4px; flex-shrink: 0; }
+.co-price-note { background: var(--warn-soft); color: var(--warn); font-weight: 600; }

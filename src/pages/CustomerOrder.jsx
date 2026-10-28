@@ -11,7 +11,7 @@ import { StatusTab } from "./customer/StatusTab.jsx";
 import { HelpTab } from "./customer/HelpTab.jsx";
 import { DEFAULT_HELP } from "../../shared/tableHelp.js";
 import { freeDeliveryGap } from "../../shared/tableGroups.js";
-import { addonsTotal } from "../../shared/addons.js";
+import { addonsTotal, checkAddons } from "../../shared/addons.js";
 
 // The page a customer sees after scanning a table's QR code: menu, cart, their orders and help.
 // Three tabs at the bottom (Menu · My orders · Help), the cart bar just above them.
@@ -36,6 +36,7 @@ export default function CustomerOrder() {
   const [bump, setBump] = useState(0); // the cart bar bounces when something is added
   const device = useMemo(() => deviceKey(), []);
   const [help, setHelp] = useState([]); // this phone's requests to the staff
+  const [priceNote, setPriceNote] = useState(""); // "Prices were updated by the restaurant"
   const top = useRef(null);
 
   const refreshMine = async () => {
@@ -53,22 +54,39 @@ export default function CustomerOrder() {
   useEffect(() => {
     get(menuUrl).then(setData, (e) => setError(e.message));
   }, [menuUrl]);
-  // Table chosen or changed: what's already in the cart takes this table's prices.
+  // The menu changed (the shop edited it, or the table changed): what's in the cart takes the new
+  // prices, and dishes or add-ons no longer offered drop out.
+  const seenVersion = useRef(null);
   useEffect(() => {
     if (!data?.menu) return;
+    const shopChanged = seenVersion.current !== null && seenVersion.current !== data.menuVersion;
+    seenVersion.current = data.menuVersion;
     const byId = new Map(data.menu.map((m) => [m.id, m]));
-    setCart((prev) => {
-      let changed = false;
-      const next = new Map();
-      for (const [k, l] of prev) {
-        const v = byId.get(l.itemId)?.variants.find((x) => (x.label || "") === l.variant);
-        const rate = v ? v.price + addonsTotal(l.addons) : l.rate;
-        if (rate !== l.rate) changed = true;
-        next.set(k, { ...l, rate });
+    const gone = [];
+    let repriced = false;
+    const next = new Map();
+    for (const [k, l] of cart) {
+      const m = byId.get(l.itemId);
+      const v = m?.variants.find((x) => (x.label || "") === l.variant);
+      const { addons, error } = checkAddons(m?.addons, l.addonIds || []);
+      if (!v || error) {
+        gone.push(l.name);
+        continue;
       }
-      return changed ? next : prev;
-    });
-  }, [data]);
+      const rate = v.price + addonsTotal(addons);
+      if (rate !== l.rate) repriced = true;
+      next.set(k, { ...l, rate, addons });
+    }
+    if (gone.length || repriced) setCart(next);
+    if (shopChanged && (gone.length || repriced)) {
+      setPriceNote(gone.length ? `${[...new Set(gone)].join(", ")} ${gone.length > 1 ? "are" : "is"} no longer available and left your cart.` : "Prices were updated by the restaurant.");
+    }
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!priceNote) return;
+    const t = setTimeout(() => setPriceNote(""), 12000);
+    return () => clearTimeout(t);
+  }, [priceNote]);
 
   // Back from Cashfree's payment page (?paid=<order>): ask the server how it went. The webhook
   // may be a moment behind, so check a few times.
@@ -103,12 +121,45 @@ export default function CustomerOrder() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Closed for the night: check again every minute so ordering opens on time.
+  // Live menu: every 15 s, and as soon as the phone comes back to this page, ask whether the shop
+  // changed the menu (a tiny request) and fetch it again only then. Opening hours go by the clock,
+  // so the whole menu is also fetched every 5 minutes (every minute while closed).
+  const dataRef = useRef(null);
+  dataRef.current = data;
   useEffect(() => {
-    if (!data?.ordering?.closedForHours) return;
-    const t = setInterval(() => get(menuUrl).then(setData, () => {}), 60000);
-    return () => clearInterval(t);
-  }, [menuUrl, data?.ordering?.closedForHours]);
+    let fetchedAt = Date.now();
+    let busy = false;
+    const reload = () =>
+      get(menuUrl).then(
+        (d) => {
+          fetchedAt = Date.now();
+          setData(d);
+        },
+        () => {}
+      );
+    const check = async () => {
+      const now = dataRef.current;
+      if (document.hidden || !now || busy) return;
+      busy = true;
+      try {
+        if (Date.now() - fetchedAt > (now.ordering?.closedForHours ? 60e3 : 5 * 60e3)) await reload();
+        else if ((await get(`/public/shop/${token}/menu-version`)).v !== now.menuVersion) await reload();
+      } catch {
+        /* offline: try next time */
+      } finally {
+        busy = false;
+      }
+    };
+    const onShow = () => !document.hidden && check();
+    const t = setInterval(check, 15000);
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("focus", onShow);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("focus", onShow);
+    };
+  }, [menuUrl, token]);
 
   // Keep my recent orders' status fresh.
   useEffect(() => {
@@ -303,8 +354,14 @@ export default function CustomerOrder() {
         )}
       </main>
 
+      {priceNote && count === 0 && tab !== "help" && (
+        <div className="co-cart-wrap">
+          <div className="co-nudge co-price-note">🔄 {priceNote}</div>
+        </div>
+      )}
       {count > 0 && tab !== "help" && (
         <div className="co-cart-wrap">
+          {priceNote && <div className="co-nudge co-price-note">🔄 {priceNote}</div>}
           {data.delivery?.freeFrom > 0 && (
             <div className={"co-nudge" + (deliveryGap ? "" : " done")}>
               {deliveryGap ? (
@@ -399,6 +456,7 @@ export default function CustomerOrder() {
           offers={offers}
           initialCode={offerCode}
           cardProps={{ quickAdd, less }}
+          priceNote={priceNote}
           onPlaced={(o) => {
             const next = [...mine, o];
             setMine(next);

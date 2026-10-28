@@ -148,6 +148,40 @@ export function AppProvider({ children }) {
     })();
   }, [applySession, loadMenu, loadCustomers]);
 
+  // Live menu: every 30 s, and when the app comes back to the front, ask whether the menu or shop
+  // settings changed on another phone (a tiny request); load them again only then.
+  const menuVersion = useRef(null);
+  useEffect(() => {
+    if (!shopId) return;
+    let busy = false;
+    const check = async () => {
+      if (document.hidden || busy) return;
+      busy = true;
+      try {
+        const { v } = await get("/menu-version");
+        if (menuVersion.current !== null && v !== menuVersion.current) {
+          await loadMenu();
+          await applySession(await get("/auth/me"));
+        }
+        menuVersion.current = v;
+      } catch {
+        /* offline: the cached menu stays */
+      } finally {
+        busy = false;
+      }
+    };
+    const onShow = () => !document.hidden && check();
+    check();
+    const t = setInterval(check, 30000);
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("online", onShow);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("online", onShow);
+    };
+  }, [shopId, loadMenu, applySession]);
+
   // Bill-number prefix for this device (A, B, …) so offline devices never clash.
   const ensureDevice = useCallback(async () => {
     let dev = await kvGet("device");

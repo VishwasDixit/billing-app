@@ -311,6 +311,13 @@ export default [
     },
     { kitchen: true },
   ],
+  // Other phones check this and load the menu again only when it changed (see server/menuVersion.js).
+  [
+    "GET",
+    "/menu-version",
+    async ({ shop }) => ({ v: shop.menuVersion || 0 }),
+    { kitchen: true },
+  ],
   // Quick stock change: Sold out switch, quantity left, daily amount.
   [
     "PUT",
