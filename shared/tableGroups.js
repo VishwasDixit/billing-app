@@ -8,6 +8,9 @@ import { round2 } from "./totals.js";
 export const MAX_GROUPS = 20;
 export const CHARGE_CATEGORY = "Charges";
 
+// Can this table order the dish by QR? Dishes with no tables set are for every table.
+export const servedAt = (item, tableId) => !item?.tables?.length || item.tables.includes(tableId);
+
 export const groupOf = (shop, tableId) => (tableId && (shop?.tableGroups || []).find((g) => (g.tables || []).includes(tableId))) || null;
 
 // The price of one size of a dish for this group: its own price if set, else the menu price

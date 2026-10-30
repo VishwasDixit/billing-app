@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../lib/store.jsx";
 import { money } from "../lib/format.js";
-import { Field, Modal, useAction, useToast } from "../components/ui.jsx";
+import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
+import { TableRangePicker } from "../components/TableRangePicker.jsx";
+import { tablesText } from "../../shared/promo.js";
 import { defaultImageFor, isDefaultImage } from "../../shared/menuImages.js";
 import { menuPhoto, sizeOf, fmtBytes } from "../lib/image.js";
 import { ItemPicture } from "../components/ItemPicture.jsx";
@@ -92,6 +94,7 @@ export default function Menu() {
                     <td>
                       {m.name} {m.active === false && <span className="tag">hidden</span>}
                       {m.note && <div className="muted small">{m.note}</div>}
+                      {m.tables?.length > 0 && <div className="muted small">🪑 Only at {tablesText(m.tables, shop.tables)}</div>}
                       {addonGroupsFor(shop.addonGroups, m).length > 0 && <div className="muted small">🧀 {addonGroupsFor(shop.addonGroups, m).map((g) => g.name).join(", ")}</div>}
                     </td>
                     <td className="num">
@@ -127,10 +130,15 @@ export default function Menu() {
 }
 
 function ItemEditor({ item, categories, onClose }) {
-  const { shop, saveMenuItem, deleteMenuItem, setMenuPhoto, removeMenuPhoto, setItemStock } = useApp();
+  const { shop, menu, saveMenuItem, deleteMenuItem, setMenuPhoto, removeMenuPhoto, setItemStock, loadMenu } = useApp();
+  const shopTables = shop.tables || [];
   const [stock, setStock] = useState({ soldOut: !!item.soldOut, stock: item.stock ?? "", dailyStock: item.dailyStock ?? "" });
   const toast = useToast();
-  const [f, setF] = useState({ ...item, variants: item.variants.map((v) => ({ ...v })) });
+  const [f, setF] = useState({ ...item, variants: item.variants.map((v) => ({ ...v })), tables: (item.tables || []).filter((id) => shopTables.some((t) => t.id === id)) });
+  // Who can order it by QR: every table, or only some (e.g. a rooftop special).
+  const [someTables, setSomeTables] = useState(f.tables.length > 0);
+  const [wholeCategory, setWholeCategory] = useState(false);
+  const sameCategory = menu.filter((m) => (m.category || "") === (f.category || "").trim()).length;
   // null = keep, data URL = new photo, "default" = back to the drawn picture, { link } = library photo
   const [photo, setPhoto] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -172,7 +180,13 @@ function ItemEditor({ item, categories, onClose }) {
       const variants = f.variants.map((v) => ({ label: f.variants.length > 1 ? v.label.trim() : "", price: Number(v.price) || 0 }));
       if (variants.length > 1 && variants.some((v) => !v.label)) throw new Error("Give each price a name, e.g. Half / Full.");
       const link = lib ? { image: lib.url, imageCredit: { author: lib.author, url: lib.pexelsUrl } } : {};
-      const saved = await saveMenuItem({ id: f.id, name: f.name, category: f.category, note: f.note || "", variants, active: f.active !== false, ...link });
+      const tables = someTables ? f.tables : [];
+      if (someTables && !tables.length) throw new Error("Pick the tables that can order this, or choose All tables.");
+      const saved = await saveMenuItem({ id: f.id, name: f.name, category: f.category, note: f.note || "", variants, active: f.active !== false, tables, ...link });
+      if (wholeCategory) {
+        await put("/menu/category-tables", { category: f.category.trim(), tables });
+        await loadMenu();
+      }
       try {
         if (lib) {
           /* saved with the item */
@@ -268,6 +282,18 @@ function ItemEditor({ item, categories, onClose }) {
           <p className="small muted" style={{ margin: 0 }}>
             🧀 Add-ons: {addonGroupsFor(shop.addonGroups, f).map((g) => g.name).join(", ") || "none"} · change them with the 🧀 Add-ons button on the Menu page.
           </p>
+        )}
+        {shopTables.length > 0 && (
+          <div className="field">
+            Who can order this by QR?
+            <Seg value={someTables ? "some" : "all"} onChange={(v) => setSomeTables(v === "some")} options={[["all", "All tables"], ["some", "Only some tables"]]} />
+            {someTables && <TableRangePicker tables={shopTables} ids={f.tables} onChange={(ids) => setF({ ...f, tables: ids })} hint={`${f.tables.length} table${f.tables.length === 1 ? "" : "s"}. Customers at other tables won't see this dish. Staff can still add it anywhere.`} />}
+            {f.category.trim() && sameCategory > 1 && (
+              <label className="check small">
+                <input type="checkbox" checked={wholeCategory} onChange={(e) => setWholeCategory(e.target.checked)} /> Same for all {sameCategory} dishes in {f.category.trim()}
+              </label>
+            )}
+          </div>
         )}
         <Field label="Note (optional)" hint="Shown when picking the item, e.g. what a thali includes.">
           <input maxLength={160} value={f.note || ""} onChange={(e) => setF({ ...f, note: e.target.value })} />

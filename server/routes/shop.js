@@ -180,7 +180,15 @@ const MenuItem = z.object({
     .object({ author: z.string().trim().max(100), url: z.string().trim().max(300).refine((u) => u === "" || CREDIT_URL.test(u)) })
     .nullable()
     .optional(),
+  // Only these tables can order it by QR (empty = every table).
+  tables: z.array(z.string().max(20)).max(1000).optional(),
 });
+
+// A dish's tables: only ones the shop has, no repeats.
+const ownTables = (shop, ids) => {
+  const have = new Set((shop.tables || []).map((t) => t.id));
+  return [...new Set(ids)].filter((t) => have.has(t));
+};
 
 // Checks a data URL really is a PNG / JPEG / WebP by its first bytes.
 function decodePhoto(dataUrl) {
@@ -294,6 +302,8 @@ export default [
       if (input.tables || input.tableGroups) {
         const ids = new Set((next.tables || []).map((t) => t.id));
         input.tableGroups = (next.tableGroups || []).map((g) => ({ ...g, tables: g.tables.filter((t) => ids.has(t)) }));
+        // Dishes kept for some tables forget removed ones.
+        if (input.tables) await db.collection("menuItems").updateMany({ shopId: shop._id, "tables.0": { $exists: true } }, { $pull: { tables: { $nin: [...ids] } } });
       }
       const updated = await db
         .collection("shops")
@@ -350,6 +360,7 @@ export default [
     "/menu",
     async ({ db, shop, body }) => {
       const item = MenuItem.parse(body);
+      if (item.tables) item.tables = ownTables(shop, item.tables);
       if (item.sort === undefined) {
         const last = await db.collection("menuItems").find({ shopId: shop._id }).sort({ sort: -1 }).limit(1).next();
         item.sort = (last?.sort ?? -1) + 1;
@@ -362,9 +373,19 @@ export default [
   ],
   [
     "PUT",
+    "/menu/category-tables",
+    async ({ db, shop, body }) => {
+      const input = z.object({ category: z.string().trim().max(30), tables: z.array(z.string().max(20)).max(1000) }).parse(body);
+      const r = await db.collection("menuItems").updateMany({ shopId: shop._id, category: input.category }, { $set: { tables: ownTables(shop, input.tables), updatedAt: new Date() } });
+      return { updated: r.modifiedCount };
+    },
+  ],
+  [
+    "PUT",
     "/menu/:id",
     async ({ db, shop, params, body }) => {
       const item = MenuItem.partial().parse(body);
+      if (item.tables) item.tables = ownTables(shop, item.tables);
       // A picture that isn't a library photo drops the old photo credit.
       if (item.image !== undefined && !isLibraryPhoto(item.image) && item.imageCredit === undefined) item.imageCredit = null;
       const before = await db

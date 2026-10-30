@@ -19,7 +19,7 @@ import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.
 import { storeOpen, hoursText } from "../../shared/hours.js";
 import { helpSettings } from "../../shared/tableHelp.js";
 import { pushToShop, MONEY_ROLES } from "../push.js";
-import { groupOf, groupPrice, deliveryLine, deliveryRule } from "../../shared/tableGroups.js";
+import { groupOf, groupPrice, deliveryLine, deliveryRule, servedAt } from "../../shared/tableGroups.js";
 import { addonGroupsFor, checkAddons, addonsTotal, MAX_LINE_ADDONS } from "../../shared/addons.js";
 import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
 
@@ -303,11 +303,13 @@ export default [
     async ({ db, params, query }) => {
       const shop = await shopByToken(db, params.token);
       // The table's group (far tables): its prices and delivery charge, for this table only.
-      const group = tableById(shop, query.t) ? groupOf(shop, query.t) : null;
+      const tableId = tableById(shop, query.t) ? query.t : "";
+      const group = tableId ? groupOf(shop, tableId) : null;
       const state = await orderingState(db, shop);
       await refreshDailyStock(db, shop._id);
       // Sold-out dishes are not shown to customers.
-      const menu = await db.collection("menuItems").find({ shopId: shop._id, active: { $ne: false }, soldOut: { $ne: true } }).sort({ sort: 1 }).toArray();
+      // Dishes kept for some tables show only at those tables.
+      const menu = (await db.collection("menuItems").find({ shopId: shop._id, active: { $ne: false }, soldOut: { $ne: true } }).sort({ sort: 1 }).toArray()).filter((m) => servedAt(m, tableId));
       return {
         menuVersion: shop.menuVersion || 0,
         shop: { name: shop.name, logo: shop.logo || "", currency: shop.currency || "₹", address: shop.address || "" },
@@ -365,6 +367,8 @@ export default [
       const menuById = new Map(menu.map((m) => [String(m._id), m]));
       const group = groupOf(shop, table.id);
       const items = priceLines(menuById, input.items, group, shop.addonGroups);
+      const notHere = items.find((i) => !servedAt(menuById.get(i.itemId), table.id));
+      if (notHere) throw new HttpError(400, `${notHere.name} is not served at this table. Please refresh the menu.`);
       const stockProblem = checkAvailable(menuById, items);
       if (stockProblem) throw new HttpError(409, stockProblem, { code: "STOCK" });
       const clientId = crypto.randomUUID();

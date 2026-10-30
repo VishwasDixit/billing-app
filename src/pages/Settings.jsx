@@ -16,6 +16,7 @@ import { billQr, qrSvg } from "../../shared/billQr.js";
 import { planName } from "../../shared/plans.js";
 import { useShowPictures } from "../lib/prefs.js";
 import { useTheme } from "../lib/theme.js";
+import { TableRangePicker, tableRuns } from "../components/TableRangePicker.jsx";
 import { usePref } from "../lib/prefs.js";
 import { downloadTableQrs, orderUrl, parseTableNumbers } from "../lib/tableQr.js";
 import { LANGUAGE_OPTIONS, DEFAULT_LANGUAGE, DEFAULT_TEMPLATE, reminderText } from "../../shared/messages.js";
@@ -1309,55 +1310,6 @@ function PromosCard() {
       )}
     </section>
   );
-}
-
-// Chosen tables as chips ("Table 5 – Table 9 ✕") and a from–to picker to add more.
-function TableRangePicker({ tables, ids, onChange, hint }) {
-  const [from, setFrom] = useState(0);
-  const [to, setTo] = useState(Math.min(9, Math.max(0, tables.length - 1)));
-  const addRange = () => {
-    const [a, b] = from <= to ? [from, to] : [to, from];
-    onChange([...new Set([...ids, ...tables.slice(a, b + 1).map((t) => t.id)])]);
-  };
-  return (
-    <>
-      {ids.length > 0 && (
-        <div className="chips">
-          {tableRuns(ids, tables).map(([a, b, run]) => (
-            <span key={a.id} className="chip on">
-              {a === b ? a.name : `${a.name} – ${b.name}`}{" "}
-              <button type="button" className="chip-x" aria-label="Remove these tables" onClick={() => onChange(ids.filter((id) => !run.includes(id)))}>✕</button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="inline range-add">
-        <select value={from} onChange={(e) => setFrom(Number(e.target.value))} aria-label="From table">
-          {tables.map((t, i) => <option key={t.id} value={i}>{t.name}</option>)}
-        </select>
-        <span className="muted">to</span>
-        <select value={to} onChange={(e) => setTo(Number(e.target.value))} aria-label="To table">
-          {tables.map((t, i) => <option key={t.id} value={i}>{t.name}</option>)}
-        </select>
-        <button type="button" className="btn btn-sm" onClick={addRange}>+ Add</button>
-      </div>
-      {hint && <span className="hint">{hint}</span>}
-    </>
-  );
-}
-
-// Chosen table ids as runs in the shop's order: [firstTable, lastTable, ids].
-function tableRuns(ids, tables) {
-  const want = new Set(ids);
-  const runs = [];
-  let run = null;
-  for (const t of tables) {
-    if (want.has(t.id)) {
-      if (run) (run[1] = t), run[2].push(t.id);
-      else runs.push((run = [t, t, [t.id]]));
-    } else run = null;
-  }
-  return runs;
 }
 
 function PromoModal({ promo, cur, onClose, onSaved }) {

@@ -14,7 +14,7 @@ import { printKot } from "../printer/index.js";
 import { explainPrintError } from "../printer/transports.js";
 import { usePref } from "../lib/prefs.js";
 import { storeOpen } from "../../shared/hours.js";
-import { groupOf, groupPrice, deliveryLine } from "../../shared/tableGroups.js";
+import { groupOf, groupPrice, deliveryLine, servedAt } from "../../shared/tableGroups.js";
 import { addonText, addonGroupsFor, addonKey, addonsTotal, lineLabel } from "../../shared/addons.js";
 import { Customize } from "./customer/Customize.jsx";
 
@@ -593,6 +593,7 @@ function OrderPicker({ table, onClose, onPlaced }) {
                   <span className="picker-name">
                     {m.name}{v.label ? ` (${v.label})` : ""}<span className="small muted"> {money(priceOf(m, v), cur)}</span>
                     {groupsOf(m).length > 0 && <span className="small muted"> · 🧀 add-ons</span>}
+                    {!servedAt(m, table.id) && <span className="tag" style={{ marginLeft: 4 }}>not for this table</span>}
                     {m.soldOut ? <span className="tag bad" style={{ marginLeft: 4 }}>sold out</span> : typeof m.stock === "number" && <span className="tag warn" style={{ marginLeft: 4 }}>{m.stock} left</span>}
                   </span>
                   <div className="qty">
