@@ -92,6 +92,7 @@ export default function App() {
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/menu" element={<Menu />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/settings/:section" element={<Settings />} />
             <Route path="/plans" element={<Plans />} />
             <Route path="/help" element={<Help />} />
             <Route path="/orders" element={<Orders />} />

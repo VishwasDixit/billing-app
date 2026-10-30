@@ -554,7 +554,7 @@ export default function Billing() {
           title="Bill saved, but printing failed"
           onClose={() => setPrintError(null)}
           actions={[
-            <Link key="s" className="btn" to="/settings">Printer settings</Link>,
+            <Link key="s" className="btn" to="/settings/printer">Printer settings</Link>,
             <button
               key="r"
               className="btn btn-primary"

@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useApp, accessState } from "../lib/store.jsx";
 import { del, get, post, put } from "../lib/api.js";
 import { fmtDate, money } from "../lib/format.js";
@@ -18,6 +18,7 @@ import { useShowPictures } from "../lib/prefs.js";
 import { useTheme } from "../lib/theme.js";
 import { TableRangePicker, tableRuns } from "../components/TableRangePicker.jsx";
 import { usePref } from "../lib/prefs.js";
+import { matchSetting } from "../lib/settingsSearch.js";
 import { downloadTableQrs, orderUrl, parseTableNumbers } from "../lib/tableQr.js";
 import { LANGUAGE_OPTIONS, DEFAULT_LANGUAGE, DEFAULT_TEMPLATE, reminderText } from "../../shared/messages.js";
 import {
@@ -52,23 +53,51 @@ const pick = (s) => ({
   printer: { ...s.printer },
 });
 
+// The settings list (like Instagram): grouped rows with a search; tapping one opens only that setting.
+// form: the card edits the shared settings form, saved with the Save bar.
+const SECTIONS = [
+  { id: "shop", group: "Your shop", icon: "🏪", title: "Shop profile", desc: "Logo, name, address, phone, GSTIN", keywords: ["logo", "gst", "gstin", "address", "phone", "footer", "bill footer", "name"], form: true, render: (p) => <ShopCard {...p} /> },
+  { id: "hours", group: "Your shop", icon: "🕒", title: "Opening hours", desc: "When customers can order by QR", keywords: ["open", "close", "closed", "holiday", "time", "timing"], form: true, hint: ({ shop }) => (shop.hours?.enabled ? hoursText(shop.hours) : "Always open"), render: (p) => <HoursCard {...p} /> },
+  { id: "account", group: "Your shop", icon: "👤", title: "Account & plan", desc: "Plan, password, log out other devices", keywords: ["password", "subscription", "plan", "payment", "logout", "log out", "devices", "email", "update", "version"], hint: ({ access }) => (access.state === "trial" ? `Trial until ${fmtDate(access.endsAt)}` : access.state === "paid" ? `Plan until ${fmtDate(access.endsAt)}` : access.state === "expired" ? "Plan ended" : ""), render: (p) => <AccountCard {...p} /> },
+
+  { id: "bill", group: "Billing", icon: "🧾", title: "Bill defaults", desc: "GST, discount, customer details", keywords: ["gst", "tax", "discount", "currency", "customer", "name", "phone", "rupee"], form: true, render: (p) => <BillDefaultsCard {...p} /> },
+  { id: "printer", group: "Billing", icon: "🖨️", title: "Printer", desc: "Paper size, Bluetooth, test print", keywords: ["print", "paper", "58mm", "80mm", "bluetooth", "rawbt", "logo", "cut", "test print", "diagnose", "kot"], form: true, hint: ({ shop }) => `${shop.printer?.paperSize || 58} mm`, render: (p) => <PrinterCard {...p} /> },
+  { id: "payqr", group: "Billing", icon: "💳", title: "Payment QR on bills", desc: "UPI QR printed on the bill", keywords: ["upi", "qr", "gpay", "phonepe", "paytm", "payment"], form: true, render: (p) => <QrSettings {...p} /> },
+  { id: "safety", group: "Billing", icon: "🔒", title: "Bill safety", desc: "PIN to edit or delete bills", keywords: ["pin", "delete", "edit", "lock", "security"], render: () => <BillSafetyCard /> },
+  { id: "udhar", group: "Billing", icon: "📒", title: "Udhar reminders", desc: "WhatsApp reminder language and message", keywords: ["whatsapp", "credit", "reminder", "language", "hindi", "message", "due"], form: true, render: (p) => <UdharCard {...p} /> },
+
+  { id: "tables", group: "QR ordering", icon: "🪑", title: "Tables & QR codes", desc: "Tables, QR ordering, download QR cards", keywords: ["table", "qr", "scan", "lens", "pdf", "download", "pay first", "order"], form: true, hint: ({ shop }) => `${(shop.tables || []).length} tables · QR ordering ${shop.qrOrdering ? "on" : "off"}`, render: (p) => <TablesCard {...p} /> },
+  { id: "groups", group: "QR ordering", icon: "🗺️", title: "Table groups", desc: "Own prices and delivery for some tables", keywords: ["delivery", "far", "price", "group", "charge"], show: ({ shop }) => (shop.tables || []).length > 0, render: () => <TableGroupsCard /> },
+  { id: "online", group: "QR ordering", icon: "💰", title: "Online payments", desc: "Cashfree, pay later rules", keywords: ["cashfree", "gateway", "upi", "online", "pay later", "unpaid", "card"], form: true, hint: ({ shop }) => (shop.gateway?.name ? "Connected" : ""), render: (p) => <OnlinePaymentsCard {...p} /> },
+  { id: "help", group: "QR ordering", icon: "🙋", title: "Customer help", desc: "Water, call waiter and other help buttons", keywords: ["help", "water", "waiter", "bell", "call", "napkin"], form: true, render: (p) => <CustomerHelpCard {...p} /> },
+  { id: "promos", group: "QR ordering", icon: "🏷️", title: "Promo codes", desc: "Coupons and offers", keywords: ["coupon", "offer", "discount", "code", "promo"], render: () => <PromosCard /> },
+
+  { id: "menu", group: "Menu & team", icon: "🍽️", title: "Menu & pictures", desc: "Edit dishes, pictures on billing", keywords: ["menu", "dish", "item", "photo", "picture", "price"], render: (p) => <MenuCard {...p} /> },
+  { id: "staff", group: "Menu & team", icon: "👨‍🍳", title: "Kitchen & staff", desc: "Kitchen and staff logins", keywords: ["kitchen", "staff", "login", "waiter", "manager", "device"], show: ({ user }) => user.role !== "admin", render: () => <KitchenStaffCard /> },
+
+  { id: "appearance", group: "This phone", icon: "🌙", title: "Appearance", desc: "Light, dark or auto", keywords: ["dark", "light", "theme", "night", "mode"], render: (p) => <AppearanceCard {...p} /> },
+];
+const OLD_HASH = { tables: "tables", hours: "hours", "online-payments": "online", "customer-help": "help", promos: "promos", "table-groups": "groups" };
+
 export default function Settings() {
   const { shop, user, saveShop, logout } = useApp();
   const toast = useToast();
+  const nav = useNavigate();
+  const { section: openId } = useParams();
   const [f, setF] = useState(() => pick(shop));
+  const [q, setQ] = useState("");
   const [diag, setDiag] = useState(false);
   const [pw, setPw] = useState(false);
-  const [showPictures, setShowPictures] = useShowPictures();
-  const [theme, setTheme] = useTheme();
-  // Opened from "Set up tables": jump to that card.
+  const wide = useWide();
+  // Old links like /settings#tables open that setting.
   useEffect(() => {
-    if (window.location.hash === "#tables") setTimeout(() => document.getElementById("tables")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
-  }, []);
+    const id = OLD_HASH[window.location.hash.slice(1)];
+    if (id) nav(`/settings/${id}`, { replace: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const { busy, error, run } = useAction();
   const access = accessState(shop);
 
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
-  const setP = (k, v) => setF((x) => ({ ...x, printer: { ...x.printer, [k]: v } }));
   const dirty = JSON.stringify(f) !== JSON.stringify(pick(shop));
 
   const save = () =>
@@ -78,6 +107,117 @@ export default function Settings() {
       toast("Settings saved");
     });
 
+  const ctx = { shop, user, f, access };
+  const visible = SECTIONS.filter((s) => !s.show || s.show(ctx));
+  // Wide screens show the first setting beside the list.
+  const open = visible.find((s) => s.id === openId) || (wide ? visible[0] : null);
+  const props = { f, set, setF, shop, saveShop, dirty, access, toast, user, run, logout, onDiag: () => setDiag(true), onPassword: () => setPw(true) };
+
+  const saveBar = dirty && (
+    <div className="set-savebar">
+      <span>Unsaved changes</span>
+      <button className="btn" onClick={() => setF(pick(shop))}>Undo</button>
+      <button className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save changes"}</button>
+    </div>
+  );
+
+  const list = (
+    <SettingsList
+      sections={visible}
+      ctx={ctx}
+      q={q}
+      setQ={setQ}
+      openId={open?.id}
+      onOpen={(id) => nav(`/settings/${id}`, { replace: wide && !!openId })}
+      onLogout={() => confirm("Log out of this device?") && logout()}
+      toast={toast}
+    />
+  );
+
+  return (
+    <div className={"page settings-page" + (open ? " has-open" : "")}>
+      {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+      <div className="set-layout">
+        {(wide || !open) && <div className="set-side">{list}</div>}
+        {open && (
+          <div className="set-main">
+            <div className="set-head">
+              {!wide && <button className="co-back" onClick={() => nav("/settings")} aria-label="Back to settings">←</button>}
+              <h1>{open.icon} {open.title}</h1>
+            </div>
+            <div className="set-body">{open.render(props)}</div>
+          </div>
+        )}
+      </div>
+      {saveBar}
+
+      {diag && <Diagnostics slowMode={f.printer.slowMode} onClose={() => setDiag(false)} />}
+      {pw && <PasswordModal onClose={() => setPw(false)} />}
+    </div>
+  );
+}
+
+function useWide() {
+  const query = "(min-width: 900px)";
+  const [wide, setWide] = useState(() => window.matchMedia?.(query).matches ?? false);
+  useEffect(() => {
+    const m = window.matchMedia?.(query);
+    if (!m) return;
+    const on = () => setWide(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return wide;
+}
+
+function SettingsList({ sections, ctx, q, setQ, openId, onOpen, onLogout, toast }) {
+  const found = sections.filter((s) => matchSetting(s, q));
+  const groups = q.trim() ? [["", found]] : [...new Set(sections.map((s) => s.group))].map((g) => [g, sections.filter((s) => s.group === g)]);
+  return (
+    <div className="set-list">
+      <h1 className="set-title">Settings</h1>
+      <div className="set-search">
+        <input className="input" type="search" placeholder="🔍 Search settings (GST, printer, tables…)" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      {q.trim() && !found.length && <div className="empty">No setting found for “{q.trim()}”.</div>}
+      {groups.map(([g, rows]) => (
+        <div key={g || "found"} className="set-group">
+          {g && <h3>{g}</h3>}
+          <div className="set-rows">
+            {rows.map((s) => {
+              const hint = s.hint?.(ctx);
+              return (
+                <button key={s.id} className={"set-row" + (s.id === openId ? " on" : "")} onClick={() => onOpen(s.id)}>
+                  <span className="set-ico">{s.icon}</span>
+                  <span className="set-text">
+                    <b>{s.title}</b>
+                    <small>{hint || s.desc}</small>
+                  </span>
+                  <span className="set-chev">›</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      {!q.trim() && (
+        <div className="set-group">
+          <div className="set-rows">
+            <button className="set-row danger" onClick={onLogout}>
+              <span className="set-ico">🚪</span>
+              <span className="set-text"><b>Log out</b></span>
+            </button>
+          </div>
+          <p className="small muted set-version">
+            App version {__APP_VERSION__} · <button className="link-btn" onClick={() => checkForUpdate(toast)}>Check for update</button>
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShopCard({ f, set, toast }) {
   const onLogo = async (file) => {
     if (!file) return;
     try {
@@ -86,7 +226,118 @@ export default function Settings() {
       toast("Couldn't read that image. Try a PNG or JPEG.");
     }
   };
+  return (
+    <section className="card stack">
+      <h2>Shop</h2>
+      <div className="logo-pick">
+        <div className="logo-box">{f.logo ? <img src={f.logo} alt="Shop logo" /> : "No logo"}</div>
+        <div className="stack" style={{ gap: 6 }}>
+          <label className="btn btn-sm">
+            {f.logo ? "Change logo" : "Upload logo"}
+            <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => onLogo(e.target.files[0])} />
+          </label>
+          {f.logo && <button className="btn btn-sm btn-ghost" onClick={() => set("logo", "")}>Remove</button>}
+        </div>
+      </div>
+      <Field label="Shop name"><input maxLength={40} value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
+      <Field label="Address"><textarea rows={2} maxLength={160} value={f.address} onChange={(e) => set("address", e.target.value)} /></Field>
+      <div className="grid2">
+        <Field label="Phone"><input maxLength={30} value={f.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
+        <Field label="GST number (GSTIN)" hint="Printed in bold at the top of every bill.">
+          <input maxLength={15} placeholder="e.g. 09ABCDE1234F1Z5" value={f.gstin} onChange={(e) => set("gstin", e.target.value.toUpperCase().replace(/\s/g, ""))} />
+        </Field>
+      </div>
+      <Field label="Bill footer"><input maxLength={80} value={f.footer} onChange={(e) => set("footer", e.target.value)} /></Field>
+    </section>
+  );
+}
 
+function BillDefaultsCard({ f, set }) {
+  return (
+    <section className="card stack">
+      <h2>Bill defaults</h2>
+      <div className="grid2">
+        <Field label="GST %" hint="Applied after discount; printed as CGST + SGST.">
+          <input type="number" min="0" max="100" step="0.01" value={f.gstPercent} onChange={(e) => set("gstPercent", e.target.value)} />
+        </Field>
+        <Field label="Currency symbol"><input maxLength={4} value={f.currency} onChange={(e) => set("currency", e.target.value)} /></Field>
+      </div>
+      <div className="field">
+        Default discount
+        <div style={{ display: "flex", gap: 8 }}>
+          <input className="input" type="number" min="0" step="0.01" value={f.defaultDiscount.value} onChange={(e) => set("defaultDiscount", { ...f.defaultDiscount, value: e.target.value })} />
+          <Seg value={f.defaultDiscount.type} onChange={(v) => set("defaultDiscount", { ...f.defaultDiscount, type: v })} options={[["percent", "%"], ["flat", "Flat"]]} />
+        </div>
+        <span className="hint">You can still change discount and GST on any single bill.</span>
+      </div>
+      <div className="field">
+        Ask for customer name and phone
+        <Seg value={f.askCustomer} onChange={(v) => set("askCustomer", v)} options={[["optional", "Optional"], ["required", "Required"], ["off", "Off"]]} />
+        <span className="hint">
+          {f.askCustomer === "required"
+            ? "A bill can't be saved or printed without the customer. Builds a complete customer list."
+            : f.askCustomer === "off"
+              ? "Only asked for udhar bills."
+              : "The customer box is on every bill; skip it when busy. Name and phone print on the bill and go to your customer list."}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function UdharCard({ f, set, shop }) {
+  return (
+    <section className="card stack">
+      <h2>Udhar reminders</h2>
+      <Field label="Message language" hint="Used for WhatsApp reminders and payment receipts. You can also set a different language for any customer.">
+        <select value={f.reminderLanguage} onChange={(e) => set("reminderLanguage", e.target.value)}>
+          {LANGUAGE_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+        </select>
+      </Field>
+      {f.reminderLanguage === "custom" && (
+        <Field label="Your message" hint="Use {name}, {amount}, {shop} and {upi}. They are filled in for each customer.">
+          <textarea rows={4} maxLength={500} placeholder={DEFAULT_TEMPLATE} value={f.reminderTemplate} onChange={(e) => set("reminderTemplate", e.target.value)} />
+        </Field>
+      )}
+      <div className="field">
+        Preview
+        <pre className="diag-log" style={{ minHeight: 0 }}>{reminderText({ name: "Ramesh", due: 450 }, { ...shop, ...f })}</pre>
+      </div>
+    </section>
+  );
+}
+
+function MenuCard() {
+  const [showPictures, setShowPictures] = useShowPictures();
+  return (
+    <section className="card stack">
+      <h2>Menu</h2>
+      <p className="muted small" style={{ margin: 0 }}>Add, edit or hide items, set Half/Full prices, add photos, add-ons and which tables can order a dish.</p>
+      <Link className="btn" to="/menu">Edit menu</Link>
+      <label className="check">
+        <input type="checkbox" checked={showPictures} onChange={(e) => setShowPictures(e.target.checked)} />
+        Show pictures on the billing screen (this device)
+      </label>
+    </section>
+  );
+}
+
+function AppearanceCard() {
+  const [theme, setTheme] = useTheme();
+  return (
+    <section className="card stack">
+      <h2>Appearance</h2>
+      <div className="field">
+        Theme (this device)
+        <Seg value={theme} onChange={setTheme} options={[["light", "☀️ Light"], ["dark", "🌙 Dark"], ["auto", "📱 Auto"]]} />
+        <span className="hint">Dark is easier on the eyes at night and saves battery on many phones. Auto follows your phone's setting.</span>
+      </div>
+    </section>
+  );
+}
+
+function PrinterCard({ f, setF, shop, onDiag, toast }) {
+  const setP = (k, v) => setF((x) => ({ ...x, printer: { ...x.printer, [k]: v } }));
   const testPrint = async () => {
     const draft = { ...shop, ...f };
     try {
@@ -98,197 +349,77 @@ export default function Settings() {
       if (msg) toast(msg);
     }
   };
-
   return (
-    <div className="page">
-      <div className="page-head">
-        <h1>Settings</h1>
-        <div className="btn-row">
-          {dirty && <button className="btn" onClick={() => setF(pick(shop))}>Undo changes</button>}
-          <button className="btn btn-primary" disabled={!dirty || busy} onClick={save}>
-            {busy ? "Saving…" : "Save settings"}
-          </button>
+    <section className="card stack">
+      <h2>Printer</h2>
+      {isIOS() && !navigator.bluetooth && <IPhonePrintHelp />}
+      <div className="field">
+        Paper size
+        <Seg
+          value={f.printer.paperSize}
+          onChange={(v) => setF((x) => ({ ...x, printer: { ...x.printer, paperSize: v, charsPerLine: PAPER[v].cols } }))}
+          options={[[58, "58 mm"], [80, "80 mm"], [110, "110 mm"]]}
+        />
+      </div>
+      <Field label="Print method">
+        <select value={f.printer.method} onChange={(e) => setP("method", e.target.value)}>
+          <option value="bluetooth">Bluetooth printer (Chrome, Android / computer)</option>
+          <option value="rawbt">RawBT app (Android)</option>
+          <option value="serial">Bluetooth serial (Chrome, computer)</option>
+          <option value="browser">Browser print dialog (installed printer)</option>
+        </select>
+      </Field>
+      <Field label="Characters per line" hint={`Default for ${f.printer.paperSize} mm is ${PAPER[f.printer.paperSize].cols}. Lower it if lines wrap on the test print.`}>
+        <input type="number" min="16" max="80" value={f.printer.charsPerLine} onChange={(e) => setP("charsPerLine", parseInt(e.target.value, 10) || PAPER[f.printer.paperSize].cols)} />
+      </Field>
+      <label className="check"><input type="checkbox" checked={f.printer.printLogo} onChange={(e) => setP("printLogo", e.target.checked)} /> Print logo on bills</label>
+      <label className="check"><input type="checkbox" checked={f.printer.largeText} onChange={(e) => setP("largeText", e.target.checked)} /> Large shop name &amp; total</label>
+      <label className="check"><input type="checkbox" checked={f.printer.slowMode} onChange={(e) => setP("slowMode", e.target.checked)} /> Slow mode (if the printer drops data)</label>
+      <label className="check"><input type="checkbox" checked={f.printer.cut} onChange={(e) => setP("cut", e.target.checked)} /> Cut paper (auto-cutter only)</label>
+      <p className="hint" style={{ margin: 0 }}>Logo and large text use more battery. Turn them off if the printer switches off while printing.</p>
+      <div className="btn-row">
+        <button className="btn" onClick={testPrint}>Test print</button>
+        <button className="btn" onClick={onDiag}>Diagnose printer</button>
+      </div>
+    </section>
+  );
+}
+
+function AccountCard({ user, access, run, toast, logout, onPassword }) {
+  return (
+    <section className="card stack">
+      <h2>Account &amp; plan</h2>
+      <div className="small">
+        <div><b>{user.name}</b> · {user.email}</div>
+        <div className="muted">
+          {access.state === "admin" && "Admin account"}
+          {access.state === "trial" && `Free trial until ${fmtDate(access.endsAt)}`}
+          {access.state === "paid" && `${planName(access.plan)} plan until ${fmtDate(access.endsAt)}`}
+          {access.state === "expired" && "Plan ended"}
         </div>
       </div>
-      {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
-
-      <div className="settings-grid">
-        <div className="cards">
-          <section className="card stack">
-            <h2>Shop</h2>
-            <div className="logo-pick">
-              <div className="logo-box">{f.logo ? <img src={f.logo} alt="Shop logo" /> : "No logo"}</div>
-              <div className="stack" style={{ gap: 6 }}>
-                <label className="btn btn-sm">
-                  {f.logo ? "Change logo" : "Upload logo"}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => onLogo(e.target.files[0])} />
-                </label>
-                {f.logo && <button className="btn btn-sm btn-ghost" onClick={() => set("logo", "")}>Remove</button>}
-              </div>
-            </div>
-            <Field label="Shop name"><input maxLength={40} value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
-            <Field label="Address"><textarea rows={2} maxLength={160} value={f.address} onChange={(e) => set("address", e.target.value)} /></Field>
-            <div className="grid2">
-              <Field label="Phone"><input maxLength={30} value={f.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
-              <Field label="GST number (GSTIN)" hint="Printed in bold at the top of every bill.">
-                <input maxLength={15} placeholder="e.g. 09ABCDE1234F1Z5" value={f.gstin} onChange={(e) => set("gstin", e.target.value.toUpperCase().replace(/\s/g, ""))} />
-              </Field>
-            </div>
-            <Field label="Bill footer"><input maxLength={80} value={f.footer} onChange={(e) => set("footer", e.target.value)} /></Field>
-          </section>
-
-          <section className="card stack">
-            <h2>Bill defaults</h2>
-            <div className="grid2">
-              <Field label="GST %" hint="Applied after discount; printed as CGST + SGST.">
-                <input type="number" min="0" max="100" step="0.01" value={f.gstPercent} onChange={(e) => set("gstPercent", e.target.value)} />
-              </Field>
-              <Field label="Currency symbol"><input maxLength={4} value={f.currency} onChange={(e) => set("currency", e.target.value)} /></Field>
-            </div>
-            <div className="field">
-              Default discount
-              <div style={{ display: "flex", gap: 8 }}>
-                <input className="input" type="number" min="0" step="0.01" value={f.defaultDiscount.value} onChange={(e) => set("defaultDiscount", { ...f.defaultDiscount, value: e.target.value })} />
-                <Seg value={f.defaultDiscount.type} onChange={(v) => set("defaultDiscount", { ...f.defaultDiscount, type: v })} options={[["percent", "%"], ["flat", "Flat"]]} />
-              </div>
-              <span className="hint">You can still change discount and GST on any single bill.</span>
-            </div>
-            <div className="field">
-              Ask for customer name and phone
-              <Seg value={f.askCustomer} onChange={(v) => set("askCustomer", v)} options={[["optional", "Optional"], ["required", "Required"], ["off", "Off"]]} />
-              <span className="hint">
-                {f.askCustomer === "required"
-                  ? "A bill can't be saved or printed without the customer. Builds a complete customer list."
-                  : f.askCustomer === "off"
-                    ? "Only asked for udhar bills."
-                    : "The customer box is on every bill; skip it when busy. Name and phone print on the bill and go to your customer list."}
-              </span>
-            </div>
-          </section>
-
-          <QrSettings f={f} set={set} toast={toast} />
-
-          <section className="card stack">
-            <h2>Udhar reminders</h2>
-            <Field label="Message language" hint="Used for WhatsApp reminders and payment receipts. You can also set a different language for any customer.">
-              <select value={f.reminderLanguage} onChange={(e) => set("reminderLanguage", e.target.value)}>
-                {LANGUAGE_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
-              </select>
-            </Field>
-            {f.reminderLanguage === "custom" && (
-              <Field label="Your message" hint="Use {name}, {amount}, {shop} and {upi}. They are filled in for each customer.">
-                <textarea rows={4} maxLength={500} placeholder={DEFAULT_TEMPLATE} value={f.reminderTemplate} onChange={(e) => set("reminderTemplate", e.target.value)} />
-              </Field>
-            )}
-            <div className="field">
-              Preview
-              <pre className="diag-log" style={{ minHeight: 0 }}>{reminderText({ name: "Ramesh", due: 450 }, { ...shop, ...f })}</pre>
-            </div>
-          </section>
-
-          <section className="card stack">
-            <h2>Menu</h2>
-            <p className="muted small" style={{ margin: 0 }}>Add, edit or hide items, set Half/Full prices and add photos.</p>
-            <Link className="btn" to="/menu">Edit menu</Link>
-            <label className="check">
-              <input type="checkbox" checked={showPictures} onChange={(e) => setShowPictures(e.target.checked)} />
-              Show pictures on the billing screen (this device)
-            </label>
-          </section>
-        </div>
-
-        <div className="cards">
-          <HoursCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} />
-          <OnlinePaymentsCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} />
-          <CustomerHelpCard f={f} set={set} dirty={dirty} />
-          <TablesCard f={f} set={set} shop={shop} saveShop={saveShop} dirty={dirty} access={access} />
-          {(shop.tables || []).length > 0 && <TableGroupsCard />}
-
-          {user.role !== "admin" && <KitchenStaffCard />}
-          <BillSafetyCard />
-          <PromosCard />
-
-          <section className="card stack">
-            <h2>Appearance</h2>
-            <div className="field">
-              Theme (this device)
-              <Seg value={theme} onChange={setTheme} options={[["light", "☀️ Light"], ["dark", "🌙 Dark"], ["auto", "📱 Auto"]]} />
-              <span className="hint">Dark is easier on the eyes at night and saves battery on many phones. Auto follows your phone's setting.</span>
-            </div>
-          </section>
-
-          <section className="card stack">
-            <h2>Printer</h2>
-            {isIOS() && !navigator.bluetooth && <IPhonePrintHelp />}
-            <div className="field">
-              Paper size
-              <Seg
-                value={f.printer.paperSize}
-                onChange={(v) => setF((x) => ({ ...x, printer: { ...x.printer, paperSize: v, charsPerLine: PAPER[v].cols } }))}
-                options={[[58, "58 mm"], [80, "80 mm"], [110, "110 mm"]]}
-              />
-            </div>
-            <Field label="Print method">
-              <select value={f.printer.method} onChange={(e) => setP("method", e.target.value)}>
-                <option value="bluetooth">Bluetooth printer (Chrome, Android / computer)</option>
-                <option value="rawbt">RawBT app (Android)</option>
-                <option value="serial">Bluetooth serial (Chrome, computer)</option>
-                <option value="browser">Browser print dialog (installed printer)</option>
-              </select>
-            </Field>
-            <Field label="Characters per line" hint={`Default for ${f.printer.paperSize} mm is ${PAPER[f.printer.paperSize].cols}. Lower it if lines wrap on the test print.`}>
-              <input type="number" min="16" max="80" value={f.printer.charsPerLine} onChange={(e) => setP("charsPerLine", parseInt(e.target.value, 10) || PAPER[f.printer.paperSize].cols)} />
-            </Field>
-            <label className="check"><input type="checkbox" checked={f.printer.printLogo} onChange={(e) => setP("printLogo", e.target.checked)} /> Print logo on bills</label>
-            <label className="check"><input type="checkbox" checked={f.printer.largeText} onChange={(e) => setP("largeText", e.target.checked)} /> Large shop name &amp; total</label>
-            <label className="check"><input type="checkbox" checked={f.printer.slowMode} onChange={(e) => setP("slowMode", e.target.checked)} /> Slow mode (if the printer drops data)</label>
-            <label className="check"><input type="checkbox" checked={f.printer.cut} onChange={(e) => setP("cut", e.target.checked)} /> Cut paper (auto-cutter only)</label>
-            <p className="hint" style={{ margin: 0 }}>Logo and large text use more battery. Turn them off if the printer switches off while printing.</p>
-            <div className="btn-row">
-              <button className="btn" onClick={testPrint}>Test print</button>
-              <button className="btn" onClick={() => setDiag(true)}>Diagnose printer</button>
-            </div>
-          </section>
-
-          <section className="card stack">
-            <h2>Account &amp; plan</h2>
-            <div className="small">
-              <div><b>{user.name}</b> · {user.email}</div>
-              <div className="muted">
-                {access.state === "admin" && "Admin account"}
-                {access.state === "trial" && `Free trial until ${fmtDate(access.endsAt)}`}
-                {access.state === "paid" && `${planName(access.plan)} plan until ${fmtDate(access.endsAt)}`}
-                {access.state === "expired" && "Plan ended"}
-              </div>
-            </div>
-            <div className="btn-row">
-              <Link className="btn" to="/plans">Plans &amp; payments</Link>
-              <button className="btn" onClick={() => setPw(true)}>Change password</button>
-              <button
-                className="btn"
-                onClick={() =>
-                  confirm("Log out on every other phone and computer? This one stays logged in.") &&
-                  run(async () => {
-                    await post("/auth/logout-others");
-                    toast("Logged out on all other devices");
-                  })
-                }
-              >
-                Log out other devices
-              </button>
-              <button className="btn btn-danger" onClick={() => confirm("Log out of this device?") && logout()}>Log out</button>
-            </div>
-            <div className="small muted">
-              App version {__APP_VERSION__} ·{" "}
-              <button className="link-btn" onClick={() => checkForUpdate(toast)}>Check for update</button>
-            </div>
-          </section>
-        </div>
+      <div className="btn-row">
+        <Link className="btn" to="/plans">Plans &amp; payments</Link>
+        <button className="btn" onClick={onPassword}>Change password</button>
+        <button
+          className="btn"
+          onClick={() =>
+            confirm("Log out on every other phone and computer? This one stays logged in.") &&
+            run(async () => {
+              await post("/auth/logout-others");
+              toast("Logged out on all other devices");
+            })
+          }
+        >
+          Log out other devices
+        </button>
+        <button className="btn btn-danger" onClick={() => confirm("Log out of this device?") && logout()}>Log out</button>
       </div>
-
-      {diag && <Diagnostics slowMode={f.printer.slowMode} onClose={() => setDiag(false)} />}
-      {pw && <PasswordModal onClose={() => setPw(false)} />}
-    </div>
+      <div className="small muted">
+        App version {__APP_VERSION__} ·{" "}
+        <button className="link-btn" onClick={() => checkForUpdate(toast)}>Check for update</button>
+      </div>
+    </section>
   );
 }
 
@@ -355,7 +486,7 @@ function CustomerHelpCard({ f, set, dirty }) {
         </>
       )}
       {!h.enabled && <div className="small muted">The Help tab is hidden. Customers can still order, pay and see their bill.</div>}
-      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save.</p>}
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save changes” at the bottom to save.</p>}
     </section>
   );
 }
@@ -455,7 +586,7 @@ function OnlinePaymentsCard({ f, set, shop, saveShop, dirty }) {
           <option value={3}>3 times</option>
         </select>
       </Field>
-      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save these rules.</p>}
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save changes” at the bottom to save these rules.</p>}
     </section>
   );
 }
@@ -511,7 +642,7 @@ function HoursCard({ f, set, shop, saveShop, dirty }) {
       {error && <div className="error">{error}</div>}
 
       <HoursField hours={f.hours} onChange={(h) => set("hours", h)} />
-      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save the hours.</p>}
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save changes” at the bottom to save the hours.</p>}
     </section>
   );
 }
@@ -664,7 +795,7 @@ function TablesCard({ f, set, shop, saveShop, dirty, access }) {
           </span>
         </div>
       )}
-      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save settings” at the top to save your tables.</p>}
+      {dirty && <p className="hint" style={{ margin: 0 }}>Tap “Save changes” at the bottom to save your tables.</p>}
 
       {saved && f.qrOrdering && !dirty && (
         <div className="stack">

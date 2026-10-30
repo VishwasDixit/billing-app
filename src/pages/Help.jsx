@@ -9,7 +9,7 @@ const FAQ = [
   [
     "The printer won't connect or print",
     <>
-      Turn the printer on and charge it. In <Link to="/settings">Settings</Link> pick the paper size, then tap <b>Test print</b>. On Android use Chrome; if the
+      Turn the printer on and charge it. In <Link to="/settings/printer">Settings › Printer</Link> pick the paper size, then tap <b>Test print</b>. On Android use Chrome; if the
       printer switches off when printing, turn on <b>Slow mode</b> and keep the logo off. Still stuck? Use <b>Diagnostics</b> in Settings and send us a screenshot.
     </>,
   ],
