@@ -68,7 +68,8 @@ export default function Orders() {
   const [adding, setAdding] = useState(null); // table to add an order for
   const [stockOpen, setStockOpen] = useState(false);
   const [tableQ, setTableQ] = useState("");
-  const [busyOnly, setBusyOnly] = useState(false);
+  // Busy tables only by default; "Show all tables" is remembered on this phone.
+  const [showAll, setShowAll] = usePref("tablesShowAll", false);
   const cur = shop.currency || "₹";
   useOrderPolling(5000);
 
@@ -107,10 +108,12 @@ export default function Orders() {
   const shownTables = useMemo(() => {
     let list = tables;
     if (tableQ) list = list.filter((t) => t.name.toLowerCase().includes(tableQ.toLowerCase()));
-    if (busyOnly) list = list.filter((t) => byTable.get(t.id)?.length);
+    // A search looks through every table, so a free one can be found to take an order.
+    if (!showAll && !tableQ) list = list.filter((t) => byTable.get(t.id)?.length);
     else if (tables.length > 40) list = [...list.filter((t) => byTable.get(t.id)?.length), ...list.filter((t) => !byTable.get(t.id)?.length)];
     return list;
-  }, [tables, tableQ, busyOnly, byTable]);
+  }, [tables, tableQ, showAll, byTable]);
+  const busyCount = tables.filter((t) => byTable.get(t.id)?.length).length;
 
   const accept = async (o) => {
     try {
@@ -305,11 +308,16 @@ export default function Orders() {
         </section>
       )}
 
-      <h2 style={{ marginBottom: 8 }}>Tables</h2>
-      {tables.length > 40 && (
+      <h2 style={{ marginBottom: 8 }}>{showAll ? "All tables" : `Busy tables (${busyCount})`}</h2>
+      {tables.length > 0 && (
         <div className="table-tools">
           <input className="input" type="search" placeholder="Find a table" value={tableQ} onChange={(e) => setTableQ(e.target.value)} />
-          <label className="check"><input type="checkbox" checked={busyOnly} onChange={(e) => setBusyOnly(e.target.checked)} /> Busy only</label>
+          <label className="check"><input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show all tables ({tables.length})</label>
+        </div>
+      )}
+      {!shownTables.length && tables.length > 0 && (
+        <div className="empty">
+          {tableQ ? "No table with that name." : <>No busy tables right now. <button className="link-btn" onClick={() => setShowAll(true)}>Show all tables</button> to take an order.</>}
         </div>
       )}
       <div className="table-grid">
