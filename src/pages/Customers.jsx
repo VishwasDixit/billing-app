@@ -1,21 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../lib/store.jsx";
-import { post } from "../lib/api.js";
+import { get, post } from "../lib/api.js";
 import { money } from "../lib/format.js";
-import { Seg, useToast } from "../components/ui.jsx";
+import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
+import { cleanCode, fillName, offerText, promoSummary } from "../../shared/promo.js";
 import { NewCustomer } from "../components/CustomerPicker.jsx";
 import { reminderText, remindedToday, timeAgo, waLink, waNumber } from "../lib/udhar.js";
 
 export default function Customers() {
-  const { customers, shop, loadCustomers, online } = useApp();
+  const { customers, shop, loadCustomers, online, user } = useApp();
   const toast = useToast();
   const nav = useNavigate();
   const cur = shop.currency || "₹";
   const [tab, setTab] = useState("due");
   const [q, setQ] = useState("");
   const [adding, setAdding] = useState(false);
-  const [queue, setQueue] = useState(null); // { list, index, sent }
+  const [queue, setQueue] = useState(null); // { kind: "remind" | "offer", list, index, sent, text? }
+  // Send offer: choosing customers, then the code and message.
+  const [picking, setPicking] = useState(false);
+  const [chosen, setChosen] = useState(() => new Set());
+  const [offering, setOffering] = useState(false);
+  const canOffer = (c) => !!waNumber(c.phone);
 
   useEffect(() => {
     loadCustomers().catch(() => {});
@@ -38,14 +44,28 @@ export default function Customers() {
   const startQueue = (includeToday) => {
     const list = includeToday ? remindable : notToday;
     if (!list.length) return toast(remindable.length ? "Everyone with dues was already reminded today." : "No customers with dues have a phone number.");
-    setQueue({ list, index: 0, sent: 0 });
+    setQueue({ kind: "remind", list, index: 0, sent: 0 });
   };
+  const toggle = (c) =>
+    setChosen((s) => {
+      const n = new Set(s);
+      if (n.has(c.clientId)) n.delete(c.clientId);
+      else n.add(c.clientId);
+      return n;
+    });
+  const shownOk = shown.filter(canOffer);
+  const allShownChosen = shownOk.length > 0 && shownOk.every((c) => chosen.has(c.clientId));
+  const chosenList = customers.filter((c) => chosen.has(c.clientId) && canOffer(c));
+  const stopPicking = () => (setPicking(false), setChosen(new Set()));
 
   return (
     <div className="page">
       <div className="page-head">
         <h1>Udhar</h1>
         <div className="btn-row">
+          {user?.role !== "manager" && !picking && (
+            <button className="btn" onClick={() => (setPicking(true), setTab("all"), setQueue(null))}>🏷 Send offer</button>
+          )}
           <button className="btn btn-wa" disabled={!remindable.length} onClick={() => startQueue(false)}>
             📲 Remind all ({notToday.length})
           </button>
@@ -60,15 +80,17 @@ export default function Customers() {
       </div>
 
       {queue && (
-        <ReminderQueue
+        <SendQueue
           queue={queue}
-          shop={shop}
-          cur={cur}
+          title={queue.kind === "offer" ? "Offer" : "Reminder"}
+          amount={(c) => (queue.kind === "offer" ? "" : money(c.due, cur))}
+          textFor={(c) => (queue.kind === "offer" ? fillName(queue.text, c.name) : reminderText(c, shop))}
+          onOpen={(c) => queue.kind === "remind" && post(`/customers/${c.id}/reminded`).catch(() => {})}
           onChange={setQueue}
           onDone={(sent) => {
             setQueue(null);
-            toast(`Reminders sent: ${sent}`);
-            loadCustomers().catch(() => {});
+            toast(queue.kind === "offer" ? `Offer sent to ${sent} customer${sent === 1 ? "" : "s"}` : `Reminders sent: ${sent}`);
+            if (queue.kind === "remind") loadCustomers().catch(() => {});
           }}
         />
       )}
@@ -81,16 +103,32 @@ export default function Customers() {
         )}
       </div>
 
+      {picking && (
+        <div className="offer-pick">
+          <span>Choose who gets the offer. Customers without a mobile number can't be chosen.</span>
+          <button className="btn btn-sm" disabled={!shownOk.length} onClick={() => setChosen((s) => {
+            const n = new Set(s);
+            for (const c of shownOk) allShownChosen ? n.delete(c.clientId) : n.add(c.clientId);
+            return n;
+          })}>{allShownChosen ? "Unselect shown" : `Select all shown (${shownOk.length})`}</button>
+        </div>
+      )}
+
       <div className="card table-wrap" style={{ padding: 0 }}>
         <table className="table">
-          <thead><tr><th>Customer</th><th>Last activity</th><th className="num">Due</th></tr></thead>
+          <thead><tr>{picking && <th className="pick-col" aria-label="Chosen" />}<th>Customer</th><th>Last activity</th><th className="num">Due</th></tr></thead>
           <tbody>
             {shown.map((c) => (
               <tr
                 key={c.clientId}
-                className="click"
-                onClick={() => (c.id ? nav(`/customers/${c.id}`) : toast(online ? "Still saving this customer, try again in a moment." : "This customer opens after the app is back online."))}
+                className={"click" + (picking && !canOffer(c) ? " no-mobile" : "") + (picking && chosen.has(c.clientId) ? " picked" : "")}
+                onClick={() => picking ? canOffer(c) && toggle(c) : (c.id ? nav(`/customers/${c.id}`) : toast(online ? "Still saving this customer, try again in a moment." : "This customer opens after the app is back online."))}
               >
+                {picking && (
+                  <td className="pick-col">
+                    <input type="checkbox" checked={chosen.has(c.clientId)} disabled={!canOffer(c)} readOnly aria-label={`Choose ${c.name}`} />
+                  </td>
+                )}
                 <td>
                   <b>{c.name}</b> {c.pending && <span className="tag warn">not synced</span>}
                   {c.payLaterBlocked && <span className="tag bad">Must pay first</span>}
@@ -118,6 +156,28 @@ export default function Customers() {
         </p>
       )}
 
+      {picking && (
+        <div className="offer-bar">
+          <span>{chosenList.length} chosen</span>
+          <button className="btn btn-ghost" onClick={stopPicking}>Cancel</button>
+          <button className="btn btn-primary" disabled={!chosenList.length} onClick={() => setOffering(true)}>Next →</button>
+        </div>
+      )}
+
+      {offering && (
+        <OfferModal
+          people={chosenList}
+          shop={shop}
+          cur={cur}
+          onClose={() => setOffering(false)}
+          onReady={(text) => {
+            setOffering(false);
+            setQueue({ kind: "offer", list: chosenList, index: 0, sent: 0, text });
+            stopPicking();
+          }}
+        />
+      )}
+
       {adding && (
         <NewCustomer
           onClose={() => setAdding(false)}
@@ -132,13 +192,15 @@ export default function Customers() {
   );
 }
 
-// Steps through every customer with dues: open WhatsApp with the message ready, tap Send, then Next.
-function ReminderQueue({ queue, shop, cur, onChange, onDone }) {
+// Steps through customers one by one (udhar reminders, or an offer): open WhatsApp with the
+// message ready, tap Send, then Next.
+function SendQueue({ queue, title, amount, textFor, onOpen, onChange, onDone }) {
   const { list, index, sent } = queue;
   const c = list[index];
   const [opened, setOpened] = useState(false);
   useEffect(() => setOpened(false), [index]);
-  const link = waLink(c.phone, reminderText(c, shop));
+  const text = textFor(c);
+  const link = waLink(c.phone, text);
   const next = (didSend) => {
     const s = sent + (didSend ? 1 : 0);
     if (index + 1 >= list.length) onDone(s);
@@ -148,14 +210,14 @@ function ReminderQueue({ queue, shop, cur, onChange, onDone }) {
   return (
     <div className="remind-panel">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-        <b>Reminder {index + 1} of {list.length}</b>
+        <b>{title} {index + 1} of {list.length}</b>
         <button className="btn btn-sm btn-ghost" onClick={() => onDone(sent)}>Stop</button>
       </div>
       <div>
-        <div style={{ fontSize: 18 }}><b>{c.name}</b> · <span className="due-text">{money(c.due, cur)}</span></div>
+        <div style={{ fontSize: 18 }}><b>{c.name}</b>{amount(c) && <> · <span className="due-text">{amount(c)}</span></>}</div>
         <div className="muted small">{c.phone}</div>
       </div>
-      <pre className="diag-log" style={{ minHeight: 0 }}>{reminderText(c, shop)}</pre>
+      <pre className="diag-log" style={{ minHeight: 0 }}>{text}</pre>
       <div className="btn-row">
         <a
           className="btn btn-wa btn-lg"
@@ -165,7 +227,7 @@ function ReminderQueue({ queue, shop, cur, onChange, onDone }) {
           rel="noopener noreferrer"
           onClick={() => {
             setOpened(true);
-            post(`/customers/${c.id}/reminded`).catch(() => {});
+            onOpen(c);
           }}
         >
           Open WhatsApp
@@ -176,5 +238,115 @@ function ReminderQueue({ queue, shop, cur, onChange, onDone }) {
       </div>
       <p className="hint" style={{ margin: 0 }}>Tap “Open WhatsApp”, press Send in WhatsApp, then come back and tap Next.</p>
     </div>
+  );
+}
+
+// No look-alike letters (O/0, I/1), so customers type it right.
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const randomCode = () => "VIP" + Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => CODE_CHARS[b % CODE_CHARS.length]).join("");
+const inDays = (n) => new Date(Date.now() + 5.5 * 3600e3 + n * 864e5).toISOString().slice(0, 10);
+
+// The code for the chosen customers (a new one, or more people for an existing one) and the
+// message they get. Only they can use it: their mobiles are saved with the code.
+function OfferModal({ people, shop, cur, onClose, onReady }) {
+  const [mode, setMode] = useState("new");
+  const [p, setP] = useState(() => ({ code: randomCode(), type: "percent", value: 10, maxDiscount: 100, minOrder: 0, validTo: inDays(7), onePerPhone: true }));
+  const [codes, setCodes] = useState(null);
+  const [pickId, setPickId] = useState("");
+  const [text, setText] = useState("");
+  const [edited, setEdited] = useState(false);
+  const { busy, error, run } = useAction();
+  const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
+  const num = (v) => Math.max(0, Number(v) || 0);
+  const today = inDays(0);
+
+  useEffect(() => {
+    get("/promos").then((r) => setCodes(r.promos.filter((x) => x.active && (!x.validTo || x.validTo >= today))), () => setCodes([]));
+  }, [today]);
+  const picked = codes?.find((x) => x.id === pickId) || null;
+  const promo = mode === "new" ? { ...p, code: cleanCode(p.code), value: num(p.value), maxDiscount: p.type === "percent" ? num(p.maxDiscount) : 0, minOrder: num(p.minOrder) } : picked;
+  const link = promo && shop.qrOrdering && shop.orderToken ? `${window.location.origin}/order/${shop.orderToken}?code=${promo.code}` : "";
+  const auto = promo?.code ? offerText(promo, shop.name, { link, cur }) : "";
+  // The message follows the form until the owner edits it.
+  useEffect(() => {
+    if (!edited) setText(auto);
+  }, [auto, edited]);
+
+  const phones = people.map((c) => c.phone);
+  const send = (e) => {
+    e.preventDefault();
+    run(async () => {
+      if (mode === "new") {
+        await post("/promos", { ...promo, description: "", validFrom: "", active: true, where: "both", showOnMenu: false, phones });
+      } else {
+        if (!picked) throw new Error("Choose a code.");
+        await post(`/promos/${picked.id}/invite`, { phones });
+      }
+      onReady(text);
+    });
+  };
+
+  return (
+    <Modal title={`Offer for ${people.length} customer${people.length === 1 ? "" : "s"}`} onClose={onClose} wide>
+      <form className="stack" onSubmit={send}>
+        <p className="small muted" style={{ margin: 0 }}>{people.slice(0, 6).map((c) => c.name).join(", ")}{people.length > 6 ? ` and ${people.length - 6} more` : ""}</p>
+        <Seg value={mode} onChange={setMode} options={[["new", "New code"], ["existing", "Existing code"]]} />
+        {mode === "new" ? (
+          <>
+            <div className="grid2">
+              <Field label="Code" hint="Only these customers can use it">
+                <input required maxLength={20} pattern="[A-Za-z0-9]{3,20}" value={p.code} onChange={(e) => set("code", e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} style={{ textTransform: "uppercase", fontWeight: 700 }} />
+              </Field>
+              <Field label="Valid until" hint="Last day it works">
+                <input type="date" min={today} value={p.validTo} onChange={(e) => set("validTo", e.target.value)} />
+              </Field>
+            </div>
+            <div className="field">
+              Discount
+              <Seg value={p.type} onChange={(v) => set("type", v)} options={[["percent", "% off"], ["flat", `${cur} off`]]} />
+            </div>
+            <div className="grid2">
+              <Field label={p.type === "percent" ? "Percent off" : `Amount off (${cur})`}>
+                <input type="number" required min="0.01" max={p.type === "percent" ? 100 : undefined} step="0.01" inputMode="decimal" value={p.value} onChange={(e) => set("value", e.target.value)} />
+              </Field>
+              {p.type === "percent" && (
+                <Field label={`Up to (${cur})`} hint="0 = no cap">
+                  <input type="number" min="0" step="1" inputMode="numeric" value={p.maxDiscount} onChange={(e) => set("maxDiscount", e.target.value)} />
+                </Field>
+              )}
+              <Field label={`Minimum order (${cur})`} hint="0 = any order">
+                <input type="number" min="0" step="1" inputMode="numeric" value={p.minOrder} onChange={(e) => set("minOrder", e.target.value)} />
+              </Field>
+            </div>
+            <label className="check"><input type="checkbox" checked={p.onePerPhone} onChange={(e) => set("onePerPhone", e.target.checked)} /> Once per customer</label>
+          </>
+        ) : codes === null ? (
+          <p className="muted small">Loading…</p>
+        ) : codes.length === 0 ? (
+          <p className="muted small">No active codes yet. Make a new one.</p>
+        ) : (
+          <Field label="Code">
+            <select value={pickId} onChange={(e) => setPickId(e.target.value)} required>
+              <option value="">Choose a code…</option>
+              {codes.map((x) => (
+                <option key={x.id} value={x.id}>{x.code} · {promoSummary(x, cur)}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {mode === "existing" && picked && !picked.phones?.length && <p className="hint" style={{ margin: 0, color: "var(--warn)" }}>⚠️ {picked.code} works for anyone who has it, not only these customers.</p>}
+        {promo?.code && (
+          <Field label="Message" hint={"{name} becomes each customer's name."}>
+            <textarea rows={5} value={text} onChange={(e) => (setText(e.target.value), setEdited(true))} />
+          </Field>
+        )}
+        {edited && <button type="button" className="link-btn small" style={{ justifySelf: "start" }} onClick={() => setEdited(false)}>Reset message</button>}
+        {error && <div className="error">{error}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-wa" disabled={busy || !promo?.code || !text.trim()}>{busy ? "Saving…" : mode === "new" ? "Create & start sending" : "Start sending"}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }

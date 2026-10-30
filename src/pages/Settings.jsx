@@ -1192,7 +1192,7 @@ function Diagnostics({ slowMode, onClose }) {
 const BLANK_PROMO = {
   tables: [],
   code: "", description: "", type: "percent", value: 10, maxDiscount: 0, minOrder: 0, validFrom: "", validTo: "", active: true,
-  days: [], timeFrom: "", timeTo: "", maxUses: 0, onePerPhone: false, where: "both", showOnMenu: false,
+  days: [], timeFrom: "", timeTo: "", maxUses: 0, onePerPhone: false, where: "both", showOnMenu: false, phones: [],
 };
 const todayIST = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
 // Table groups: far tables (e.g. QR codes at places that get deliveries) with their own prices
@@ -1409,6 +1409,7 @@ function PromosCard() {
                     <b className="promo-code">{p.code}</b>
                     <span className={"tag " + tone}>{label}</span>
                     {p.showOnMenu && <span className="tag">On menu</span>}
+                    {p.phones?.length > 0 && <span className="tag">🔒 For {p.phones.length} invited customer{p.phones.length === 1 ? "" : "s"}</span>}
                   </div>
                   {p.description && <div className="small">{p.description}</div>}
                   <div className="small muted">{promoSummary(p, cur)} · {WHERE[p.where]}{p.tables?.length ? ` · ${tablesText(p.tables, shop.tables)}` : " · all tables"}</div>
@@ -1529,7 +1530,17 @@ function PromoModal({ promo, cur, onClose, onSaved }) {
           </Field>
         </div>
         <label className="check"><input type="checkbox" checked={p.onePerPhone} onChange={(e) => set("onePerPhone", e.target.checked)} /> Once per mobile number</label>
-        {p.where !== "billing" && (
+        {p.phones.length > 0 && (
+          <div className="field">
+            Who can use it
+            <div className="inline">
+              <span>🔒 Only the {p.phones.length} customer{p.phones.length === 1 ? "" : "s"} it was sent to</span>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => confirm("Let anyone with this code use it?") && set("phones", [])}>Make it open to everyone</button>
+            </div>
+            <span className="hint">Send it to more customers from Customers › Send offer.</span>
+          </div>
+        )}
+        {p.where !== "billing" && !p.phones.length && (
           <label className="check"><input type="checkbox" checked={p.showOnMenu} onChange={(e) => set("showOnMenu", e.target.checked)} /> Show this offer on the customer menu</label>
         )}
         <label className="check"><input type="checkbox" checked={p.active} onChange={(e) => set("active", e.target.checked)} /> Active</label>

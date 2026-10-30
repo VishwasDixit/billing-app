@@ -2,7 +2,7 @@
 // A promo: { code, description, type: "percent"|"flat", value, maxDiscount, minOrder,
 //   validFrom, validTo ("YYYY-MM-DD" or ""), active, days: [0..6] (empty = every day),
 //   timeFrom, timeTo ("HH:MM" or ""), maxUses (0 = no limit), onePerPhone,
-//   where: "both"|"qr"|"billing", showOnMenu, uses }.
+//   where: "both"|"qr"|"billing", showOnMenu, uses, phones: [10-digit mobiles] (empty = anyone) }.
 // Dates, days and times are India time. The discount comes off before GST.
 import { round2 } from "./totals.js";
 
@@ -39,6 +39,7 @@ export function promoSummary(p, cur = "₹") {
   if (hasDays(p)) parts.push(daysText(p.days));
   if (hasTime(p)) parts.push(`${timeText(p.timeFrom)}–${timeText(p.timeTo)}`);
   if (p.onePerPhone) parts.push("once per mobile");
+  if (p.phones?.length) parts.push("for invited customers");
   return parts.join(" · ");
 }
 
@@ -59,7 +60,8 @@ export function tablesText(ids, shopTables = []) {
 }
 
 // table: the table this order or bill is for ("" at the counter). tableNames: tablesText(…) for the message.
-export function checkPromo(p, { subtotal = 0, where = "billing", at = new Date(), usedByPhone = false, cur = "₹", table = "", tableNames = "" } = {}) {
+// phone: the customer's 10-digit mobile, needed for codes sent to invited customers only.
+export function checkPromo(p, { subtotal = 0, where = "billing", at = new Date(), usedByPhone = false, cur = "₹", table = "", tableNames = "", phone = "" } = {}) {
   const no = (reason) => ({ ok: false, reason });
   if (!p || p.archived) return no("That isn't a valid code.");
   if (!p.active) return no("This code is paused right now.");
@@ -78,6 +80,8 @@ export function checkPromo(p, { subtotal = 0, where = "billing", at = new Date()
     if (!inside) return no(`This code works ${timeText(p.timeFrom)}–${timeText(p.timeTo)} only.`);
   }
   if (p.maxUses > 0 && (p.uses || 0) >= p.maxUses) return no("This code has been fully used.");
+  if (p.phones?.length && !phone) return no(where === "billing" ? "This code is for invited customers. Add the customer's mobile on the bill to use it." : "Enter your mobile number to use this code.");
+  if (p.phones?.length && !p.phones.includes(phone)) return no("This code isn't for this mobile number.");
   if (usedByPhone) return no("This code was already used on this mobile number.");
   if (p.minOrder > 0 && subtotal < p.minOrder) return no(`This code is valid on orders of ${rs(p.minOrder, cur)} or more.`);
   let amount = p.type === "flat" ? p.value : (subtotal * p.value) / 100;
@@ -89,3 +93,18 @@ export function checkPromo(p, { subtotal = 0, where = "billing", at = new Date()
 
 // Shown as "Promo WELCOME10" on bills instead of plain "Discount".
 export const promoLabel = (bill) => (bill?.promo?.code ? `Promo ${bill.promo.code}` : "Discount");
+
+// The WhatsApp message for a code sent to chosen customers. link: the order page with the code
+// ("" when the shop doesn't take QR orders: then show it at the counter).
+export function offerText(p, shopName, { link = "", cur = "₹" } = {}) {
+  const off = p.type === "flat" ? `${rs(p.value, cur)} off` : `${p.value}% off${p.maxDiscount > 0 ? ` up to ${rs(p.maxDiscount, cur)}` : ""}`;
+  const extra = [p.minOrder > 0 && `min order ${rs(p.minOrder, cur)}`, p.validTo && `valid till ${dateText(p.validTo)}`].filter(Boolean).join(", ");
+  return [
+    `Hi {name}! 🎁 A special offer from ${shopName}, just for you.`,
+    `Use code *${p.code}* for ${off}${extra ? ` (${extra})` : ""}.`,
+    link ? `Order here: ${link}` : "Show this code at the counter when you pay.",
+  ].join("\n");
+}
+
+// "{name}" in the message becomes the customer's first name.
+export const fillName = (text, name) => String(text).replaceAll("{name}", String(name || "").trim().split(/\s+/)[0] || "there");

@@ -1320,3 +1320,14 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
   .set-side { position: sticky; top: 0; max-height: calc(100vh - 90px); overflow-y: auto; padding-right: 4px; }
   .set-savebar { bottom: 12px; }
 }
+
+/* ---------- Send offer (Customers) ---------- */
+.offer-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; padding: 10px 12px; border: 1px dashed var(--accent); border-radius: 10px; }
+.offer-pick span { flex: 1; min-width: 200px; font-size: 14px; }
+.table .pick-col { width: 36px; padding-right: 0; }
+.table .pick-col input { width: 18px; height: 18px; accent-color: var(--accent); }
+.table tr.picked td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.table tr.no-mobile { opacity: .45; cursor: not-allowed; }
+.offer-bar { position: sticky; bottom: calc(var(--nav-h) + 8px); z-index: 15; display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; box-shadow: 0 4px 18px rgba(0, 0, 0, .12); }
+.offer-bar span { flex: 1; font-weight: 600; }
+@media (min-width: 900px) { .offer-bar { bottom: 12px; } }

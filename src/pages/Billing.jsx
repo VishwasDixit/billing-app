@@ -181,7 +181,7 @@ export default function Billing() {
     if (!code || promoBusy) return;
     setPromoBusy(true);
     try {
-      const r = await post("/promos/check", { code, subtotal: t.subtotal, table: tableBill?.table || "" });
+      const r = await post("/promos/check", { code, subtotal: t.subtotal, table: tableBill?.table || "", phone: customer?.phone || "" });
       setPromo({ code: r.code, amount: r.amount, source: "billing" });
       setPromoCode("");
       toast(`${r.code} applied: −${money(r.amount, cur)}`);
@@ -198,7 +198,7 @@ export default function Billing() {
     if (promo?.source !== "billing") return;
     const id = setTimeout(async () => {
       try {
-        const r = await post("/promos/check", { code: promo.code, subtotal: t.subtotal, table: tableBill?.table || "" });
+        const r = await post("/promos/check", { code: promo.code, subtotal: t.subtotal, table: tableBill?.table || "", phone: customer?.phone || "" });
         if (r.amount !== promo.amount) setPromo({ ...promo, amount: r.amount });
       } catch (err) {
         if (err.offline) return;

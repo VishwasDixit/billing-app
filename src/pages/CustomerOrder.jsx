@@ -28,10 +28,11 @@ export default function CustomerOrder() {
   const [review, setReview] = useState(false);
   const [mine, setMine] = useState(() => loadMine(token));
   const [tab, setTab] = useState(() =>
-    loadMine(token).some((o) => !["rejected", "billed"].includes(o.status) || (o.bill && o.bill.paymentMode === "upi" && !o.bill.paymentConfirmed)) ? "orders" : "menu"
+    !params.get("code") && loadMine(token).some((o) => !["rejected", "billed"].includes(o.status) || (o.bill && o.bill.paymentMode === "upi" && !o.bill.paymentConfirmed)) ? "orders" : "menu"
   );
   const [billAsk, setBillAsk] = useState(false);
-  const [offerCode, setOfferCode] = useState("");
+  // A code sent on WhatsApp comes in the link (?code=…) and is put in the cart's coupon box.
+  const [offerCode, setOfferCode] = useState(() => (params.get("code") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20));
   const [tableQ, setTableQ] = useState("");
   const [bump, setBump] = useState(0); // the cart bar bounces when something is added
   const device = useMemo(() => deviceKey(), []);

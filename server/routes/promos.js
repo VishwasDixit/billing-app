@@ -5,6 +5,10 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 import { HttpError } from "../http.js";
 import { checkPromo, cleanCode, CODE_RE, tablesText } from "../../shared/promo.js";
+import { cleanMobile } from "./customers.js";
+
+// Mobiles a code was sent to (Customers › Send offer): cleaned to 10 digits, bad ones dropped.
+const Phones = z.array(z.string().max(20)).max(5000).transform((l) => [...new Set(l.map(cleanMobile).filter(Boolean))]);
 
 const Day = z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/, "use a date like 2026-12-31");
 const Time = z.string().regex(/^(([01]\d|2[0-3]):[0-5]\d)?$/, "use a time like 15:00");
@@ -28,12 +32,15 @@ const PromoIn = z
     showOnMenu: z.boolean().default(false),
     // Only at these tables (empty = everywhere).
     tables: z.array(z.string().max(20)).max(1000).default([]),
+    // Only these customers can use it (empty = anyone with the code).
+    phones: Phones.default([]),
   })
   .refine((p) => p.type === "flat" || p.value <= 100, { message: "A percentage can't be more than 100.", path: ["value"] })
   .refine((p) => p.type === "percent" || p.value <= 1e6, { message: "That discount is too big.", path: ["value"] })
   .refine((p) => !p.validFrom || !p.validTo || p.validFrom <= p.validTo, { message: "The end date is before the start date.", path: ["validTo"] })
   .refine((p) => !p.timeFrom === !p.timeTo, { message: "Set both the start and end time, or neither.", path: ["timeTo"] })
-  .transform((p) => ({ ...p, days: [...new Set(p.days)].sort(), tables: [...new Set(p.tables)] }));
+  // A code for invited customers isn't advertised on the menu.
+  .transform((p) => ({ ...p, days: [...new Set(p.days)].sort(), tables: [...new Set(p.tables)], showOnMenu: p.showOnMenu && !p.phones.length }));
 
 function checkTables(shop, p) {
   const ids = new Set((shop.tables || []).map((t) => t.id));
@@ -55,7 +62,7 @@ const usedByPhone = async (db, p, phone) => !!(p.onePerPhone && phone && (await 
 // The discount a code gives, or a 400 with the reason.
 export async function promoDiscount(db, shop, code, { subtotal, where, phone, table = "" }) {
   const p = await findPromo(db, shop._id, code);
-  const r = checkPromo(p, { subtotal, where, table, tableNames: tablesText(p.tables, shop.tables), usedByPhone: await usedByPhone(db, p, phone), cur: shop.currency || "₹" });
+  const r = checkPromo(p, { subtotal, where, table, tableNames: tablesText(p.tables, shop.tables), usedByPhone: await usedByPhone(db, p, phone), cur: shop.currency || "₹", phone });
   if (!r.ok) throw new HttpError(400, r.reason, { code: "PROMO" });
   return { promo: p, amount: r.amount };
 }
@@ -96,7 +103,7 @@ export async function releasePromo(db, shopId, ref) {
 // are shown with the offer rather than hiding it).
 export async function menuOffers(db, shop) {
   const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
-  const list = await db.collection("promos").find({ shopId: shop._id, showOnMenu: true, active: true, archived: { $ne: true }, where: { $ne: "billing" } }).limit(10).toArray();
+  const list = await db.collection("promos").find({ shopId: shop._id, showOnMenu: true, active: true, archived: { $ne: true }, where: { $ne: "billing" }, "phones.0": { $exists: false } }).limit(10).toArray();
   return list
     .filter((p) => (!p.validFrom || p.validFrom <= today) && (!p.validTo || p.validTo >= today) && !(p.maxUses > 0 && p.uses >= p.maxUses))
     .map((p) => ({ code: p.code, description: p.description, type: p.type, value: p.value, maxDiscount: p.maxDiscount, minOrder: p.minOrder, days: p.days, timeFrom: p.timeFrom, timeTo: p.timeTo, onePerPhone: p.onePerPhone, tables: p.tables || [] }));
@@ -155,13 +162,27 @@ export default [
       return { ok: true };
     },
   ],
+  // Customers › Send offer with an existing code: more customers can use an invite-only code.
+  [
+    "POST",
+    "/promos/:id/invite",
+    async ({ db, shop, params, body }) => {
+      const cur = await byId(db, shop, params.id);
+      if (!cur) throw new HttpError(404, "Code not found.");
+      const { phones } = z.object({ phones: Phones }).parse(body);
+      if (!cur.phones?.length) return { promo: publicPromo(cur) }; // already open to everyone
+      if (new Set([...cur.phones, ...phones]).size > 5000) throw new HttpError(400, "A code can be sent to up to 5000 customers.");
+      const u = await db.collection("promos").findOneAndUpdate({ _id: cur._id }, { $addToSet: { phones: { $each: phones } }, $set: { updatedAt: new Date() } }, { returnDocument: "after" });
+      return { promo: publicPromo(u) };
+    },
+  ],
   // Staff at Billing: what this code takes off this subtotal.
   [
     "POST",
     "/promos/check",
     async ({ db, shop, body }) => {
-      const { code, subtotal, table } = z.object({ code: z.string().max(40), subtotal: z.number().min(0).max(1e8), table: z.string().max(20).optional().default("") }).parse(body);
-      const { promo, amount } = await promoDiscount(db, shop, code, { subtotal, where: "billing", table });
+      const { code, subtotal, table, phone } = z.object({ code: z.string().max(40), subtotal: z.number().min(0).max(1e8), table: z.string().max(20).optional().default(""), phone: z.string().max(20).optional().default("") }).parse(body);
+      const { promo, amount } = await promoDiscount(db, shop, code, { subtotal, where: "billing", table, phone: cleanMobile(phone) || "" });
       return { code: promo.code, amount, description: promo.description };
     },
     { manager: true },

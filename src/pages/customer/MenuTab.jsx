@@ -98,6 +98,9 @@ export function MenuTab({ data, cur, offers, offerCode, setOfferCode, q, setQ, c
   return (
     <div className="co-menu-tab">
       {data.delivery && <div className="co-delivery">{deliveryText(data.delivery, cur)}</div>}
+      {offerCode && !offers.some((o) => o.code === offerCode) && data.ordering.open && (
+        <div className="co-nudge done"><span>🎁 Your code <b>{offerCode}</b> will be applied at checkout</span></div>
+      )}
       {offers.length > 0 && data.ordering.open && (
         <div className="co-offers">
           {offers.map((o) => (
