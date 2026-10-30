@@ -319,6 +319,7 @@ export default function Orders() {
           const ready = list.some((o) => o.status === "ready");
           const since = list[0]?.createdAt;
           const billReq = list.find((o) => o.billRequest)?.billRequest;
+          const who = list.find((o) => o.customerName);
           return (
             <button key={t.id} className={"table-tile" + (list.length ? (ready ? " ready" : " busy") : "") + (billReq ? " wants-bill" : "")} onClick={() => setTableId(t.id)}>
               <b>{t.name}</b>
@@ -326,6 +327,7 @@ export default function Orders() {
                 <>
                   <span>{money(total, cur)}</span>
                   <span className="small">{list.length} order{list.length === 1 ? "" : "s"} · {ago(since)}</span>
+                  {who && <span className="small table-who">👤 {who.customerName}</span>}
                   {ready && <span className="tag good">food ready</span>}
                   {billReq && <span className="tag warn">🧾 Bill · {billReq.method === "upi" ? "UPI" : billReq.method === "paid" ? "all paid ✓" : "Counter"}</span>}
                 </>
@@ -400,6 +402,23 @@ export default function Orders() {
   );
 }
 
+// Who ordered at this table (QR customers), with a tap-to-call number.
+function TableContacts({ orders }) {
+  const seen = new Map();
+  for (const o of orders) if (o.customerName || o.customerPhone) seen.set(o.customerPhone || o.customerName, o);
+  if (!seen.size) return null;
+  return (
+    <div className="table-contacts">
+      {[...seen.values()].map((o) => (
+        <div key={o.clientId} className="order-top">
+          <span>👤 <b>{o.customerName || "Customer"}</b></span>
+          {o.customerPhone && <a className="btn btn-sm" href={`tel:${o.customerPhone}`}>📞 {o.customerPhone.replace(/(\d{5})(\d{5})/, "$1 $2")}</a>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
   const toast = useToast();
   const unbilled = orders.filter((o) => !o.billClientId);
@@ -423,6 +442,7 @@ function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
               : `The customer asked for the bill · will pay ${orders.find((o) => o.billRequest).billRequest.method === "upi" ? "online by UPI" : "at the counter"}`}
           </div>
         )}
+        <TableContacts orders={orders} />
         {orders.map((o) => (
           <div key={o.clientId} className="order-line">
             <div className="order-top">
@@ -432,6 +452,7 @@ function TableSheet({ table, orders, cur, onClose, onAdd, onBill, onReprint }) {
               </span>
               <span className="small muted">{o.source === "qr" ? "QR" : "Staff"} · {ago(o.createdAt)} · {money(o.total, cur)}</span>
             </div>
+            {o.customerName && <div className="small muted">For {o.customerName}</div>}
             <div className="small">{itemsText(o)}</div>
             <PayChip o={o} cur={cur} />
             <div className="btn-row">

@@ -1286,3 +1286,6 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .co-price-note { background: var(--warn-soft); color: var(--warn); font-weight: 600; }
 .qr-pick { gap: 8px; }
 .chips.wrap.qr-pick-list { max-height: 240px; overflow-y: auto; align-content: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 10px; }
+
+.table-who { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-contacts { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
