@@ -2,12 +2,22 @@
 // game load only when opened, so the menu stays quick; the app caches them for offline play.
 // A bar on top keeps showing the order's progress.
 import { Suspense, lazy, useEffect, useState } from "react";
+import { isMuted, setMuted, sfx } from "./sound.js";
 
 const GAMES = [
   { id: "race", icon: "🛵", name: "Tiffin Dash", Game: lazy(() => import("./Racer.jsx")) },
   { id: "ludo", icon: "🎲", name: "Ludo", Game: lazy(() => import("./Ludo.jsx")) },
+  { id: "snake", icon: "🐍", name: "Snake", Game: lazy(() => import("./Snake.jsx")) },
+  { id: "pong", icon: "🏓", name: "Ping Pong", Game: lazy(() => import("./PingPong.jsx")) },
   { id: "chess", icon: "♟️", name: "Chess", Game: lazy(() => import("./Chess.jsx")) },
 ];
+const BLURB = {
+  race: "Dodge cars, autos and cows on a winding road",
+  ludo: "Race your 4 tokens home vs the computer",
+  snake: "The old-phone classic: eat, grow, don't bite your tail",
+  pong: "Table tennis: drag your bat, angle your shots",
+  chess: "Play white against the computer",
+};
 
 export default function Games({ onClose, status }) {
   const [pick, setPick] = useState(() => {
@@ -18,7 +28,14 @@ export default function Games({ onClose, status }) {
     }
   });
   const game = GAMES.find((g) => g.id === pick);
+  const [quiet, setQuiet] = useState(isMuted);
+  const toggleSound = () => {
+    setMuted(!quiet);
+    setQuiet(!quiet);
+    if (quiet) sfx.blip();
+  };
   const choose = (id) => {
+    sfx.blip();
     setPick(id);
     try {
       localStorage.setItem("coGame", id);
@@ -46,6 +63,7 @@ export default function Games({ onClose, status }) {
             </button>
           ))}
         </div>
+        <button className="gm-x gm-sound" onClick={toggleSound} aria-label={quiet ? "Sound on" : "Sound off"} aria-pressed={!quiet}>{quiet ? "🔇" : "🔊"}</button>
       </header>
       {status && (
         <button className={`gm-status ${status.tone || ""}`} onClick={close} aria-live="polite">
@@ -69,11 +87,11 @@ export default function Games({ onClose, status }) {
                 <span className="gm-pick-icon" aria-hidden="true">{g.icon}</span>
                 <span>
                   <b>{g.name}</b>
-                  <small>{g.id === "race" ? "Dodge the traffic, grab the samosas" : g.id === "ludo" ? "Race your 4 tokens home vs the computer" : "Play white against the computer"}</small>
+                  <small>{BLURB[g.id]}</small>
                 </span>
               </button>
             ))}
-            <span className="small muted">Works offline too. We'll show you here when your order moves along.</span>
+            <span className="small muted">With sound (tap 🔊 to mute). Works offline too. We'll show you here when your order moves along.</span>
           </div>
         )}
       </main>

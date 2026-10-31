@@ -249,3 +249,29 @@ export function bestMove(s, level = 2, random = Math.random) {
   scored.sort((a, b) => b.v - a.v);
   return scored[0].m;
 }
+
+// A move in the usual short notation (e4, Nxf3, O-O, e8=Q+, Qh5#), for the move list.
+export function san(s, m, moves = legalMoves(s)) {
+  let out;
+  if (m.castle) out = m.castle === "k" ? "O-O" : "O-O-O";
+  else {
+    const t = m.piece.toUpperCase();
+    const to = sqName(m.to);
+    if (t === "P") out = (m.captured ? `${sqName(m.from)[0]}x` : "") + to + (m.promo ? `=${m.promo.toUpperCase()}` : "");
+    else {
+      // Another piece of the same kind could go there too: say which one.
+      const rivals = moves.filter((o) => o.piece === m.piece && o.to === m.to && o.from !== m.from);
+      let which = "";
+      if (rivals.length) {
+        const f = sqName(m.from);
+        if (!rivals.some((o) => sqName(o.from)[0] === f[0])) which = f[0];
+        else if (!rivals.some((o) => sqName(o.from)[1] === f[1])) which = f[1];
+        else which = f;
+      }
+      out = t + which + (m.captured ? "x" : "") + to;
+    }
+  }
+  const after = makeMove(s, m);
+  if (inCheck(after)) out += legalMoves(after).length ? "+" : "#";
+  return out;
+}

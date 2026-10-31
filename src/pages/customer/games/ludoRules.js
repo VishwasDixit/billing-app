@@ -124,6 +124,14 @@ export function moveToken(g, i) {
   return nextTurn(g2);
 }
 
+// The squares a token passes through, one hop each (from home it pops onto its start square).
+export function hopPath(from, to) {
+  if (from === -1) return [0];
+  const path = [];
+  for (let p = from + 1; p <= to; p++) path.push(p);
+  return path;
+}
+
 // Opponent tokens that could land on shared square `at` with one roll (1–6).
 function danger(g, color, at) {
   if (at < 0 || SAFE.has(at)) return 0;

@@ -101,3 +101,81 @@ describe("Ludo rules (games while waiting)", () => {
     expect(computerChoice(g)).toBe(0);
   });
 });
+
+import { san } from "../src/pages/customer/games/chessEngine.js";
+import { hopPath } from "../src/pages/customer/games/ludoRules.js";
+import { newSnake, turn, step } from "../src/pages/customer/games/snakeRules.js";
+import { bounceOff, sideWalls, pointTo, winner, MAX_SPEED } from "../src/pages/customer/games/pongRules.js";
+
+describe("chess move list (SAN)", () => {
+  const sanOf = (fen, from, to, promo) => {
+    const s = fromFen(fen);
+    return san(s, legalMoves(s).find((m) => m.from === sq(from) && m.to === sq(to) && (!promo || m.promo === promo)));
+  };
+  it("writes moves the usual way", () => {
+    expect(sanOf(undefined, "e2", "e4")).toBe("e4");
+    expect(sanOf(undefined, "g1", "f3")).toBe("Nf3");
+    expect(sanOf("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1", "g1")).toBe("O-O");
+    expect(sanOf("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1", "c1")).toBe("O-O-O");
+    expect(sanOf("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "e4", "d5")).toBe("exd5");
+    expect(sanOf("7k/P7/8/8/8/8/8/K7 w - - 0 1", "a7", "a8", "Q")).toBe("a8=Q+");
+    expect(sanOf("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1", "a1", "a8")).toBe("Ra8#");
+    // two knights can reach d2: say which one
+    expect(sanOf("4k3/8/8/8/8/8/8/1N2KN2 w - - 0 1", "b1", "d2")).toBe("Nbd2");
+  });
+});
+
+describe("Ludo hops", () => {
+  it("hops square by square, and pops out of home onto the start square", () => {
+    expect(hopPath(-1, 0)).toEqual([0]);
+    expect(hopPath(4, 8)).toEqual([5, 6, 7, 8]);
+  });
+});
+
+describe("Snake rules", () => {
+  const rand = () => 0;
+  it("moves, turns (never straight back) and grows when it eats", () => {
+    let s = newSnake(10, 10, { rand });
+    s = { ...s, food: { x: 6, y: 5 } };
+    expect(turn(s, "left")).toBe(s); // reversing is ignored
+    s = step(s, rand);
+    expect(s.body[0]).toEqual({ x: 6, y: 5 });
+    expect(s.body).toHaveLength(4);
+    expect(s.events).toContain("eat");
+    expect(s.score).toBe(10);
+    s = step(turn(s, "down"), rand);
+    expect(s.body[0]).toEqual({ x: 6, y: 6 });
+    expect(s.body).toHaveLength(4);
+  });
+  it("wraps through walls, or ends on them with wrap off", () => {
+    let s = { ...newSnake(10, 10, { rand }), body: [{ x: 9, y: 2 }, { x: 8, y: 2 }, { x: 7, y: 2 }], food: { x: 0, y: 0 } };
+    expect(step(s, rand).body[0]).toEqual({ x: 0, y: 2 });
+    s = { ...s, wrap: false };
+    expect(step(s, rand).over).toBe(true);
+  });
+  it("ends when it bites itself", () => {
+    const s = { ...newSnake(10, 10, { rand }), body: [{ x: 5, y: 5 }, { x: 5, y: 6 }, { x: 4, y: 6 }, { x: 4, y: 5 }, { x: 4, y: 4 }], dir: "up", food: { x: 0, y: 0 } };
+    expect(step(turn(s, "left"), rand).over).toBe(true);
+  });
+});
+
+describe("Ping Pong physics", () => {
+  it("angles the ball by where it hits the bat, a bit faster each time", () => {
+    const mid = bounceOff({ speed: 1 }, 0, true);
+    expect(mid.vx).toBeCloseTo(0);
+    expect(mid.vy).toBeLessThan(0);
+    const edge = bounceOff({ speed: 1 }, 1, true);
+    expect(edge.vx).toBeGreaterThan(0.8);
+    expect(edge.speed).toBeGreaterThan(1);
+    expect(bounceOff({ speed: 99 }, 0, false).speed).toBe(MAX_SPEED);
+  });
+  it("bounces off the sides and scores past the ends", () => {
+    expect(sideWalls(-0.01, -1, 0.02)).toMatchObject({ vx: 1, hit: true });
+    expect(pointTo(-0.1)).toBe("me");
+    expect(pointTo(1.1)).toBe("cpu");
+    expect(pointTo(0.5)).toBe(null);
+    expect(winner(7, 5)).toBe("me");
+    expect(winner(7, 6)).toBe(null);
+    expect(winner(9, 11)).toBe("cpu");
+  });
+});

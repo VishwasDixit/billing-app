@@ -55,10 +55,10 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
 
       {waiting && onGames && (
         <button className="gm-open-btn" onClick={onGames}>
-          <span className="gm-open-icons" aria-hidden="true">🛵🎲♟️</span>
+          <span className="gm-open-icons" aria-hidden="true">🛵🎲🐍</span>
           <span>
             <b>Play while you wait</b>
-            <small>Tiffin Dash, Ludo or chess. We'll tell you when your food moves along.</small>
+            <small>Tiffin Dash, Ludo, Snake, Ping Pong or chess. We'll tell you when your food moves along.</small>
           </span>
           <span className="gm-open-go">Play →</span>
         </button>
