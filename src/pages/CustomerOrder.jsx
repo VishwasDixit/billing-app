@@ -203,6 +203,12 @@ export default function CustomerOrder() {
     }
   }, [tab, newReply]);
 
+  // The tab (and a saved link) shows the shop's name, not the app's.
+  const shopName = data?.shop.name;
+  useEffect(() => {
+    if (shopName) document.title = shopName;
+  }, [shopName]);
+
   const table = data?.tables.find((t) => t.id === tableId);
   // Offers for this table only (some codes are for some tables).
   const offers = (data?.offers || []).filter((o) => !o.tables?.length || o.tables.includes(tableId));

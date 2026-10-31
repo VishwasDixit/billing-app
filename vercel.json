@@ -14,6 +14,17 @@
       "destination": "/api?path=:path*"
     },
     {
+      "source": "/order/:token",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(whatsapp|facebookexternalhit|facebot|twitterbot|telegrambot|slackbot|discordbot|linkedinbot|skypeuripreview|pinterest|redditbot).*"
+        }
+      ],
+      "destination": "/api?path=share/order/:token"
+    },
+    {
       "source": "/((?!api|assets|.*\\..*).*)",
       "destination": "/index.html"
     }

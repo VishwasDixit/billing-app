@@ -21,6 +21,7 @@ import kitchenRoutes from "./routes/kitchen.js";
 import staffRoutes from "./routes/staff.js";
 import promoRoutes from "./routes/promos.js";
 import loyaltyRoutes from "./routes/loyalty.js";
+import shareRoutes from "./routes/share.js";
 import tableHelpRoutes from "./routes/tableHelp.js";
 import pushRoutes from "./routes/push.js";
 import { pushReady } from "./push.js";
@@ -44,6 +45,7 @@ const ROUTES = [
   ...staffRoutes,
   ...promoRoutes,
   ...loyaltyRoutes,
+  ...shareRoutes,
   ...tableHelpRoutes,
   ...pushRoutes,
 ].map(([method, path, handler, opts = {}]) => {

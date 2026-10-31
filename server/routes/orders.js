@@ -283,7 +283,7 @@ async function popularItems(db, shop, menu) {
 }
 
 // Where Cashfree sends the customer back, and its webhook: this app's own address.
-const appOrigin = (req) => process.env.APP_URL || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers["x-forwarded-host"] || req.headers.host}`;
+export const appOrigin = (req) => process.env.APP_URL || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers["x-forwarded-host"] || req.headers.host}`;
 
 export default [
   // ---------- Public: the customer's phone after scanning a table QR ----------
