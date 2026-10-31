@@ -18,7 +18,7 @@ export function sharePage({ origin, url, shop, token, code }) {
     ? "Order from your table."
     : code
       ? `🎁 Your code ${code} is ready. Tap to order.`
-      : `Order online from ${shop.name}${shop.address ? ` · ${shop.address}` : ""}`;
+      : `Order online from ${shop.name}${shop.address ? ` · ${shop.address}` : ""}`.replace(/\s+/g, " ");
   const image = shop?.logo
     ? `${origin}/api/public/shop/${token}/logo?v=${crypto.createHash("sha1").update(shop.logo).digest("hex").slice(0, 10)}`
     : `${origin}/apple-touch-icon.png`;
@@ -51,7 +51,7 @@ export default [
       const shop = await findShop(db, params.token);
       const origin = appOrigin(req).replace(/\/$/, "");
       const code = /^[A-Za-z0-9_-]{2,30}$/.test(query.code || "") ? query.code.toUpperCase() : "";
-      const qs = new URLSearchParams(Object.entries(query).filter(([k]) => k !== "path")).toString();
+      const qs = new URLSearchParams(Object.entries(query).filter(([k]) => k !== "path" && k !== "token")).toString();
       const url = `${origin}/order/${encodeURIComponent(params.token)}${qs ? `?${qs}` : ""}`;
       const html = sharePage({ origin, url, shop, token: params.token, code });
       return respondRaw(200, Buffer.from(html), { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=0, s-maxage=600" });
