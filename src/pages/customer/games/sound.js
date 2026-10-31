@@ -1,4 +1,4 @@
-// Little chiptune sound effects for the games, made on the fly with Web Audio (no sound files,
+// Soft little sound effects for the games, made on the fly with Web Audio (no sound files,
 // so they work offline). Off when muted (saved on this phone) or when the page is hidden.
 const KEY = "coGameSound";
 let ctx = null;
@@ -20,20 +20,29 @@ export function setMuted(m) {
   } catch {
     /* private mode */
   }
-  if (master) master.gain.value = m ? 0 : 0.5;
+  if (master) master.gain.value = m ? 0 : VOLUME;
   listeners.forEach((f) => f(m));
 }
 export const onMuteChange = (f) => (listeners.add(f), () => listeners.delete(f));
 
-// The audio context starts on the first tap (phones only allow sound after one).
+// The audio context starts on the first tap (phones only allow sound after one). Everything goes
+// through a gentle low-pass and a compressor, so no sound is sharp or suddenly loud.
+const VOLUME = 0.32;
 function audio() {
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
     ctx = new AC();
     master = ctx.createGain();
-    master.gain.value = muted ? 0 : 0.5;
-    master.connect(ctx.destination);
+    master.gain.value = muted ? 0 : VOLUME;
+    const soften = ctx.createBiquadFilter();
+    soften.type = "lowpass";
+    soften.frequency.value = 2800;
+    soften.Q.value = 0.5;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -24;
+    comp.ratio.value = 4;
+    master.connect(soften).connect(comp).connect(ctx.destination);
   }
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
   return ctx;
@@ -51,25 +60,32 @@ if (typeof window !== "undefined") {
 
 const ok = () => !muted && !(typeof document !== "undefined" && document.hidden) && audio();
 
-// One tone: type, start and end pitch (Hz), length (s), volume, delay (s).
-function tone(type, f1, f2, len, vol = 0.3, delay = 0) {
+// A soft, rounded note: a sine with a quiet overtone, a short fade-in (no click) and a smooth
+// fade-out, like a marimba or a wood block. Pitch can glide from f1 to f2.
+function tone(f1, f2, len, vol = 0.2, delay = 0, type = "sine") {
   const a = ok();
   if (!a) return;
   const t = a.currentTime + delay;
-  const o = a.createOscillator();
   const g = a.createGain();
-  o.type = type;
-  o.frequency.setValueAtTime(f1, t);
-  if (f2 !== f1) o.frequency.exponentialRampToValueAtTime(Math.max(20, f2), t + len);
-  g.gain.setValueAtTime(vol, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + len);
-  o.connect(g).connect(master);
-  o.start(t);
-  o.stop(t + len + 0.02);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + Math.min(0.012, len / 4));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  g.connect(master);
+  for (const [mult, share] of [[1, 1], [2, 0.18]]) {
+    const o = a.createOscillator();
+    const og = a.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f1 * mult, t);
+    if (f2 !== f1) o.frequency.exponentialRampToValueAtTime(Math.max(20, f2 * mult), t + len);
+    og.gain.value = share;
+    o.connect(og).connect(g);
+    o.start(t);
+    o.stop(t + len + 0.03);
+  }
 }
 
-// A burst of noise (crashes, dice rattling), low-passed from f1 to f2.
-function noise(len, vol = 0.3, f1 = 3000, f2 = 300, delay = 0) {
+// A soft puff of noise (dice, bumps), filtered low so it sounds like a thud, not a hiss.
+function noise(len, vol = 0.15, f1 = 1200, f2 = 200, delay = 0) {
   const a = ok();
   if (!a) return;
   const t = a.currentTime + delay;
@@ -83,65 +99,72 @@ function noise(len, vol = 0.3, f1 = 3000, f2 = 300, delay = 0) {
   f.frequency.setValueAtTime(f1, t);
   f.frequency.exponentialRampToValueAtTime(f2, t + len);
   const g = a.createGain();
-  g.gain.setValueAtTime(vol, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + len);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + len);
   src.connect(f).connect(g).connect(master);
   src.start(t);
 }
 
-const notes = (list, type = "square", vol = 0.18) => list.forEach(([f, at, len]) => tone(type, f, f, len, vol, at));
+// A little tune: [pitch, start, length] notes, each one ringing out softly.
+const notes = (list, vol = 0.16, type = "sine") => list.forEach(([f, at, len]) => tone(f, f, len, vol, at, type));
+
+// Pitches (a calm major-pentatonic, so tunes never sound sour).
+const C5 = 523, D5 = 587, E5 = 659, G5 = 784, A5 = 880, C6 = 1047;
+const G4 = 392, E4 = 330, D4 = 294, C4 = 262;
 
 export const sfx = {
-  beep: () => tone("square", 880, 880, 0.08, 0.15),
-  go: () => tone("square", 1320, 1320, 0.22, 0.18),
-  blip: () => tone("square", 660, 990, 0.05, 0.12),
-  tick: () => tone("triangle", 1200, 900, 0.03, 0.18),
-  coin: () => notes([[988, 0, 0.07], [1319, 0.07, 0.18]]),
-  eat: () => tone("square", 520, 1040, 0.06, 0.16),
-  bonus: () => notes([[784, 0, 0.06], [988, 0.06, 0.06], [1319, 0.12, 0.14]]),
-  crash: () => (noise(0.6, 0.45, 2500, 120), tone("sawtooth", 180, 40, 0.5, 0.2)),
-  roll: () => [0, 0.06, 0.13, 0.21, 0.3].forEach((d, i) => noise(0.05, 0.25 - i * 0.03, 4000, 1500, d)),
-  move: () => (noise(0.05, 0.35, 1800, 400), tone("sine", 220, 160, 0.06, 0.2)),
-  capture: () => (noise(0.09, 0.45, 2400, 300), tone("square", 300, 90, 0.18, 0.18)),
-  check: () => notes([[880, 0, 0.08], [660, 0.1, 0.12]], "triangle", 0.22),
-  home: () => notes([[523, 0, 0.1], [659, 0.1, 0.1], [784, 0.2, 0.1], [1047, 0.3, 0.25]]),
-  win: () => notes([[523, 0, 0.12], [659, 0.12, 0.12], [784, 0.24, 0.12], [1047, 0.36, 0.12], [784, 0.5, 0.1], [1047, 0.6, 0.4]]),
-  lose: () => notes([[392, 0, 0.18], [370, 0.2, 0.18], [349, 0.4, 0.18], [330, 0.6, 0.5]], "triangle", 0.22),
-  pok: () => tone("square", 440, 440, 0.04, 0.2),
-  wall: () => tone("square", 220, 220, 0.04, 0.16),
-  point: () => tone("square", 490, 245, 0.25, 0.16),
+  beep: () => tone(A5 / 2, A5 / 2, 0.18, 0.14),
+  go: () => notes([[C5, 0, 0.35], [G5, 0, 0.35]], 0.12),
+  blip: () => tone(E5, E5, 0.12, 0.08),
+  tick: () => tone(G4, G4, 0.07, 0.07, 0, "triangle"),
+  coin: () => notes([[E5, 0, 0.18], [A5, 0.07, 0.3]], 0.11),
+  eat: () => tone(C5, E5, 0.12, 0.11),
+  bonus: () => notes([[C5, 0, 0.2], [E5, 0.08, 0.2], [G5, 0.16, 0.35]], 0.11),
+  crash: () => (noise(0.45, 0.2, 700, 90), tone(150, 70, 0.4, 0.14)),
+  roll: () => [0, 0.07, 0.15, 0.24, 0.34].forEach((d, i) => (noise(0.05, 0.12 - i * 0.015, 1600, 500, d), tone(320 + i * 40, 280, 0.05, 0.04, d, "triangle"))),
+  move: () => (noise(0.06, 0.12, 900, 250), tone(D4, C4 * 0.9, 0.1, 0.12)),
+  capture: () => (noise(0.1, 0.16, 1000, 200), tone(G4, D4, 0.22, 0.13)),
+  check: () => notes([[E5, 0, 0.22], [C5, 0.12, 0.3]], 0.11),
+  home: () => notes([[C5, 0, 0.25], [E5, 0.12, 0.25], [G5, 0.24, 0.25], [C6, 0.36, 0.5]], 0.1),
+  win: () => notes([[C5, 0, 0.3], [E5, 0.14, 0.3], [G5, 0.28, 0.3], [A5, 0.42, 0.3], [G5, 0.58, 0.25], [C6, 0.72, 0.8]], 0.1),
+  lose: () => notes([[G4, 0, 0.35], [E4, 0.22, 0.35], [D4, 0.44, 0.35], [C4, 0.66, 0.8]], 0.11),
+  pok: () => tone(D5, D5 * 0.92, 0.08, 0.12),
+  wall: () => tone(G4, G4, 0.06, 0.07, 0, "triangle"),
+  point: () => notes([[G5, 0, 0.25], [E5, 0.12, 0.4]], 0.09),
 };
 
 // A steady engine hum whose pitch follows the speed. Returns { set(speed), stop() }.
 export function engine() {
+  // A low, quiet purr in the background rather than a buzz: two soft waves, filtered low.
   const a = ok();
   if (!a) return { set() {}, stop() {} };
   const o = a.createOscillator();
   const o2 = a.createOscillator();
   const f = a.createBiquadFilter();
   const g = a.createGain();
-  o.type = "sawtooth";
-  o2.type = "square";
+  o.type = "triangle";
+  o2.type = "sine";
   f.type = "lowpass";
-  f.frequency.value = 500;
+  f.frequency.value = 260;
   g.gain.value = 0.0001;
   o.connect(f);
   o2.connect(f);
   f.connect(g).connect(master);
   o.start();
   o2.start();
-  g.gain.exponentialRampToValueAtTime(0.06, a.currentTime + 0.3);
+  g.gain.exponentialRampToValueAtTime(0.035, a.currentTime + 0.6);
   return {
     set(speed) {
-      const base = 55 + speed * 28;
-      o.frequency.setTargetAtTime(base, a.currentTime, 0.1);
-      o2.frequency.setTargetAtTime(base * 1.005 / 2, a.currentTime, 0.1);
-      f.frequency.setTargetAtTime(380 + speed * 160, a.currentTime, 0.1);
+      const base = 48 + speed * 16;
+      o.frequency.setTargetAtTime(base, a.currentTime, 0.25);
+      o2.frequency.setTargetAtTime(base * 1.01, a.currentTime, 0.25);
+      f.frequency.setTargetAtTime(220 + speed * 60, a.currentTime, 0.25);
     },
     stop() {
-      g.gain.setTargetAtTime(0.0001, a.currentTime, 0.05);
-      o.stop(a.currentTime + 0.3);
-      o2.stop(a.currentTime + 0.3);
+      g.gain.setTargetAtTime(0.0001, a.currentTime, 0.08);
+      o.stop(a.currentTime + 0.5);
+      o2.stop(a.currentTime + 0.5);
     },
   };
 }
