@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { HttpError } from "../http.js";
 import { runReminders } from "../reminders.js";
 import { dailyKitchenCheck } from "../kitchen/daily.js";
+import { runMarketing } from "../marketing.js";
 
 // Vercel Cron calls these with "Authorization: Bearer <CRON_SECRET>".
 function assertCron(req) {
@@ -19,7 +20,9 @@ export default [
       assertCron(req);
       const run = await runReminders(db, { trigger: "auto" });
       const kitchen = await dailyKitchenCheck(db).catch((err) => ({ error: String(err?.message || err) }));
-      return { sent: run.sent, failed: run.failed, skipped: run.skipped, kitchen };
+      // Customers' WhatsApp reminders (Settings › Auto WhatsApp); this cron runs at 10:00 IST.
+      const marketing = await runMarketing(db).catch((err) => ({ error: String(err?.message || err) }));
+      return { sent: run.sent, failed: run.failed, skipped: run.skipped, kitchen, marketing };
     },
     { auth: false },
   ],

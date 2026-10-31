@@ -1608,3 +1608,44 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
   .ld-tilt { transform: none; }
 }
 .co-verify { padding: 8px 10px; border-radius: 10px; background: var(--warn-soft); color: var(--text); }
+
+/* ---------- Auto WhatsApp (Settings) ---------- */
+.wa-status { padding: 10px 12px; border-radius: 10px; font-size: 14px; }
+.wa-status.ok { background: color-mix(in srgb, var(--good) 12%, var(--panel)); }
+.wa-status.warn { background: var(--warn-soft); color: var(--warn); }
+.wa-status code, .wa-setup code { font-size: 12px; background: color-mix(in srgb, var(--text) 8%, transparent); padding: 1px 5px; border-radius: 5px; word-break: break-all; }
+.wa-setup { border: 1px solid var(--border); border-radius: 10px; padding: 4px 12px; }
+.wa-setup ol { padding-left: 18px; display: grid; gap: 6px; }
+.wa-setup ul { padding-left: 16px; margin: 6px 0 0; display: grid; gap: 4px; }
+.wa-kinds { display: grid; gap: 8px; min-width: 0; }
+.wa-kinds > * { min-width: 0; }
+.wa-kinds .check { align-items: flex-start; }
+.wa-kinds .check input { flex: none; margin-top: 1px; }
+.wa-kinds .seg { display: flex; width: 100%; }
+.wa-kinds .seg button { flex: 1; padding: 7px 0; min-width: 0; }
+.wa-preview { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: color-mix(in srgb, var(--accent) 4%, var(--panel)); }
+.wa-msg { background: color-mix(in srgb, #25d366 14%, var(--panel)); border-radius: 10px 10px 10px 2px; padding: 8px 10px; font-size: 14px; display: grid; gap: 2px; }
+.wa-news { display: grid; gap: 8px; }
+.wa-news-row { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+.linklike { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+.co-wa-opt { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; font-size: 14px; cursor: pointer; }
+.co-wa-opt input { width: 18px; height: 18px; margin-top: 1px; accent-color: #25d366; flex: none; }
+
+/* ---------- Instagram reward ---------- */
+.btn-ig { background: linear-gradient(45deg, #f09433, #dc2743 50%, #bc1888); color: #fff; border-color: transparent; }
+.ig-code { font: 800 28px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 2px; padding: 12px; border: 2px dashed #dc2743; border-radius: 12px; }
+.ig-open-btn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border-radius: 14px; border: 1px dashed color-mix(in srgb, #dc2743 50%, var(--border)); background: color-mix(in srgb, #dc2743 6%, var(--panel)); color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.ig-open-btn > span:first-child { font-size: 22px; }
+.ig-open-btn small { display: block; color: var(--muted); }
+.ig-back { align-items: center; padding: 16px; z-index: 70; }
+.ig-card { position: relative; width: min(380px, 100%); max-height: 90dvh; overflow: auto; background: var(--panel); color: var(--text); border-radius: 20px; padding: 22px 18px 16px; display: grid; gap: 10px; justify-items: center; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,.35); animation: ig-pop .4s cubic-bezier(.2,1.4,.4,1); }
+.ig-x { position: absolute; top: 8px; right: 8px; width: 36px; height: 36px; border-radius: 50%; border: 0; background: color-mix(in srgb, var(--text) 8%, transparent); cursor: pointer; font-size: 16px; }
+.ig-badge { margin-top: 2px; animation: ig-wiggle 2.4s ease-in-out .5s infinite; }
+.ig-card h3 { font-size: 22px; }
+.ig-text { margin: 0; font-size: 15px; line-height: 1.5; }
+.ig-steps { margin: 0; padding: 10px 12px 10px 30px; text-align: left; font-size: 14px; display: grid; gap: 4px; background: color-mix(in srgb, #dc2743 6%, var(--panel)); border-radius: 12px; width: 100%; }
+.ig-follow { width: 100%; justify-content: center; background: linear-gradient(45deg, #f09433, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888); color: #fff; border: 0; text-decoration: none; font-weight: 700; }
+.ig-card .btn-ghost { width: 100%; justify-content: center; }
+@keyframes ig-pop { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ig-wiggle { 0%, 80%, 100% { transform: none; } 85% { transform: rotate(-8deg) scale(1.05); } 92% { transform: rotate(8deg) scale(1.05); } }
+@media (prefers-reduced-motion: reduce) { .ig-card, .ig-badge { animation: none; } }

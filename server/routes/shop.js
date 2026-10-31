@@ -159,6 +159,13 @@ const ShopSettings = z
       minOrder: z.number().min(0).max(100000),
       maxDiscount: z.number().min(0).max(100000),
     }),
+    // Instagram story reward: post a story and follow the handle, staff give a free meal code.
+    insta: z.object({
+      on: z.boolean(),
+      handle: z.string().trim().transform((h) => h.replace(/^@/, "").replace(/^https?:\/\/(www\.)?instagram\.com\//i, "").replace(/\/.*$/, "")).refine((h) => /^[A-Za-z0-9._]{0,30}$/.test(h), "Enter the Instagram name like grill.hive"),
+      maxDiscount: z.number().int().min(1).max(10000),
+      validDays: z.number().int().min(1).max(90),
+    }).refine((i) => !i.on || i.handle, { message: "Enter your Instagram name to turn this on.", path: ["handle"] }),
     // When QR customers pay: at the end, they choose (now or at the end), or before it's cooked.
     qrPayment: z.enum(["end", "choose", "first"]),
     defaultDiscount: z.object({ type: z.enum(["percent", "flat"]), value: z.number().min(0).max(100000) }),

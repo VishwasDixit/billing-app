@@ -76,6 +76,9 @@ const SECTIONS = [
   { id: "loyalty", group: "QR ordering", icon: "🔥", title: "Loyalty streak", desc: "Order N days in a row, get a dish free", keywords: ["loyalty", "streak", "free", "reward", "regular", "7th day", "loyal"], hint: ({ shop }) => (shop.loyalty?.on ? `On · ${shop.loyalty.days} days` : "Off"), render: () => <LoyaltyCard /> },
   { id: "promos", group: "QR ordering", icon: "🏷️", title: "Promo codes", desc: "Coupons and offers", keywords: ["coupon", "offer", "discount", "code", "promo"], render: () => <PromosCard /> },
 
+  { id: "autowa", group: "Marketing", icon: "📲", title: "Auto WhatsApp", desc: "Coupons, new dishes, news and we-miss-you, sent by themselves", keywords: ["whatsapp", "automatic", "automation", "reminder", "coupon", "offer", "new dish", "announcement", "feature", "miss you", "marketing", "broadcast"], hint: ({ shop }) => (shop.autoMsg?.on ? "On" : "Off"), render: () => <AutoWhatsAppCard /> },
+  { id: "insta", group: "Marketing", icon: "📸", title: "Instagram reward", desc: "Post a story, follow you, get a free meal", keywords: ["instagram", "insta", "story", "follow", "social", "free meal", "reward"], hint: ({ shop }) => (shop.insta?.on ? `On · @${shop.insta.handle}` : "Off"), render: () => <InstaCard /> },
+
   { id: "menu", group: "Menu & team", icon: "🍽️", title: "Menu & pictures", desc: "Edit dishes, pictures on billing", keywords: ["menu", "dish", "item", "photo", "picture", "price"], render: (p) => <MenuCard {...p} /> },
   { id: "staff", group: "Menu & team", icon: "👨‍🍳", title: "Kitchen & staff", desc: "Kitchen and staff logins", keywords: ["kitchen", "staff", "login", "waiter", "manager", "device"], show: ({ user }) => user.role !== "admin", render: () => <KitchenStaffCard /> },
 
@@ -1682,5 +1685,215 @@ function PromoModal({ promo, cur, onClose, onSaved }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+// Instagram story reward: the popup customers see after ordering, and what staff give.
+function InstaCard() {
+  const { shop, saveShop } = useApp();
+  const toast = useToast();
+  const cur = shop.currency || "₹";
+  const [d, setD] = useState(() => ({ on: false, handle: "", maxDiscount: 99, validDays: 30, ...(shop.insta || {}) }));
+  const { busy, error, run } = useAction();
+  const set = (k, v) => setD((x) => ({ ...x, [k]: v }));
+  const handle = String(d.handle || "").replace(/^@/, "").trim();
+  const save = () =>
+    run(async () => {
+      await saveShop({ insta: { on: d.on, handle, maxDiscount: Math.max(1, parseInt(d.maxDiscount, 10) || 99), validDays: Math.max(1, Math.min(90, parseInt(d.validDays, 10) || 30)) } });
+      toast(d.on ? "Instagram reward is on 📸" : "Instagram reward saved");
+    });
+  return (
+    <section className="card stack" id="insta">
+      <h2>Instagram reward</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        After ordering by QR, customers see a message: post your order on your Instagram story and follow your page to get 1 meal free. When they show the story, staff tap <b>📸 Insta reward</b> on the order (or on the customer) to give a one-time code for that mobile. Each mobile gets it once.
+      </p>
+      <label className="check"><input type="checkbox" checked={d.on} onChange={(e) => set("on", e.target.checked)} /> Turn on the Instagram reward</label>
+      <Field label="Your Instagram name">
+        <input value={d.handle} placeholder="grill.hive" autoCapitalize="none" autoCorrect="off" onChange={(e) => set("handle", e.target.value)} />
+      </Field>
+      <div className="grid2">
+        <Field label={`Free meal up to (${cur})`}>
+          <input type="number" min="1" step="1" inputMode="numeric" value={d.maxDiscount} onChange={(e) => set("maxDiscount", e.target.value)} />
+        </Field>
+        <Field label="Code valid for (days)">
+          <input type="number" min="1" max="90" step="1" inputMode="numeric" value={d.validDays} onChange={(e) => set("validDays", e.target.value)} />
+        </Field>
+      </div>
+      <p className="hint" style={{ margin: 0 }}>Customers see: “📸 Post your order on your Instagram story, tag & follow @{handle || "yourpage"}, and get 1 meal free (up to {cur}{parseInt(d.maxDiscount, 10) || 99})!”</p>
+      {error && <div className="error">{error}</div>}
+      <div className="btn-row">
+        <button className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button>
+      </div>
+    </section>
+  );
+}
+
+const KIND_NAME = { news: "📣 Announcement", offer: "🏷 Coupon", dishes: "🍽 New dishes", miss: "💛 We miss you" };
+
+// Auto WhatsApp: reminders that go out by themselves every morning at 10.
+function AutoWhatsAppCard() {
+  const { shop } = useApp();
+  const toast = useToast();
+  const [v, setV] = useState(null); // what the server says (status, settings, announcements, runs)
+  const [s, setS] = useState(null); // the settings being edited
+  const [codes, setCodes] = useState([]);
+  const [preview, setPreview] = useState(null);
+  const [news, setNews] = useState({ text: "", sendOn: todayIST() });
+  const [setup, setSetup] = useState(false);
+  const { busy, error, run } = useAction();
+  const load = (r) => {
+    setV(r);
+    setS(r.settings);
+  };
+  useEffect(() => {
+    run(async () => load(await get("/auto-msg")));
+    get("/promos").then((r) => setCodes(r.promos.filter((p) => p.active && !p.phones?.length && (!p.validTo || p.validTo >= todayIST()))), () => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!v || !s) return <section className="card">{error ? <div className="error">{error}</div> : <span className="muted">Loading…</span>}</section>;
+  const set = (k, val) => setS((x) => ({ ...x, [k]: val }));
+  const body = () => ({ ...s, dishDay: Number(s.dishDay), missDays: Math.max(7, Math.min(90, parseInt(s.missDays, 10) || 21)) });
+  const save = () =>
+    run(async () => {
+      load(await put("/auto-msg", body()));
+      toast(s.on ? "Auto WhatsApp is on 📲" : "Auto WhatsApp saved");
+    });
+  const doPreview = () => run(async () => setPreview(await post("/auto-msg/preview", body())));
+  const runNow = () =>
+    run(async () => {
+      const r = await post("/auto-msg/run", {});
+      load(r);
+      setPreview(null);
+      toast(`Sent ${r.run.sent} message${r.run.sent === 1 ? "" : "s"}${r.run.failed ? `, ${r.run.failed} failed` : ""}`);
+    });
+  const addNews = () =>
+    run(async () => {
+      await post("/announcements", news);
+      setNews({ text: "", sendOn: todayIST() });
+      load(await get("/auto-msg"));
+      toast("Announcement scheduled 📣");
+    });
+  const sendNews = (a) =>
+    run(async () => {
+      const r = await post(`/announcements/${a.id}/send`, {});
+      load(r);
+      toast(`Sent to ${r.run.sent} customer${r.run.sent === 1 ? "" : "s"}`);
+    });
+  const dropNews = (a) =>
+    run(async () => {
+      await del(`/announcements/${a.id}`);
+      load(await get("/auto-msg"));
+    });
+  const ready = v.status === "ready";
+
+  return (
+    <section className="card stack" id="autowa">
+      <h2>Auto WhatsApp</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        Every morning at 10, customers who ticked <b>“Send me offers on WhatsApp”</b> when ordering get one message about what's new: running coupons, new dishes, your announcements, or a “we miss you” if they haven't come for a while. Nobody gets more than one message every {v.rules.gapDays} days (announcements can come sooner), nothing is sent between {v.rules.quietFrom - 12} pm and {v.rules.quietTo} am, and customers can reply STOP any time.
+      </p>
+      <div className={"wa-status " + (ready ? "ok" : "warn")}>
+        {ready ? <>✅ WhatsApp connected · <b>{v.optedIn}</b> customer{v.optedIn === 1 ? "" : "s"} agreed to messages</> : v.status === "env" ? <>⚠️ WhatsApp isn't connected yet. Messages are paid by Meta (about ₹0.80–1 each). <button className="linklike" onClick={() => setSetup(!setup)}>How to connect</button></> : <>⚠️ WhatsApp is connected, but not for this shop yet. Add <code>{shop.id}</code> to <code>WHATSAPP_SHOPS</code> in Vercel.</>}
+      </div>
+      {setup && (
+        <div className="wa-setup small">
+          <ol>
+            <li>In Meta Business (business.facebook.com) create a WhatsApp Business app and add your shop's number.</li>
+            <li>Create these 4 message templates (category Marketing, language English), with the footer “{v.templates[0].footer}”:
+              <ul>{v.templates.map((t) => <li key={t.name}><code>{t.name}</code>: {t.body}</li>)}</ul>
+            </li>
+            <li>In Vercel add <code>WHATSAPP_TOKEN</code>, <code>WHATSAPP_PHONE_NUMBER_ID</code>, <code>WHATSAPP_APP_SECRET</code>, <code>WHATSAPP_VERIFY_TOKEN</code> and <code>WHATSAPP_SHOPS</code> = <code>{shop.id}</code>, then redeploy.</li>
+            <li>In Meta, set the webhook to <code>{window.location.origin}/api/whatsapp/webhook</code> with your verify token, and subscribe to “messages”.</li>
+          </ol>
+        </div>
+      )}
+      <label className="check"><input type="checkbox" checked={s.on} onChange={(e) => set("on", e.target.checked)} /> Turn on Auto WhatsApp</label>
+      <div className="wa-kinds">
+        <label className="check"><input type="checkbox" checked={s.offers} onChange={(e) => set("offers", e.target.checked)} /> 🏷 Coupons: when a code starts, and the day before it ends (not to those who used it)</label>
+        <label className="check"><input type="checkbox" checked={s.dishes} onChange={(e) => set("dishes", e.target.checked)} /> 🍽 New dishes added this week, every</label>
+        {s.dishes && (
+          <div style={{ paddingLeft: 28 }}>
+            <Seg value={Number(s.dishDay)} onChange={(d) => set("dishDay", d)} options={DAY_NAMES.map((n, i) => [i, n])} />
+          </div>
+        )}
+        <label className="check"><input type="checkbox" checked={s.news} onChange={(e) => set("news", e.target.checked)} /> 📣 Your announcements (new features, timings, events)</label>
+        <label className="check"><input type="checkbox" checked={s.miss} onChange={(e) => set("miss", e.target.checked)} /> 💛 “We miss you” when someone hasn't come for</label>
+        {s.miss && (
+          <div className="grid2" style={{ paddingLeft: 28 }}>
+            <Field label="Days">
+              <input type="number" min="7" max="90" inputMode="numeric" value={s.missDays} onChange={(e) => set("missDays", e.target.value)} />
+            </Field>
+            <Field label="With a code (optional)">
+              <select value={s.missCode} onChange={(e) => set("missCode", e.target.value)}>
+                <option value="">No code</option>
+                {codes.map((p) => <option key={p.id} value={p.code}>{p.code}</option>)}
+              </select>
+            </Field>
+          </div>
+        )}
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="btn-row">
+        <button className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button>
+        <button className="btn" disabled={busy} onClick={doPreview}>👀 Preview today</button>
+        {ready && v.settings.on && <button className="btn" disabled={busy} onClick={runNow}>Send today's now</button>}
+      </div>
+      {preview && (
+        <div className="wa-preview">
+          <b>{preview.total ? `${preview.total} message${preview.total === 1 ? "" : "s"} would go out today` : "Nothing to send today"}</b>
+          <span className="small muted"> · {preview.contacts} customer{preview.contacts === 1 ? "" : "s"} agreed to messages</span>
+          {preview.list.slice(0, 20).map((m, i) => (
+            <div key={i} className="wa-msg">
+              <div className="small muted">{KIND_NAME[m.kind]} → {m.name || "Customer"} · {m.phone}</div>
+              <div>{m.text}</div>
+            </div>
+          ))}
+          {preview.total > 20 && <span className="small muted">…and {preview.total - 20} more</span>}
+        </div>
+      )}
+
+      <h3 style={{ margin: "8px 0 0" }}>📣 Announcements</h3>
+      <Field label="Message" hint={`${news.text.length}/300 · e.g. “Now open for home delivery!” or “Live music this Saturday from 8 pm.”`}>
+        <textarea rows={3} maxLength={300} value={news.text} onChange={(e) => setNews((x) => ({ ...x, text: e.target.value }))} />
+      </Field>
+      <div className="grid2">
+        <Field label="Send on">
+          <input type="date" min={todayIST()} value={news.sendOn} onChange={(e) => setNews((x) => ({ ...x, sendOn: e.target.value }))} />
+        </Field>
+      </div>
+      <div className="btn-row">
+        <button className="btn" disabled={busy || news.text.trim().length < 5} onClick={addNews}>Schedule</button>
+      </div>
+      {v.announcements.length > 0 && (
+        <div className="wa-news">
+          {v.announcements.map((a) => (
+            <div key={a.id} className="wa-news-row">
+              <div>
+                <div>{a.text}</div>
+                <div className="small muted">{a.status === "sent" ? `Sent ${fmtDate(a.sentAt)} · ${a.sent} customers` : `${a.sendOn === todayIST() ? "Today" : fmtDate(a.sendOn)} at 10 am${a.sent ? ` · ${a.sent} sent so far` : ""}`}</div>
+              </div>
+              {a.status === "scheduled" && (
+                <div className="btn-row" style={{ flexWrap: "nowrap" }}>
+                  {ready && <button className="btn btn-sm" disabled={busy} onClick={() => sendNews(a)}>Send now</button>}
+                  {!a.sent && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => dropNews(a)} aria-label="Delete">✕</button>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {v.runs.length > 0 && (
+        <>
+          <h3 style={{ margin: "8px 0 0" }}>Recent sends</h3>
+          {v.runs.map((r, i) => (
+            <div key={i} className="small">
+              {fmtDate(r.at)} · {r.trigger === "auto" ? "10 am" : "by hand"} · <b>{r.sent}</b> sent{r.failed ? <span className="due-text"> · {r.failed} failed</span> : ""}{r.waiting ? ` · ${r.waiting} next time` : ""}
+              {r.failures?.[0] && <div className="muted">Last error: {r.failures[0].error}</div>}
+            </div>
+          ))}
+        </>
+      )}
+    </section>
   );
 }

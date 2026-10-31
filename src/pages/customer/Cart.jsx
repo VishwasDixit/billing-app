@@ -29,6 +29,8 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
   const mobile = phone.replace(/\D/g, "").replace(/^(91|0)(?=\d{10}$)/, "");
   const contactOk = name.trim().length >= 2 && /^[6-9]\d{9}$/.test(mobile);
   const [editContact, setEditContact] = useState(!(saved.name && saved.phone));
+  // "Send me offers on WhatsApp": only when the shop sends them; off until the customer ticks it.
+  const [waOptIn, setWaOptIn] = useState(!!saved.wa);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Promo code: checked by the server with its own prices (and this mobile, for once-per-mobile codes).
@@ -107,12 +109,12 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
     setBusy(true);
     setError("");
     try {
-      localStorage.setItem("coContact", JSON.stringify({ name: name.trim(), phone: mobile }));
+      localStorage.setItem("coContact", JSON.stringify({ name: name.trim(), phone: mobile, wa: data.wa ? waOptIn : !!saved.wa }));
     } catch {
       /* private mode */
     }
     try {
-      const r = await post(`/public/shop/${token}/orders`, { table: table.id, items, name: name.trim(), phone: mobile, device: deviceKey(), ...(promo && { promo: promo.code }) });
+      const r = await post(`/public/shop/${token}/orders`, { table: table.id, items, name: name.trim(), phone: mobile, device: deviceKey(), ...(data.wa && { waOptIn }), ...(promo && { promo: promo.code }) });
       onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, phoneCheck: r.phoneCheck || "", pay: r.pay, promo: r.promo || null, loyalty: r.loyalty || null, streak: r.streak || null, tableId: table.id, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
     } catch (err) {
       // The code stopped working (used up, wrong time, used on this mobile): say so and let them order without it.
@@ -251,6 +253,12 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
               <input className="input" placeholder="Mobile number *" type="tel" inputMode="tel" autoComplete="tel" maxLength={16} value={phone} onChange={(e) => setPhone(e.target.value)} required />
               <span className="small muted">So the restaurant can reach you about your order. A new number's first order is confirmed by the staff at your table.</span>
             </div>
+          )}
+          {data.wa && (
+            <label className="co-wa-opt">
+              <input type="checkbox" checked={waOptIn} onChange={(e) => setWaOptIn(e.target.checked)} />
+              <span>Send me offers and new dishes on WhatsApp <small className="muted">(reply STOP any time)</small></span>
+            </label>
           )}
         </section>
 

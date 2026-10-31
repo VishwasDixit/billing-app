@@ -10,6 +10,7 @@ import { put } from "../lib/api.js";
 import { printBill } from "../printer/index.js";
 import { shareBillPdf } from "../printer/pdf.js";
 import { StockPanel } from "../components/Stock.jsx";
+import { InstaReward } from "../components/InstaReward.jsx";
 import { printKot } from "../printer/index.js";
 import { explainPrintError } from "../printer/transports.js";
 import { usePref } from "../lib/prefs.js";
@@ -423,7 +424,10 @@ function TableContacts({ orders }) {
       {[...seen.values()].map((o) => (
         <div key={o.clientId} className="order-top">
           <span>👤 <b>{o.customerName || "Customer"}</b></span>
-          {o.customerPhone && <a className="btn btn-sm" href={`tel:${o.customerPhone}`}>📞 {o.customerPhone.replace(/(\d{5})(\d{5})/, "$1 $2")}</a>}
+          <span className="btn-row" style={{ flexWrap: "nowrap" }}>
+            <InstaReward phone={o.customerPhone} name={o.customerName} />
+            {o.customerPhone && <a className="btn btn-sm" href={`tel:${o.customerPhone}`}>📞 {o.customerPhone.replace(/(\d{5})(\d{5})/, "$1 $2")}</a>}
+          </span>
         </div>
       ))}
     </div>

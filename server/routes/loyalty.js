@@ -23,7 +23,7 @@ export function loyaltyRule(shop) {
 const phoneForms = (p) => [p, `+91${p}`, `+91 ${p}`, `0${p}`, `${p.slice(0, 5)} ${p.slice(5)}`, `+91 ${p.slice(0, 5)} ${p.slice(5)}`];
 
 // Visit days of one mobile, or of every mobile (Map phone -> days) when phone is null.
-async function visitDays(db, shopId, phone) {
+export async function visitDays(db, shopId, phone) {
   const since = new Date(Date.now() - WINDOW_DAYS * 864e5);
   const [bills, orders] = await Promise.all([
     db

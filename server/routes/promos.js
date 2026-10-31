@@ -1,11 +1,21 @@
 // Promo codes (Settings › Promo codes). The owner manages them; staff apply them at Billing;
 // customers type them when ordering from a table QR. Every use is one promoUses record, so a
 // limit holds under load and a retried upload never counts twice.
+import crypto from "node:crypto";
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 import { HttpError } from "../http.js";
 import { checkPromo, cleanCode, CODE_RE, tablesText } from "../../shared/promo.js";
 import { cleanMobile } from "./customers.js";
+import { addDays } from "../../shared/loyalty.js";
+import { istDay } from "../../shared/hours.js";
+import { waReady, sendTemplate } from "../whatsapp.js";
+import { appUrl } from "../reminders.js";
+
+// Codes made by the app for one customer (dice wins, Instagram rewards): not in the codes list.
+const MADE = ["dice", "insta"];
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export const randomCode = (prefix) => prefix + Array.from({ length: 5 }, () => CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]).join("");
 
 // Mobiles a code was sent to (Customers › Send offer): cleaned to 10 digits, bad ones dropped.
 const Phones = z.array(z.string().max(20)).max(5000).transform((l) => [...new Set(l.map(cleanMobile).filter(Boolean))]);
@@ -115,14 +125,14 @@ const byId = (db, shop, id) => {
 };
 
 export default [
-  ["GET", "/promos", async ({ db, shop }) => ({ promos: (await db.collection("promos").find({ shopId: shop._id, archived: { $ne: true }, source: { $ne: "dice" } }).sort({ createdAt: -1 }).toArray()).map(publicPromo) })],
+  ["GET", "/promos", async ({ db, shop }) => ({ promos: (await db.collection("promos").find({ shopId: shop._id, archived: { $ne: true }, source: { $nin: MADE } }).sort({ createdAt: -1 }).toArray()).map(publicPromo) })],
   [
     "POST",
     "/promos",
     async ({ db, shop, body }) => {
       const p = PromoIn.parse(body);
       checkTables(shop, p);
-      if (await db.collection("promos").countDocuments({ shopId: shop._id, archived: { $ne: true }, source: { $ne: "dice" } }) >= 200) throw new HttpError(400, "You can have up to 200 codes. Delete old ones first.");
+      if (await db.collection("promos").countDocuments({ shopId: shop._id, archived: { $ne: true }, source: { $nin: MADE } }) >= 200) throw new HttpError(400, "You can have up to 200 codes. Delete old ones first.");
       const doc = { shopId: shop._id, ...p, uses: 0, discountGiven: 0, createdAt: new Date(), updatedAt: new Date() };
       try {
         doc._id = (await db.collection("promos").insertOne(doc)).insertedId;
@@ -193,6 +203,48 @@ export default [
       }
       return { pending: left.map((phone) => ({ clientId: phone, phone, name: names.get(phone) || "there" })) };
     },
+  ],
+  // Instagram story reward (Settings › Instagram reward): staff saw the customer's story, so this
+  // mobile gets one free meal code (100% off up to the shop's limit), once ever. Asking again
+  // returns the same code.
+  [
+    "POST",
+    "/insta-reward",
+    async ({ db, shop, body }) => {
+      const rule = shop.insta;
+      if (!rule?.on) throw new HttpError(400, "Turn on the Instagram reward in Settings first.");
+      const phone = cleanMobile(z.object({ phone: z.string().max(20) }).parse(body).phone);
+      if (!phone) throw new HttpError(400, "This customer has no valid 10-digit mobile number.");
+      const view = (p, already) => ({ code: p.code, validTo: p.validTo, maxDiscount: p.maxDiscount, used: (p.uses || 0) > 0, already, givenAt: p.createdAt });
+      const had = await db.collection("promos").findOne({ shopId: shop._id, source: "insta", phones: phone });
+      if (had) return view(had, true);
+      const today = istDay();
+      let doc = null;
+      for (let i = 0; i < 5 && !doc; i++) {
+        const p = PromoIn.parse({ code: randomCode("INSTA"), description: "Instagram story reward", type: "percent", value: 100, maxDiscount: rule.maxDiscount || 99, validFrom: today, validTo: addDays(today, (rule.validDays || 30) - 1), maxUses: 1, onePerPhone: true, phones: [phone] });
+        try {
+          const d = { shopId: shop._id, ...p, source: "insta", uses: 0, discountGiven: 0, createdAt: new Date(), updatedAt: new Date() };
+          d._id = (await db.collection("promos").insertOne(d)).insertedId;
+          doc = d;
+        } catch (err) {
+          if (err?.code !== 11000) throw err;
+          // Two taps at once: the first code counts.
+          const first = await db.collection("promos").findOne({ shopId: shop._id, source: "insta", phones: phone });
+          if (first) return view(first, true);
+        }
+      }
+      if (!doc) throw new HttpError(500, "Couldn't make the code. Please try again.");
+      // Also on WhatsApp, if the customer agreed to messages from the shop.
+      let sentOnWa = false;
+      const c = waReady(shop) ? await db.collection("waContacts").findOne({ shopId: shop._id, phone, optIn: true, optOutAt: null }) : null;
+      if (c) {
+        const cur = shop.currency || "₹";
+        const msg = `thanks for sharing us on Instagram! 🎉 Your code ${doc.code} gives you 1 meal free (up to ${cur}${doc.maxDiscount}), valid till ${new Date(doc.validTo + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" })}.`;
+        sentOnWa = await sendTemplate(phone, "news", [String(c.name || "").split(" ")[0] || "there", shop.name, msg, shop.qrOrdering && shop.orderToken ? `${appUrl()}/order/${shop.orderToken}?code=${doc.code}` : "show this code when you pay"]).then(() => true, () => false);
+      }
+      return { ...view(doc, false), sentOnWa };
+    },
+    { manager: true },
   ],
   // Staff at Billing: what this code takes off this subtotal.
   [

@@ -6,6 +6,7 @@ import { fmtDateTime, money } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { receiptText, reminderText, timeAgo, waLink } from "../lib/udhar.js";
 import { BillDetail } from "./Bills.jsx";
+import { InstaReward } from "../components/InstaReward.jsx";
 import { LANGUAGE_OPTIONS, languageFor } from "../../shared/messages.js";
 
 const STATE_TAG = {
@@ -96,8 +97,10 @@ export default function CustomerDetail() {
               📲 WhatsApp reminder
             </a>
           )}
+          <InstaReward phone={c.phone} name={c.name} small={false} />
           <button className="btn btn-primary" onClick={() => setPaying(true)}>Receive payment</button>
         </div>
+        {c.phone && <WaOffers phone={c.phone} />}
       </div>
 
       <div className="card">
@@ -265,5 +268,24 @@ function EditCustomer({ customer, onClose, onSaved }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+// Auto WhatsApp: whether this customer agreed to offers (only they can turn it on, when ordering).
+function WaOffers({ phone }) {
+  const [w, setW] = useState(null);
+  const { busy, run } = useAction();
+  useEffect(() => {
+    get(`/wa-contacts/${encodeURIComponent(phone)}`).then(setW, () => {});
+  }, [phone]);
+  if (!w || (!w.ready && !w.optIn && !w.optedOut)) return null;
+  const stop = () => run(async () => setW({ ...w, ...(await put(`/wa-contacts/${encodeURIComponent(phone)}`, { optIn: false })) }));
+  return (
+    <div className="small" style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <span>📲 WhatsApp offers: {w.optIn ? <b className="ok-text">on</b> : w.optedOut ? <b>stopped</b> : <span className="muted">not asked yet</span>}</span>
+      {w.lastSentAt && <span className="muted">· last sent {timeAgo(w.lastSentAt)}</span>}
+      {w.lastError && <span className="due-text">· last message failed: {w.lastError.title}</span>}
+      {w.optIn && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={stop}>Stop messages</button>}
+    </div>
   );
 }

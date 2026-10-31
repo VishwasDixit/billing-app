@@ -8,7 +8,7 @@ import { addonText } from "../../../shared/addons.js";
 import { PopularCard } from "./MenuTab.jsx";
 import { CookingScene } from "./CookingScene.jsx";
 
-export function StatusTab({ token, data, mine, cur, returning, canOrder, refreshMine, onAskBill, quickAdd, less, qtyOf, onMenu, onGames, helpOn = true }) {
+export function StatusTab({ token, data, mine, cur, returning, canOrder, refreshMine, onAskBill, quickAdd, less, qtyOf, onMenu, onGames, onInsta, helpOn = true }) {
   const [showPast, setShowPast] = useState(false);
   const list = [...mine].reverse().filter((o) => o.status !== "billed");
   const closed = (o) => o.status === "rejected" || o.status === "unpaid";
@@ -61,6 +61,16 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
             <small>Tiffin Dash, Ludo, Snake, Ping Pong or chess. We'll tell you when your food moves along.</small>
           </span>
           <span className="gm-open-go">Play →</span>
+        </button>
+      )}
+      {mine.length > 0 && onInsta && (
+        <button className="ig-open-btn" onClick={onInsta}>
+          <span aria-hidden="true">📸</span>
+          <span>
+            <b>1 meal free for an Instagram story</b>
+            <small>Post your order, tag &amp; follow @{data.insta.handle}</small>
+          </span>
+          <span className="gm-open-go">How →</span>
         </button>
       )}
 

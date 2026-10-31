@@ -25,6 +25,7 @@ import shareRoutes from "./routes/share.js";
 import diceRoutes from "./routes/dice.js";
 import tableHelpRoutes from "./routes/tableHelp.js";
 import pushRoutes from "./routes/push.js";
+import whatsappRoutes from "./routes/whatsapp.js";
 import { pushReady } from "./push.js";
 import { bumpMenu, changesMenu } from "./menuVersion.js";
 
@@ -50,6 +51,7 @@ const ROUTES = [
   ...diceRoutes,
   ...tableHelpRoutes,
   ...pushRoutes,
+  ...whatsappRoutes,
 ].map(([method, path, handler, opts = {}]) => {
   const keys = [];
   const re = new RegExp(
@@ -151,6 +153,8 @@ async function health() {
     PEXELS_API_KEY: pexelsReady(),
     SUPPORT_WHATSAPP: !!process.env.SUPPORT_WHATSAPP,
     VAPID_KEYS: pushReady(),
+    WHATSAPP: !!(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
+    WHATSAPP_WEBHOOK: !!(process.env.WHATSAPP_APP_SECRET && process.env.WHATSAPP_VERIFY_TOKEN),
   };
   try {
     const db = await getDb();

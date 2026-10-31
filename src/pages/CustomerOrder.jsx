@@ -10,6 +10,7 @@ import { MenuTab } from "./customer/MenuTab.jsx";
 import { StatusTab } from "./customer/StatusTab.jsx";
 import { HelpTab } from "./customer/HelpTab.jsx";
 import { DiceGame } from "./customer/DiceGame.jsx";
+import { InstaPopup, instaDue } from "./customer/InstaPopup.jsx";
 import { DEFAULT_HELP } from "../../shared/tableHelp.js";
 import { freeDeliveryGap } from "../../shared/tableGroups.js";
 import { addonsTotal, checkAddons } from "../../shared/addons.js";
@@ -48,6 +49,7 @@ export default function CustomerOrder() {
   const [billAsk, setBillAsk] = useState(false);
   const [dicing, setDicing] = useState(false); // the dice game sheet
   const [playing, setPlaying] = useState(false); // the games while waiting
+  const [insta, setInsta] = useState(false); // "post a story, get a meal free" (after ordering)
   const [toast, setToast] = useState(null); // { orderNo, status }: an order just moved on
   // A code sent on WhatsApp comes in the link (?code=…) and is put in the cart's coupon box.
   const [offerCode, setOfferCode] = useState(() => (params.get("code") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20));
@@ -395,6 +397,7 @@ export default function CustomerOrder() {
             qtyOf={qtyOf}
             onMenu={() => go("menu")}
             onGames={() => setPlaying(true)}
+            onInsta={data?.insta ? () => setInsta(true) : null}
             helpOn={helpOn}
           />
         )}
@@ -515,6 +518,7 @@ export default function CustomerOrder() {
         </button>
       )}
 
+      {insta && data?.insta && !playing && <InstaPopup token={token} insta={data.insta} cur={cur} onClose={() => setInsta(false)} />}
       {dicing && data?.dice && (
         <DiceGame
           token={token}
@@ -559,6 +563,7 @@ export default function CustomerOrder() {
             setOfferCode("");
             setReview(false);
             go("orders");
+            if (data?.insta && instaDue(token)) setTimeout(() => setInsta(true), 900);
           }}
         />
       )}

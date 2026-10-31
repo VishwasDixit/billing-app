@@ -19,12 +19,17 @@ import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.
 import { loyaltyRule, useReward, releaseReward, dishOf, freeLine, loyaltyState } from "./loyalty.js";
 import { storeOpen, hoursText } from "../../shared/hours.js";
 import { helpSettings } from "../../shared/tableHelp.js";
+import { waReady } from "../whatsapp.js";
+import { noteContact, autoSettings } from "../marketing.js";
 import { diceRule } from "../../shared/dice.js";
 import { pushToShop, MONEY_ROLES } from "../push.js";
 import { DEVICE_RE, deviceHash, phoneCheck, oneWaitingOrder, trustOrderDevice } from "../phoneTrust.js";
 import { groupOf, groupPrice, deliveryLine, deliveryRule, servedAt } from "../../shared/tableGroups.js";
 import { addonGroupsFor, checkAddons, addonsTotal, MAX_LINE_ADDONS } from "../../shared/addons.js";
 import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
+
+// Instagram story reward, if on: the handle to follow and the most a free meal can be.
+const instaOffer = (shop) => (shop.insta?.on && shop.insta.handle ? { handle: shop.insta.handle, max: shop.insta.maxDiscount || 99 } : null);
 
 // The dice game, if on: what a 7 wins.
 const diceOffer = (shop) => {
@@ -331,6 +336,8 @@ export default [
         upi: !!shop.upiId,
         offers: await menuOffers(db, shop),
         dice: diceOffer(shop),
+        wa: waReady(shop) && autoSettings(shop).on, // asks for "offers on WhatsApp" in the cart
+        insta: instaOffer(shop),
         online: !!shop.gateway?.name,
         popular: await popularItems(db, shop, menu),
         help: helpSettings(shop),
@@ -366,6 +373,8 @@ export default [
           promo: z.string().trim().max(40).optional().default(""),
           // This phone's random key (remembers a number once the shop accepts an order from it).
           device: z.string().regex(DEVICE_RE).optional(),
+          // "Send me offers and new dishes on WhatsApp" (Auto WhatsApp), ticked by the customer.
+          waOptIn: z.boolean().optional().default(false),
         })
         .parse(body);
       const state = await orderingState(db, shop);
@@ -447,6 +456,7 @@ export default [
         if (loyalty) await releaseReward(db, shop._id, clientId);
         throw err;
       }
+      await noteContact(db, shop._id, { phone: input.phone, name: input.name, optIn: input.waOptIn && waReady(shop) });
       const count = items.reduce((n, i) => n + (i.charge ? 0 : i.qty), 0);
       await pushToShop(db, shop._id, { title: `🍽️ New order #${doc.orderNo} · ${table.name}`, body: `${count} item${count === 1 ? "" : "s"} · ${input.name}. Tap to open Orders.`, key: `order:${table.id}` });
       const st = loyaltyRule(shop) ? await loyaltyState(db, shop, input.phone) : null;

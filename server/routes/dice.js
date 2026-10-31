@@ -7,20 +7,18 @@ import { HttpError } from "../http.js";
 import { cleanMobile } from "./customers.js";
 import { rateLimit, clientIp } from "../limits.js";
 import { shopByToken } from "./orders.js";
-import { PromoIn } from "./promos.js";
+import { PromoIn, randomCode } from "./promos.js";
 import { istDay } from "../../shared/hours.js";
 import { diceRule, isWin } from "../../shared/dice.js";
 
 const face = () => crypto.randomInt(1, 7); // 1–6, each equally likely
-const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const randomCode = () => "DICE" + Array.from({ length: 5 }, () => CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]).join("");
 
 const view = (r, phone) => ({ dice: r.dice, win: r.win, code: r.phone === phone ? r.code || "" : "", mine: r.phone === phone });
 
 // The winner's code: only their mobile, once, today.
 async function winCode(db, shop, rule, phone, day) {
   for (let i = 0; i < 5; i++) {
-    const p = PromoIn.parse({ code: randomCode(), description: "Dice game win", type: "percent", value: rule.percent, maxDiscount: rule.maxDiscount, minOrder: rule.minOrder, validFrom: day, validTo: day, maxUses: 1, onePerPhone: true, phones: [phone] });
+    const p = PromoIn.parse({ code: randomCode("DICE"), description: "Dice game win", type: "percent", value: rule.percent, maxDiscount: rule.maxDiscount, minOrder: rule.minOrder, validFrom: day, validTo: day, maxUses: 1, onePerPhone: true, phones: [phone] });
     try {
       await db.collection("promos").insertOne({ shopId: shop._id, ...p, source: "dice", uses: 0, discountGiven: 0, createdAt: new Date(), updatedAt: new Date() });
       return p.code;
