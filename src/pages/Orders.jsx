@@ -275,6 +275,9 @@ export default function Orders() {
                   <div className="small">
                     For <b>{o.customerName}</b>
                     {o.customerPhone && <> · <a href={`tel:${o.customerPhone}`}>📞 {o.customerPhone}</a></>}
+                    {/* Not confirmed yet: no accepted order from this number on this phone. */}
+                    {o.phoneCheck === "new" && <> <span className="tag warn" title="First order from this number. Check at the table before cooking.">🆕 New number · check at table</span></>}
+                    {o.phoneCheck === "known" && <> <span className="tag" title="This number has ordered before, but from another phone.">📱 Known number, new phone</span></>}
                   </div>
                 )}
                 <ul className="order-items">

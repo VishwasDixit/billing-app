@@ -6,8 +6,9 @@ import { STEPS, stepIndex, customerReason } from "./common.js";
 import { OrderPay, BillBox, Instructions } from "./parts.jsx";
 import { addonText } from "../../../shared/addons.js";
 import { PopularCard } from "./MenuTab.jsx";
+import { CookingScene } from "./CookingScene.jsx";
 
-export function StatusTab({ token, data, mine, cur, returning, canOrder, refreshMine, onAskBill, quickAdd, less, qtyOf, onMenu, helpOn = true }) {
+export function StatusTab({ token, data, mine, cur, returning, canOrder, refreshMine, onAskBill, quickAdd, less, qtyOf, onMenu, onGames, helpOn = true }) {
   const [showPast, setShowPast] = useState(false);
   const list = [...mine].reverse().filter((o) => o.status !== "billed");
   const closed = (o) => o.status === "rejected" || o.status === "unpaid";
@@ -17,6 +18,7 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
   const justClosed = list.filter((o) => closed(o) && recent(o));
   const past = list.filter((o) => closed(o) && !recent(o));
   const cooking = mine.some((o) => ["new", "accepted", "preparing", "ready", "served"].includes(o.status));
+  const waiting = live.some((o) => ["new", "accepted", "preparing"].includes(o.status));
   const byId = useMemo(() => new Map((data.menu || []).map((m) => [m.id, m])), [data.menu]);
   const more = (data.popular || []).map((id) => byId.get(id)).filter(Boolean).slice(0, 8);
 
@@ -51,6 +53,17 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
         onChange={refreshMine}
       />
 
+      {waiting && onGames && (
+        <button className="gm-open-btn" onClick={onGames}>
+          <span className="gm-open-icons" aria-hidden="true">🛵🎲♟️</span>
+          <span>
+            <b>Play while you wait</b>
+            <small>Tiffin Dash, Ludo or chess. We'll tell you when your food moves along.</small>
+          </span>
+          <span className="gm-open-go">Play →</span>
+        </button>
+      )}
+
       {live.map((o) => {
         const at = stepIndex(o.status);
         const items = (o.items || []).filter((i) => !i.charge);
@@ -64,13 +77,16 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
               </div>
               <span className={`co-pill ${PILL[o.status] || "new"}`}>{STEPS[at][1]}</span>
             </div>
+            <CookingScene status={o.status} seed={Number(String(o.orderNo).replace(/\D/g, "")) + Math.floor(Date.now() / 15000)} />
             <div className="co-now">
-              <span className="co-now-icon" aria-hidden="true">{STEPS[at][3]}</span>
               <div>
                 <b>{STEPS[at][1]}</b>
                 <div className="small muted">{STEPS[at][2]}</div>
               </div>
             </div>
+            {o.status === "new" && (o.phoneCheck === "new" || o.phoneCheck === "known") && (
+              <div className="co-verify small">📱 First order from this number on this phone: the staff will confirm it at your table. After that, you can order more any time.</div>
+            )}
             <ol className="co-track" aria-label="Order progress">
               {STEPS.map(([k, label], i) => (
                 <li key={k} className={i < at ? "done" : i === at ? "now" : ""}><i />{label}</li>

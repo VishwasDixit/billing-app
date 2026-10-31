@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { post } from "../../lib/api.js";
 import { money } from "../../lib/format.js";
-import { couponNudge } from "./common.js";
+import { couponNudge, deviceKey } from "./common.js";
 import { PopularCard } from "./MenuTab.jsx";
 import { computeTotals } from "../../../shared/totals.js";
 import { deliveryLine, freeDeliveryGap } from "../../../shared/tableGroups.js";
@@ -112,8 +112,8 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
       /* private mode */
     }
     try {
-      const r = await post(`/public/shop/${token}/orders`, { table: table.id, items, name: name.trim(), phone: mobile, ...(promo && { promo: promo.code }) });
-      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, promo: r.promo || null, loyalty: r.loyalty || null, streak: r.streak || null, tableId: table.id, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
+      const r = await post(`/public/shop/${token}/orders`, { table: table.id, items, name: name.trim(), phone: mobile, device: deviceKey(), ...(promo && { promo: promo.code }) });
+      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, phoneCheck: r.phoneCheck || "", pay: r.pay, promo: r.promo || null, loyalty: r.loyalty || null, streak: r.streak || null, tableId: table.id, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
     } catch (err) {
       // The code stopped working (used up, wrong time, used on this mobile): say so and let them order without it.
       if (err.data?.code === "PROMO") {
@@ -249,7 +249,7 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
             <div className="co-contact">
               <input className="input" placeholder="Your name *" autoComplete="name" maxLength={40} value={name} onChange={(e) => setName(e.target.value)} required />
               <input className="input" placeholder="Mobile number *" type="tel" inputMode="tel" autoComplete="tel" maxLength={16} value={phone} onChange={(e) => setPhone(e.target.value)} required />
-              <span className="small muted">So the restaurant can reach you about your order.</span>
+              <span className="small muted">So the restaurant can reach you about your order. A new number's first order is confirmed by the staff at your table.</span>
             </div>
           )}
         </section>

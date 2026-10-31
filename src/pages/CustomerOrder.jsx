@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { get } from "../lib/api.js";
 import { money } from "../lib/format.js";
@@ -13,6 +13,20 @@ import { DiceGame } from "./customer/DiceGame.jsx";
 import { DEFAULT_HELP } from "../../shared/tableHelp.js";
 import { freeDeliveryGap } from "../../shared/tableGroups.js";
 import { addonsTotal, checkAddons } from "../../shared/addons.js";
+
+// Games load only when opened (the menu page stays light); the app caches them for offline.
+const Games = lazy(() => import("./customer/games/Games.jsx"));
+
+// What a status change says, on the toast and on the games' status bar.
+const MOVED = {
+  new: { icon: "📨", text: "waiting for the staff to confirm", tone: "" },
+  accepted: { icon: "👨‍🍳", text: "accepted: the kitchen has it", tone: "cook" },
+  preparing: { icon: "🍳", text: "is being cooked", tone: "cook" },
+  ready: { icon: "🛎️", text: "Your food is ready!", tone: "ready" },
+  served: { icon: "😋", text: "served. Enjoy your meal!", tone: "ready" },
+  rejected: { icon: "⚠️", text: "wasn't accepted. Please ask the staff.", tone: "off" },
+  unpaid: { icon: "⚠️", text: "was closed as not paid.", tone: "off" },
+};
 
 // The page a customer sees after scanning a table's QR code: menu, cart, their orders and help.
 // Three tabs at the bottom (Menu · My orders · Help), the cart bar just above them.
@@ -33,6 +47,8 @@ export default function CustomerOrder() {
   );
   const [billAsk, setBillAsk] = useState(false);
   const [dicing, setDicing] = useState(false); // the dice game sheet
+  const [playing, setPlaying] = useState(false); // the games while waiting
+  const [toast, setToast] = useState(null); // { orderNo, status }: an order just moved on
   // A code sent on WhatsApp comes in the link (?code=…) and is put in the cart's coupon box.
   const [offerCode, setOfferCode] = useState(() => (params.get("code") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20));
   const [tableQ, setTableQ] = useState("");
@@ -182,6 +198,31 @@ export default function CustomerOrder() {
     tick();
     return () => clearInterval(t);
   }, [token, mine.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // An order moved on (accepted, cooking, ready…): a toast, even over the games, and a buzz.
+  const seenStatus = useRef(null);
+  useEffect(() => {
+    const prev = seenStatus.current;
+    seenStatus.current = new Map(mine.map((o) => [o.id, o.status]));
+    if (!prev) return;
+    const moved = mine.filter((o) => prev.has(o.id) && prev.get(o.id) !== o.status && MOVED[o.status] && o.status !== "new");
+    if (!moved.length) return;
+    const o = moved.at(-1);
+    setToast({ orderNo: o.orderNo, status: o.status, at: Date.now() });
+    try {
+      navigator.vibrate?.(o.status === "ready" ? [120, 80, 120] : 60);
+    } catch {
+      /* not supported */
+    }
+  }, [mine]);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), toast.status === "ready" ? 12000 : 7000);
+    return () => clearTimeout(t);
+  }, [toast]);
+  // The order the games' bar follows: the newest one still on its way.
+  const following = [...mine].reverse().find((o) => ["new", "accepted", "preparing", "ready"].includes(o.status)) || [...mine].reverse().find((o) => o.status === "served");
+  const followStatus = following && { orderNo: following.orderNo, ...MOVED[following.status] };
 
   // Waiting for the staff's answer: check every 10 s on the Help tab, else every 20 s.
   // (any request not marked done in the last 2 hours: staff may write again)
@@ -353,6 +394,7 @@ export default function CustomerOrder() {
             less={less}
             qtyOf={qtyOf}
             onMenu={() => go("menu")}
+            onGames={() => setPlaying(true)}
             helpOn={helpOn}
           />
         )}
@@ -447,6 +489,30 @@ export default function CustomerOrder() {
           onChoose={() => (setCustom({ m: repeat.m }), setRepeat(null))}
           onRepeat={() => (changeQty(repeat.line.key, 1), setRepeat(null))}
         />
+      )}
+
+      {playing && (
+        <Suspense fallback={<div className="gm-page"><div className="gm-loading"><span className="co-spinner" />Loading games…</div></div>}>
+          <Games status={followStatus} onClose={() => (setPlaying(false), setTab("orders"))} />
+        </Suspense>
+      )}
+      {toast && (
+        <button
+          key={toast.at}
+          className={`co-toast ${MOVED[toast.status].tone}`}
+          role="status"
+          onClick={() => {
+            setToast(null);
+            if (playing) history.back();
+            go("orders");
+          }}
+        >
+          <span className="co-toast-icon" aria-hidden="true">{MOVED[toast.status].icon}</span>
+          <span>
+            {toast.status === "ready" ? <><b>Your food is ready!</b> Order #{toast.orderNo}</> : <><b>Order #{toast.orderNo}</b> {MOVED[toast.status].text}</>}
+          </span>
+          <span className="co-toast-x">Tap to see</span>
+        </button>
       )}
 
       {dicing && data?.dice && (

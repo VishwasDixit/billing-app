@@ -21,6 +21,7 @@ import { storeOpen, hoursText } from "../../shared/hours.js";
 import { helpSettings } from "../../shared/tableHelp.js";
 import { diceRule } from "../../shared/dice.js";
 import { pushToShop, MONEY_ROLES } from "../push.js";
+import { DEVICE_RE, deviceHash, phoneCheck, oneWaitingOrder, trustOrderDevice } from "../phoneTrust.js";
 import { groupOf, groupPrice, deliveryLine, deliveryRule, servedAt } from "../../shared/tableGroups.js";
 import { addonGroupsFor, checkAddons, addonsTotal, MAX_LINE_ADDONS } from "../../shared/addons.js";
 import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
@@ -76,7 +77,7 @@ const StaffOrderIn = z.object({
     .max(MAX_LINES),
 });
 
-export function publicOrder({ _id, shopId, customerKey, ...o }) {
+export function publicOrder({ _id, shopId, customerKey, deviceHash, ...o }) {
   return { ...o, id: String(_id) };
 }
 
@@ -256,6 +257,7 @@ async function approveOnline(db, shop, cfOrderId, { amount, payment }) {
   const u = await db.collection("orders").findOneAndUpdate({ _id: o._id, status: o.status, "pay.state": o.pay.state }, { $set, $unset: { "pay.failedAt": "" } }, { returnDocument: "after" });
   if (!u) return db.collection("orders").findOne({ _id: o._id }); // the other signal got there first
   if ($set.status === "accepted") await takeStock(db, shop._id, u.items, { orderId: u.clientId });
+  if ($set.status === "accepted") await trustOrderDevice(db, u);
   if (!closed) await createOrderBill(db, shop, u, { name: "Online (Cashfree)" });
   return db.collection("orders").findOne({ _id: o._id });
 }
@@ -362,6 +364,8 @@ export default [
           name: z.string().trim().min(2, "Please enter your name.").max(40),
           phone: z.string().trim().max(16).transform((p, ctx) => cleanMobile(p) || (ctx.addIssue({ code: "custom", message: "Please enter a 10-digit mobile number." }), z.NEVER)),
           promo: z.string().trim().max(40).optional().default(""),
+          // This phone's random key (remembers a number once the shop accepts an order from it).
+          device: z.string().regex(DEVICE_RE).optional(),
         })
         .parse(body);
       const state = await orderingState(db, shop);
@@ -381,6 +385,14 @@ export default [
       if (notHere) throw new HttpError(400, `${notHere.name} is not served at this table. Please refresh the menu.`);
       const stockProblem = checkAvailable(menuById, items);
       if (stockProblem) throw new HttpError(409, stockProblem, { code: "STOCK" });
+      // A number not yet confirmed on this phone (staff see "new number"): one order waits for
+      // the staff at a time. The QR page always sends its key; without one only the badge applies.
+      const device = deviceHash(input.device);
+      const check = await phoneCheck(db, shop._id, input.phone, device);
+      if (check !== "trusted" && device) {
+        await oneWaitingOrder(db, shop._id, input.phone, device);
+        await rateLimit(db, `qr-order:unverified:${shop._id}:${device}`, 8, "Too many orders from this phone. Please ask the staff.");
+      }
       const clientId = crypto.randomUUID();
       // Free delivery and promo minimums go by the food, before any charge or discount.
       const food = orderTotal(items);
@@ -413,6 +425,8 @@ export default [
         tableName: table.name,
         customerName: input.name,
         customerPhone: input.phone,
+        phoneCheck: check,
+        ...(device && { deviceHash: device }),
         customer: { ...customer, name: input.name },
         note: "",
         items,
@@ -436,7 +450,7 @@ export default [
       const count = items.reduce((n, i) => n + (i.charge ? 0 : i.qty), 0);
       await pushToShop(db, shop._id, { title: `🍽️ New order #${doc.orderNo} · ${table.name}`, body: `${count} item${count === 1 ? "" : "s"} · ${input.name}. Tap to open Orders.`, key: `order:${table.id}` });
       const st = loyaltyRule(shop) ? await loyaltyState(db, shop, input.phone) : null;
-      return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, pay: publicPay(doc), ...(promo && { promo }), ...(loyalty && { loyalty }), ...(st && { streak: { count: st.count, need: st.need } }) };
+      return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, phoneCheck: check, pay: publicPay(doc), ...(promo && { promo }), ...(loyalty && { loyalty }), ...(st && { streak: { count: st.count, need: st.need } }) };
     },
     { auth: false },
   ],
@@ -727,6 +741,7 @@ export default [
         .findOneAndUpdate({ _id: o._id, status: o.status, "pay.state": o.pay?.state ?? null }, { $set }, { returnDocument: "after" });
       if (!u) throw new HttpError(409, "Someone just updated this order. Please refresh.");
       if ($set.status === "accepted") await takeStock(db, shop._id, u.items, { orderId: u.clientId });
+      if ($set.status === "accepted") await trustOrderDevice(db, u);
       let bill = null;
       if (action === "confirm") {
         bill = await createOrderBill(db, shop, u, user);
@@ -876,6 +891,7 @@ export default [
         { returnDocument: "after" }
       );
       if (o && status === "accepted") await takeStock(db, shop._id, o.items, { orderId: o.clientId });
+      if (o && status === "accepted") await trustOrderDevice(db, o);
       // A cancelled order gives its promo code use back.
       if (o && status === "rejected" && o.promo) await releasePromo(db, shop._id, o.clientId);
       if (o && status === "rejected" && o.loyalty) await releaseReward(db, shop._id, o.clientId);
