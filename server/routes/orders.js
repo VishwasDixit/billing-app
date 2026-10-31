@@ -16,6 +16,7 @@ import { subscriptionStatus, hasPaidFeatures } from "../subscription.js";
 import { rateLimit, clientIp } from "../limits.js";
 import { refreshDailyStock, takeStock, checkAvailable } from "../stock.js";
 import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.js";
+import { loyaltyRule, useReward, releaseReward, dishOf, freeLine, loyaltyState } from "./loyalty.js";
 import { storeOpen, hoursText } from "../../shared/hours.js";
 import { helpSettings } from "../../shared/tableHelp.js";
 import { pushToShop, MONEY_ROLES } from "../push.js";
@@ -215,7 +216,7 @@ async function expireUnpaid(db, shop) {
   if (shop.payFail !== "cancel" || !shop.gateway) return;
   const old = await db
     .collection("orders")
-    .find({ shopId: shop._id, status: "new", "pay.rule": "first", "pay.state": "due", createdAt: { $lt: new Date(Date.now() - UNPAID_MINUTES * 60e3) } }, { projection: { clientId: 1, promo: 1 } })
+    .find({ shopId: shop._id, status: "new", "pay.rule": "first", "pay.state": "due", createdAt: { $lt: new Date(Date.now() - UNPAID_MINUTES * 60e3) } }, { projection: { clientId: 1, promo: 1, loyalty: 1 } })
     .toArray();
   for (const o of old) {
     const now = new Date();
@@ -223,6 +224,7 @@ async function expireUnpaid(db, shop) {
       .collection("orders")
       .updateOne({ _id: o._id, status: "new", "pay.state": "due" }, { $set: { status: "rejected", rejectReason: `Not paid in ${UNPAID_MINUTES} minutes`, rejectedAt: now, rejectedBy: "Auto", updatedAt: now } });
     if (r.modifiedCount && o.promo) await releasePromo(db, shop._id, o.clientId);
+    if (r.modifiedCount && o.loyalty) await releaseReward(db, shop._id, o.clientId);
   }
 }
 
@@ -381,6 +383,15 @@ export default [
         await reservePromo(db, p, { ref: clientId, phone: input.phone, amount });
         promo = { code: p.code, amount };
       }
+      // Loyalty streak: a free dish earned by ordering N days in a row (if it's in stock).
+      let loyalty = null;
+      if (loyaltyRule(shop)) {
+        const dish = await dishOf(db, shop, loyaltyRule(shop));
+        if (dish && !checkAvailable(menuById, [freeLine(dish)]) && (await useReward(db, shop, input.phone, clientId))) {
+          items.push(freeLine(dish));
+          loyalty = { free: dish.name };
+        }
+      }
       const delivery = deliveryLine(group, food);
       if (delivery) items.push(delivery);
       const now = new Date();
@@ -400,6 +411,7 @@ export default [
         total: orderTotal(items),
         status: "new",
         ...(promo && { promo }),
+        ...(loyalty && { loyalty }),
         // Not allowed to pay later (shop rule or blocked customer): pay before it's cooked.
         pay: payLaterOk(shop, customer) ? initialPay(payRuleOf(shop), payableTotal(shop, items, promo)) : initialPay("first", payableTotal(shop, items, promo), false),
         customerKey: crypto.randomBytes(12).toString("base64url"),
@@ -410,11 +422,13 @@ export default [
         doc._id = (await db.collection("orders").insertOne(doc)).insertedId;
       } catch (err) {
         if (promo) await releasePromo(db, shop._id, clientId);
+        if (loyalty) await releaseReward(db, shop._id, clientId);
         throw err;
       }
       const count = items.reduce((n, i) => n + (i.charge ? 0 : i.qty), 0);
       await pushToShop(db, shop._id, { title: `🍽️ New order #${doc.orderNo} · ${table.name}`, body: `${count} item${count === 1 ? "" : "s"} · ${input.name}. Tap to open Orders.`, key: `order:${table.id}` });
-      return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, pay: publicPay(doc), ...(promo && { promo }) };
+      const st = loyaltyRule(shop) ? await loyaltyState(db, shop, input.phone) : null;
+      return { orderId: doc.clientId, key: doc.customerKey, orderNo: doc.orderNo, total: doc.total, status: doc.status, pay: publicPay(doc), ...(promo && { promo }), ...(loyalty && { loyalty }), ...(st && { streak: { count: st.count, need: st.need } }) };
     },
     { auth: false },
   ],
@@ -856,6 +870,7 @@ export default [
       if (o && status === "accepted") await takeStock(db, shop._id, o.items, { orderId: o.clientId });
       // A cancelled order gives its promo code use back.
       if (o && status === "rejected" && o.promo) await releasePromo(db, shop._id, o.clientId);
+      if (o && status === "rejected" && o.loyalty) await releaseReward(db, shop._id, o.clientId);
       // A paid order that's cancelled: its bill goes to the Deleted bin (stock back if it was cooking).
       if (o && refund && cur0.billClientId) {
         const b = await db.collection("bills").findOne({ shopId: shop._id, clientId: cur0.billClientId, status: "paid" });

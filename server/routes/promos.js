@@ -176,6 +176,24 @@ export default [
       return { promo: publicPromo(u) };
     },
   ],
+  // Invited customers who haven't used the code yet (Settings › Promo codes › Remind).
+  [
+    "GET",
+    "/promos/:id/pending",
+    async ({ db, shop, params }) => {
+      const cur = await byId(db, shop, params.id);
+      if (!cur) throw new HttpError(404, "Code not found.");
+      if (!cur.phones?.length) return { pending: [] };
+      const used = new Set((await db.collection("promoUses").find({ promoId: cur._id, phone: { $in: cur.phones } }, { projection: { phone: 1 } }).toArray()).map((u) => u.phone));
+      const left = cur.phones.filter((ph) => !used.has(ph));
+      const names = new Map();
+      for (const c of await db.collection("customers").find({ shopId: shop._id }, { projection: { name: 1, phone: 1 } }).toArray()) {
+        const m = cleanMobile(c.phone);
+        if (m && !names.has(m)) names.set(m, c.name);
+      }
+      return { pending: left.map((phone) => ({ clientId: phone, phone, name: names.get(phone) || "there" })) };
+    },
+  ],
   // Staff at Billing: what this code takes off this subtotal.
   [
     "POST",

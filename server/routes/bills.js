@@ -2,7 +2,8 @@ import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { HttpError } from "../http.js";
 import { computeTotals, round2 } from "../../shared/totals.js";
-import { CustomerIn, upsertCustomer, udharStatusFor } from "./customers.js";
+import { CustomerIn, upsertCustomer, udharStatusFor, cleanMobile } from "./customers.js";
+import { useReward } from "./loyalty.js";
 import { accessEndsAt } from "../subscription.js";
 import { dayRange } from "./analytics.js";
 import { markOrdersBilled } from "./orders.js";
@@ -27,6 +28,7 @@ const BillIn = z.object({
         qty: z.number().int().positive().max(10000),
         rate: z.number().min(0).max(1000000),
         charge: z.boolean().optional(), // a delivery charge, not a dish
+        free: z.literal("loyalty").optional(), // the loyalty streak's free dish (rate 0)
         addons: z.array(z.object({ name: z.string().trim().min(1).max(30), price: z.number().min(0).max(10000) })).max(10).optional(),
       })
     )
@@ -53,6 +55,13 @@ export const MAX_BACKDATE_DAYS = 90;
 async function countBillPromo(db, shop, bill) {
   const p = await db.collection("promos").findOne({ shopId: shop._id, code: cleanCode(bill.promo.code), archived: { $ne: true } });
   if (p) await reservePromo(db, p, { ref: bill.clientId, phone: bill.customer?.phone || "", amount: bill.discount.amount, force: true });
+}
+
+async function countBillReward(db, shop, bill) {
+  const phone = cleanMobile(bill.customer?.phone);
+  if (bill.orderIds?.length && (await db.collection("orders").findOne({ shopId: shop._id, clientId: { $in: bill.orderIds }, loyalty: { $exists: true } }))) return;
+  const used = phone && (await useReward(db, shop, phone, bill.clientId));
+  if (!used) await db.collection("bills").updateOne({ _id: bill._id }, { $set: { loyaltyUnmatched: true } });
 }
 
 // ---------- Changing saved bills ----------
@@ -209,7 +218,7 @@ export default [
           ...(b.backdated ? { backdated: true, enteredAt: new Date() } : {}),
           ...(b.table ? { table: b.table } : {}),
           ...(b.orderIds?.length ? { orderIds: b.orderIds } : {}),
-          items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge, addons }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }), ...(addons?.length && { addons }) })),
+          items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge, addons, free }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }), ...(addons?.length && { addons }), ...(free && { free }) })),
           itemCount: t.itemCount,
           subtotal: t.subtotal,
           discount: t.discount,
@@ -232,6 +241,8 @@ export default [
           if (!b.orderIds?.length && b.status !== "void") await takeStock(db, shop._id, b.items, { billId: b.clientId });
           // A code applied at Billing counts one use (QR order codes were counted with the order).
           if (doc.promo?.source === "billing") await countBillPromo(db, shop, doc);
+          // A free streak dish added at Billing uses the customer's reward (QR orders used theirs already).
+          if (doc.items.some((i) => i.free === "loyalty")) await countBillReward(db, shop, doc);
           results.push({ clientId: b.clientId, ok: true });
         } catch (err) {
           if (err.code === 11000) results.push({ clientId: b.clientId, ok: true, duplicate: true });
@@ -296,7 +307,7 @@ export default [
       if (e.customer) await upsertCustomer(db, shop._id, e.customer);
       const at = new Date();
       const next = {
-        items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge, addons }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }), ...(addons?.length && { addons }) })),
+        items: t.lines.map(({ itemId, name, variant, category, qty, rate, amount, charge, addons, free }) => ({ itemId, name, variant, category, qty, rate, amount, ...(charge && { charge }), ...(addons?.length && { addons }), ...(free && { free }) })),
         itemCount: t.itemCount, subtotal: t.subtotal, discount: t.discount, gst: t.gst, total: t.total,
         paymentMode: e.paymentMode, paidNow, creditAmount: round2(t.total - paidNow),
         customer: e.customer ? { clientId: e.customer.clientId, name: e.customer.name, phone: e.customer.phone } : null,

@@ -1331,3 +1331,30 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .offer-bar { position: sticky; bottom: calc(var(--nav-h) + 8px); z-index: 15; display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; box-shadow: 0 4px 18px rgba(0, 0, 0, .12); }
 .offer-bar span { flex: 1; font-weight: 600; }
 @media (min-width: 900px) { .offer-bar { bottom: 12px; } }
+
+/* ---------- Celebration (code applied, free dish) ---------- */
+.celebrate { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: rgba(0, 0, 0, .35); animation: cel-fade .2s ease-out; cursor: pointer; }
+.confetti { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.confetti i { position: absolute; top: -20px; display: block; animation-name: cel-fall; animation-timing-function: cubic-bezier(.3, .6, .5, 1); animation-fill-mode: forwards; }
+.celebrate-card { position: relative; display: grid; justify-items: center; gap: 4px; min-width: 240px; max-width: calc(100vw - 48px); padding: 22px 28px; background: var(--panel); color: var(--text); border-radius: 20px; box-shadow: 0 18px 50px rgba(0, 0, 0, .3); text-align: center; animation: cel-pop .45s cubic-bezier(.2, 1.4, .4, 1); }
+.celebrate-emoji { font-size: 52px; line-height: 1; animation: cel-wiggle .8s ease-in-out .2s 2; }
+.celebrate-card b { font-size: 22px; }
+.celebrate-amount { font-size: 17px; }
+.celebrate-amount span { display: block; font-size: 34px; font-weight: 800; color: var(--good); }
+.celebrate-note { font-size: 14px; color: var(--muted); }
+@keyframes cel-fade { from { opacity: 0; } }
+@keyframes cel-pop { from { transform: scale(.4); opacity: 0; } }
+@keyframes cel-wiggle { 25% { transform: rotate(-14deg) scale(1.1); } 75% { transform: rotate(14deg) scale(1.1); } }
+@keyframes cel-fall { to { transform: translateY(105vh) rotate(720deg); opacity: .9; } }
+.promo-pop { animation: cel-pop .45s cubic-bezier(.2, 1.4, .4, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .confetti { display: none; }
+  .celebrate-card, .celebrate-emoji, .promo-pop { animation: none; }
+}
+
+/* ---------- Loyalty streak ---------- */
+.streak-strip { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--text); font-size: 14px; }
+.streak-strip.earned { background: var(--accent-soft); border: 1px solid var(--accent); }
+.co-free-line { background: var(--accent-soft); border-radius: 10px; padding: 8px; }
+.co-free-ico { width: 48px; height: 48px; display: grid; place-items: center; font-size: 28px; flex: none; }
+.co-streak { margin-bottom: 10px; }

@@ -94,14 +94,27 @@ export function checkPromo(p, { subtotal = 0, where = "billing", at = new Date()
 // Shown as "Promo WELCOME10" on bills instead of plain "Discount".
 export const promoLabel = (bill) => (bill?.promo?.code ? `Promo ${bill.promo.code}` : "Discount");
 
+// "10% off up to ₹100" / "₹50 off".
+const offText = (p, cur) => (p.type === "flat" ? `${rs(p.value, cur)} off` : `${p.value}% off${p.maxDiscount > 0 ? ` up to ${rs(p.maxDiscount, cur)}` : ""}`);
+
 // The WhatsApp message for a code sent to chosen customers. link: the order page with the code
 // ("" when the shop doesn't take QR orders: then show it at the counter).
 export function offerText(p, shopName, { link = "", cur = "₹" } = {}) {
-  const off = p.type === "flat" ? `${rs(p.value, cur)} off` : `${p.value}% off${p.maxDiscount > 0 ? ` up to ${rs(p.maxDiscount, cur)}` : ""}`;
   const extra = [p.minOrder > 0 && `min order ${rs(p.minOrder, cur)}`, p.validTo && `valid till ${dateText(p.validTo)}`].filter(Boolean).join(", ");
   return [
     `Hi {name}! 🎁 A special offer from ${shopName}, just for you.`,
-    `Use code *${p.code}* for ${off}${extra ? ` (${extra})` : ""}.`,
+    `Use code *${p.code}* for ${offText(p, cur)}${extra ? ` (${extra})` : ""}.`,
+    link ? `Order here: ${link}` : "Show this code at the counter when you pay.",
+  ].join("\n");
+}
+
+// A nudge for invited customers who haven't used their code yet.
+export function offerReminderText(p, shopName, { link = "", cur = "₹", at = new Date() } = {}) {
+  const today = new Date(at.getTime() + IST).toISOString().slice(0, 10);
+  const tomorrow = new Date(at.getTime() + IST + 864e5).toISOString().slice(0, 10);
+  const ends = !p.validTo ? "" : p.validTo === today ? " ends *today*" : p.validTo === tomorrow ? " ends *tomorrow*" : ` ends on ${dateText(p.validTo)}`;
+  return [
+    `Hi {name}! ⏰ Reminder from ${shopName}: your code *${p.code}* for ${offText(p, cur)}${p.minOrder > 0 ? ` (min order ${rs(p.minOrder, cur)})` : ""}${ends || " is waiting for you"}.`,
     link ? `Order here: ${link}` : "Show this code at the counter when you pay.",
   ].join("\n");
 }

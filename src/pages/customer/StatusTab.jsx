@@ -97,6 +97,8 @@ export function StatusTab({ token, data, mine, cur, returning, canOrder, refresh
             </ul>
             <div className="co-order-foot">
               {o.promo && <span className="co-save small">🏷 {o.promo.code} · you saved {money(o.promo.amount, cur)}</span>}
+              {o.loyalty && <span className="co-save small">🎁 Free {o.loyalty.free} · your streak reward</span>}
+              {!o.loyalty && o.streak?.count > 0 && <span className="co-save small">🔥 {o.streak.count}-day streak · {o.streak.need - o.streak.count} more day{o.streak.need - o.streak.count === 1 ? "" : "s"} for a free dish</span>}
               <span className="co-order-total"><span>Total</span><b>{money(o.total, cur)}</b></span>
             </div>
             <Instructions token={token} order={o} delivery={!!data.delivery || charges.length > 0} onSaved={refreshMine} />

@@ -367,7 +367,7 @@ export default function Orders() {
               for (const i of o.items) {
                 const k = `${i.itemId || i.name}|${i.variant || ""}|${i.rate}|${addonText(i.addons)}`;
                 const l = lines.get(k);
-                lines.set(k, l ? { ...l, qty: l.qty + i.qty } : { itemId: i.itemId || i.name, name: i.name, variant: i.variant || "", category: i.category || "", rate: i.rate, qty: i.qty, ...(i.addons?.length && { addons: i.addons }), ...(i.charge && { charge: true }) });
+                lines.set(k, l ? { ...l, qty: l.qty + i.qty } : { itemId: i.itemId || i.name, name: i.name, variant: i.variant || "", category: i.category || "", rate: i.rate, qty: i.qty, ...(i.addons?.length && { addons: i.addons }), ...(i.charge && { charge: true }), ...(i.free && { free: i.free }) });
               }
             // Orders paid but without their own bill (older ones) come off what's left to collect.
             const paid = toBill.filter((o) => o.pay?.state === "paid");

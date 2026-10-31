@@ -20,6 +20,7 @@ import orderRoutes from "./routes/orders.js";
 import kitchenRoutes from "./routes/kitchen.js";
 import staffRoutes from "./routes/staff.js";
 import promoRoutes from "./routes/promos.js";
+import loyaltyRoutes from "./routes/loyalty.js";
 import tableHelpRoutes from "./routes/tableHelp.js";
 import pushRoutes from "./routes/push.js";
 import { pushReady } from "./push.js";
@@ -42,6 +43,7 @@ const ROUTES = [
   ...kitchenRoutes,
   ...staffRoutes,
   ...promoRoutes,
+  ...loyaltyRoutes,
   ...tableHelpRoutes,
   ...pushRoutes,
 ].map(([method, path, handler, opts = {}]) => {

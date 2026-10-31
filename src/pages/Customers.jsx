@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useApp } from "../lib/store.jsx";
 import { get, post } from "../lib/api.js";
 import { money } from "../lib/format.js";
 import { Field, Modal, Seg, useAction, useToast } from "../components/ui.jsx";
 import { cleanCode, fillName, offerText, promoSummary } from "../../shared/promo.js";
+import { loyaltyMessage } from "../../shared/loyalty.js";
 import { NewCustomer } from "../components/CustomerPicker.jsx";
-import { reminderText, remindedToday, timeAgo, waLink, waNumber } from "../lib/udhar.js";
+import { SendQueue } from "../components/SendQueue.jsx";
+import { reminderText, remindedToday, timeAgo, waNumber } from "../lib/udhar.js";
 
 export default function Customers() {
   const { customers, shop, loadCustomers, online, user } = useApp();
@@ -22,6 +24,30 @@ export default function Customers() {
   const [chosen, setChosen] = useState(() => new Set());
   const [offering, setOffering] = useState(false);
   const canOffer = (c) => !!waNumber(c.phone);
+  // Loyalty streak: tell every customer about it, with their own progress.
+  const loyaltyOn = !!shop.loyalty?.on && user?.role !== "manager";
+  const [params, setParams] = useSearchParams();
+  const [streakBusy, setStreakBusy] = useState(false);
+  const startStreak = async () => {
+    setStreakBusy(true);
+    try {
+      const r = await get("/loyalty/customers");
+      if (!r.customers.length) return toast("No customers with a mobile number yet.");
+      const link = shop.qrOrdering && shop.orderToken ? `${window.location.origin}/order/${shop.orderToken}` : "";
+      setPicking(false);
+      setQueue({ kind: "streak", list: r.customers, index: 0, sent: 0, textFor: (c) => fillName(loyaltyMessage(shop.name, { count: c.count, need: r.need, dish: r.dish, link, reward: c.reward }), c.name) });
+    } catch (err) {
+      toast(err.offline ? "Streak reminders need internet." : err.message);
+    } finally {
+      setStreakBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (params.get("streak") && loyaltyOn) {
+      setParams({}, { replace: true });
+      startStreak();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     loadCustomers().catch(() => {});
@@ -63,6 +89,9 @@ export default function Customers() {
       <div className="page-head">
         <h1>Udhar</h1>
         <div className="btn-row">
+          {loyaltyOn && !picking && (
+            <button className="btn" disabled={streakBusy} onClick={startStreak}>🔥 Streak reminders</button>
+          )}
           {user?.role !== "manager" && !picking && (
             <button className="btn" onClick={() => (setPicking(true), setTab("all"), setQueue(null))}>🏷 Send offer</button>
           )}
@@ -82,14 +111,14 @@ export default function Customers() {
       {queue && (
         <SendQueue
           queue={queue}
-          title={queue.kind === "offer" ? "Offer" : "Reminder"}
-          amount={(c) => (queue.kind === "offer" ? "" : money(c.due, cur))}
-          textFor={(c) => (queue.kind === "offer" ? fillName(queue.text, c.name) : reminderText(c, shop))}
+          title={queue.kind === "offer" ? "Offer" : queue.kind === "streak" ? "Streak message" : "Reminder"}
+          amount={(c) => (queue.kind === "remind" ? money(c.due, cur) : queue.kind === "streak" ? (c.reward ? "🎁 Reward waiting" : c.count ? `🔥 ${c.count}-day streak` : "") : "")}
+          textFor={(c) => (queue.kind === "offer" ? fillName(queue.text, c.name) : queue.kind === "streak" ? queue.textFor(c) : reminderText(c, shop))}
           onOpen={(c) => queue.kind === "remind" && post(`/customers/${c.id}/reminded`).catch(() => {})}
           onChange={setQueue}
           onDone={(sent) => {
             setQueue(null);
-            toast(queue.kind === "offer" ? `Offer sent to ${sent} customer${sent === 1 ? "" : "s"}` : `Reminders sent: ${sent}`);
+            toast(queue.kind === "remind" ? `Reminders sent: ${sent}` : `Sent to ${sent} customer${sent === 1 ? "" : "s"}`);
             if (queue.kind === "remind") loadCustomers().catch(() => {});
           }}
         />
@@ -188,55 +217,6 @@ export default function Customers() {
           }}
         />
       )}
-    </div>
-  );
-}
-
-// Steps through customers one by one (udhar reminders, or an offer): open WhatsApp with the
-// message ready, tap Send, then Next.
-function SendQueue({ queue, title, amount, textFor, onOpen, onChange, onDone }) {
-  const { list, index, sent } = queue;
-  const c = list[index];
-  const [opened, setOpened] = useState(false);
-  useEffect(() => setOpened(false), [index]);
-  const text = textFor(c);
-  const link = waLink(c.phone, text);
-  const next = (didSend) => {
-    const s = sent + (didSend ? 1 : 0);
-    if (index + 1 >= list.length) onDone(s);
-    else onChange({ ...queue, index: index + 1, sent: s });
-  };
-
-  return (
-    <div className="remind-panel">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-        <b>{title} {index + 1} of {list.length}</b>
-        <button className="btn btn-sm btn-ghost" onClick={() => onDone(sent)}>Stop</button>
-      </div>
-      <div>
-        <div style={{ fontSize: 18 }}><b>{c.name}</b>{amount(c) && <> · <span className="due-text">{amount(c)}</span></>}</div>
-        <div className="muted small">{c.phone}</div>
-      </div>
-      <pre className="diag-log" style={{ minHeight: 0 }}>{text}</pre>
-      <div className="btn-row">
-        <a
-          className="btn btn-wa btn-lg"
-          style={{ flex: 1 }}
-          href={link}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={() => {
-            setOpened(true);
-            onOpen(c);
-          }}
-        >
-          Open WhatsApp
-        </a>
-        <button className={"btn btn-lg" + (opened ? " btn-primary" : "")} onClick={() => next(opened)}>
-          {index + 1 >= list.length ? "Finish" : opened ? "Next →" : "Skip"}
-        </button>
-      </div>
-      <p className="hint" style={{ margin: 0 }}>Tap “Open WhatsApp”, press Send in WhatsApp, then come back and tap Next.</p>
     </div>
   );
 }

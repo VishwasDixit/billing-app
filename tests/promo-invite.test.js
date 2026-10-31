@@ -3,7 +3,7 @@
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import http from "node:http";
 import { MongoMemoryServer } from "mongodb-memory-server";
-import { checkPromo, fillName, offerText } from "../shared/promo.js";
+import { checkPromo, fillName, offerText, offerReminderText } from "../shared/promo.js";
 
 let mongod, server, base, closeDb, getDb;
 
@@ -57,6 +57,14 @@ describe("invite-only rules", () => {
     expect(fillName(t, "Ravi Kumar")).toMatch(/^Hi Ravi!/);
     expect(offerText(p, "Cafe")).toContain("at the counter");
   });
+
+  it("writes the reminder", () => {
+    const at = new Date("2026-11-05T06:00:00Z"); // 11:30 am IST
+    expect(offerReminderText({ ...p, validTo: "2026-11-05" }, "Cafe", { at })).toContain("ends *today*");
+    expect(offerReminderText({ ...p, validTo: "2026-11-06" }, "Cafe", { at })).toContain("ends *tomorrow*");
+    expect(offerReminderText({ ...p, validTo: "2026-11-09" }, "Cafe", { at, link: "https://x" })).toMatch(/ends on 9 Nov 2026[\s\S]*https:\/\/x/);
+    expect(offerReminderText({ ...p, validTo: "" }, "Cafe", { at })).toContain("is waiting for you");
+  });
 });
 
 describe("codes for invited customers", () => {
@@ -103,6 +111,15 @@ describe("codes for invited customers", () => {
     expect(r.status).toBe(200);
     expect(r.body.promo.phones.sort()).toEqual(["9876500001", "9876500002", "9876500003"]);
     expect((await tryCode("9876500002")).body.amount).toBe(20);
+  });
+
+  it("lists invited customers who haven't used it", async () => {
+    // 9876500003 ordered with it above; 9876500001 and 9876500002 haven't.
+    await c("POST", "/customers", { clientId: "6f1b1f0e-6a0c-4c1e-9c3a-111111111111", name: "Asha Rao", phone: "+91 98765 00001" });
+    const r = await c("GET", `/promos/${promo.id}/pending`);
+    expect(r.status).toBe(200);
+    expect(r.body.pending.map((x) => x.phone).sort()).toEqual(["9876500001", "9876500002"]);
+    expect(r.body.pending.find((x) => x.phone === "9876500001").name).toBe("Asha Rao");
   });
 
   it("billing needs the customer's invited mobile", async () => {

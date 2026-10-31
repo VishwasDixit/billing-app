@@ -1,7 +1,7 @@
 // The cart page (like Swiggy/Zomato): dishes with steppers, "complete your meal", coupons,
 // bill details, your details, and a sticky Place-order bar. No notes here: customers add cooking
 // and delivery instructions once the shop accepts the order (My orders).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { post } from "../../lib/api.js";
 import { money } from "../../lib/format.js";
 import { couponNudge } from "./common.js";
@@ -10,6 +10,8 @@ import { computeTotals } from "../../../shared/totals.js";
 import { deliveryLine, freeDeliveryGap } from "../../../shared/tableGroups.js";
 import { addonText } from "../../../shared/addons.js";
 import { defaultImageFor } from "../../../shared/menuImages.js";
+import { Celebrate } from "../../components/Celebrate.jsx";
+import { streakText } from "../../../shared/loyalty.js";
 
 export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit, onClose, onPlaced, offers, initialCode, cardProps, priceNote }) {
   const delivery = data.delivery || null;
@@ -34,8 +36,31 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
   const [promo, setPromo] = useState(null); // { code, amount }
   const [promoErr, setPromoErr] = useState("");
   const [checking, setChecking] = useState(false);
+  const [party, setParty] = useState(null); // { amount, note }: the "you saved" burst
+  // Loyalty streak for this mobile: progress, or a free dish the restaurant adds to this order.
+  const [loyal, setLoyal] = useState(null);
+  const cheered = useRef(false);
+  useEffect(() => {
+    if (!contactOk) return setLoyal(null);
+    let alive = true;
+    post(`/public/shop/${token}/loyalty`, { phone: mobile }).then(
+      (r) => {
+        if (!alive || !r.on || !r.dish) return setLoyal(null);
+        setLoyal(r);
+        if (r.reward && !cheered.current) {
+          cheered.current = true;
+          setParty({ title: "Streak reward! 🔥", note: `Your free ${r.dish.name} is added to this order` });
+        }
+      },
+      () => {}
+    );
+    return () => {
+      alive = false;
+    };
+  }, [mobile, contactOk]); // eslint-disable-line react-hooks/exhaustive-deps
   const items = lines.map((l) => ({ itemId: l.itemId, variant: l.variant, qty: l.qty, addons: l.addonIds || [] }));
-  const applyCode = async (c = code) => {
+  // quiet: the cart changed and the code is checked again (no celebration).
+  const applyCode = async (c = code, quiet = false) => {
     c = c.trim().toUpperCase();
     if (!c) return;
     setChecking(true);
@@ -44,6 +69,7 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
       const r = await post(`/public/shop/${token}/promo`, { code: c, items, phone: mobile, table: table.id });
       setPromo({ code: r.code, amount: r.amount });
       setCode(r.code);
+      if (!quiet && r.amount > 0) setParty({ amount: money(r.amount, cur), note: `Code ${r.code} applied` });
     } catch (err) {
       setPromo(null);
       setPromoErr(err.offline ? "No internet on this phone. Please try again." : err.message);
@@ -57,7 +83,7 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
   // The cart changed: a code's amount may change too, so check it again.
   const cartSig = items.map((i) => `${i.itemId}${i.variant}${i.qty}${i.addons.join()}`).join();
   useEffect(() => {
-    if (promo) applyCode(promo.code);
+    if (promo) applyCode(promo.code, true);
   }, [cartSig]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     document.body.classList.add("sheet-open");
@@ -87,7 +113,7 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
     }
     try {
       const r = await post(`/public/shop/${token}/orders`, { table: table.id, items, name: name.trim(), phone: mobile, ...(promo && { promo: promo.code }) });
-      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, promo: r.promo || null, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
+      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, promo: r.promo || null, loyalty: r.loyalty || null, streak: r.streak || null, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
     } catch (err) {
       // The code stopped working (used up, wrong time, used on this mobile): say so and let them order without it.
       if (err.data?.code === "PROMO") {
@@ -134,6 +160,16 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
               </div>
             );
           })}
+          {loyal?.reward && (
+            <div className="co-cp-line co-free-line">
+              <span className="co-free-ico" aria-hidden="true">🎁</span>
+              <div className="co-cp-line-text">
+                <b>{loyal.dish.name}{loyal.dish.variant ? ` (${loyal.dish.variant})` : ""}</b>
+                <span className="small muted">Your {loyal.need}-day streak reward</span>
+              </div>
+              <div className="co-cp-line-right"><b className="co-free">FREE</b></div>
+            </div>
+          )}
           <button className="co-cp-more" onClick={onClose}>+ Add more items</button>
         </section>
 
@@ -148,6 +184,9 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
           </section>
         )}
 
+        {loyal && !loyal.reward && (
+          <div className="co-nudge co-streak">{loyal.visitedToday && loyal.count ? `🔥 ${loyal.count}-day streak · today counts! ${loyal.need - loyal.count} more day${loyal.need - loyal.count === 1 ? "" : "s"} for a free ${loyal.dish.name}` : streakText(loyal.count, loyal.need, loyal.dish)}</div>
+        )}
         <section className="co-cp-card co-promo">
           <h4>🏷 Offers</h4>
           {promo ? (
@@ -220,6 +259,8 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
           {data.payRule === "first" ? "💳 Please pay after placing the order. It's cooked once the payment is confirmed." : data.payRule === "choose" ? "💳 You can pay now by UPI, or at the end." : "💳 You pay after your meal."}
         </p>
       </div>
+
+      {party && <Celebrate title={party.title} amount={party.amount} note={party.note} onDone={() => setParty(null)} />}
 
       <div className="co-cp-bar">
         {error && <div className="error small">{error}</div>}

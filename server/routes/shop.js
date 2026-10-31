@@ -144,6 +144,14 @@ const ShopSettings = z
       closedDays: z.array(z.number().int().min(0).max(6)).max(6).default([]),
       message: z.string().trim().max(200).default(""),
     }),
+    // Loyalty streak: N days in a row earns the free dish, usable for validDays days.
+    loyalty: z.object({
+      on: z.boolean(),
+      days: z.number().int().min(3).max(14),
+      validDays: z.number().int().min(1).max(7),
+      dishId: z.string().regex(/^([a-f0-9]{24})?$/),
+      variant: z.string().trim().max(20).default(""),
+    }),
     // When QR customers pay: at the end, they choose (now or at the end), or before it's cooked.
     qrPayment: z.enum(["end", "choose", "first"]),
     defaultDiscount: z.object({ type: z.enum(["percent", "flat"]), value: z.number().min(0).max(100000) }),
@@ -298,6 +306,13 @@ export default [
       if (next.qrMode === "upi" && !next.upiId) throw new HttpError(400, "Add your shop UPI ID to print a payment QR on bills.");
       if (next.qrMode === "image" && !next.qrImage) throw new HttpError(400, "Upload your QR picture, or choose another QR option.");
       if (input.printer) input.printer = { ...shop.printer, ...input.printer };
+      if (input.loyalty) {
+        if (input.loyalty.on && !input.loyalty.dishId) throw new HttpError(400, "Choose the free dish for the loyalty streak.");
+        if (input.loyalty.dishId && !(await db.collection("menuItems").findOne({ _id: new ObjectId(input.loyalty.dishId), shopId: shop._id }))) throw new HttpError(400, "That free dish isn't on your menu any more. Choose another.");
+        // Visits before the scheme was turned on don't count.
+        const was = shop.loyalty || {};
+        input.loyalty.since = input.loyalty.on ? (was.on && was.since) || istDay() : "";
+      }
       // Groups keep only tables that still exist (tables can be removed later).
       if (input.tables || input.tableGroups) {
         const ids = new Set((next.tables || []).map((t) => t.id));

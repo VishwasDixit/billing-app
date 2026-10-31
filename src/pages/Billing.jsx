@@ -2,7 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { markBilledLocally } from "../lib/orders.js";
 import { useApp, accessState } from "../lib/store.jsx";
-import { post, put } from "../lib/api.js";
+import { get, post, put } from "../lib/api.js";
 import { isOwner } from "../lib/roles.js";
 import { EDIT_REASONS, isOldBill } from "../../shared/billChanges.js";
 import { computeTotals } from "../../shared/totals.js";
@@ -15,9 +15,11 @@ import { ItemPicture } from "../components/ItemPicture.jsx";
 import { useShowPictures } from "../lib/prefs.js";
 import { CustomerPicker } from "../components/CustomerPicker.jsx";
 import { addonText } from "../../shared/addons.js";
+import { streakText, dayText } from "../../shared/loyalty.js";
 
 // Lines with add-ons (from QR or staff orders) stay apart from the plain dish.
-const lineKey = (itemId, variant, addons) => (addons?.length ? `${itemId}|${variant}|${addonText(addons)}` : `${itemId}|${variant}`);
+// A free streak dish stays its own line, apart from the same dish at full price.
+const lineKey = (itemId, variant, addons, free) => (addons?.length ? `${itemId}|${variant}|${addonText(addons)}` : `${itemId}|${variant}`) + (free ? "|free" : "");
 
 export default function Billing() {
   const { shop, menu, recordBill, customers, user } = useApp();
@@ -89,7 +91,7 @@ export default function Billing() {
     setEditBill({ id: b.id, billNo: b.billNo, createdAt: b.createdAt, total: b.total });
     setTableBill(null);
     setBillDate("");
-    setCart(new Map(b.items.map((l) => [lineKey(l.itemId || l.name, l.variant || "", l.addons), { itemId: l.itemId, name: l.name, variant: l.variant || "", category: l.category || "", rate: l.rate, qty: l.qty, ...(l.charge && { charge: true }), ...(l.addons?.length && { addons: l.addons }) }])));
+    setCart(new Map(b.items.map((l) => [lineKey(l.itemId || l.name, l.variant || "", l.addons, l.free), { itemId: l.itemId, name: l.name, variant: l.variant || "", category: l.category || "", rate: l.rate, qty: l.qty, ...(l.charge && { charge: true }), ...(l.addons?.length && { addons: l.addons }), ...(l.free && { free: l.free }) }])));
     setDiscount({ type: b.discount?.type || "percent", value: b.discount?.value || 0 });
     setPromo(null);
     setGstPercent(b.gst?.percent || 0);
@@ -118,7 +120,7 @@ export default function Billing() {
     if (!tb) return;
     restored.current = true;
     setTableBill(tb);
-    setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant, l.addons), { ...l }])));
+    setCart(new Map(tb.lines.map((l) => [lineKey(l.itemId, l.variant, l.addons, l.free), { ...l }])));
     if (tb.payMode) setPaymentMode(tb.payMode);
     if (tb.customer) setCustomer(tb.customer);
     // Codes the customers used on these QR orders (already counted with the orders).
@@ -162,6 +164,25 @@ export default function Billing() {
     return item.variants.length > 1 ? setPicker(item) : add(item, item.variants[0]);
   };
 
+  // Loyalty streak: the chosen customer's streak, and a free dish they've earned.
+  const [loyal, setLoyal] = useState(null);
+  const loyaltyOn = !!shop.loyalty?.on;
+  useEffect(() => {
+    setLoyal(null);
+    const ph = customer?.phone;
+    if (!loyaltyOn || !ph) return;
+    let alive = true;
+    get(`/loyalty/check/${encodeURIComponent(ph)}`).then((r) => alive && r.on && setLoyal(r), () => {});
+    return () => {
+      alive = false;
+    };
+  }, [customer?.phone, loyaltyOn]);
+  const hasFree = [...cart.values()].some((l) => l.free);
+  const addFree = () => {
+    const d = loyal.dish;
+    setCart((c) => new Map(c).set(lineKey(d.id, d.variant, null, "loyalty"), { itemId: d.id, name: d.name, variant: d.variant, category: d.category, rate: 0, qty: 1, free: "loyalty" }));
+    toast(`🎉 Free ${d.name} added`);
+  };
   const setQty = (key, qty) =>
     setCart((prev) => {
       const next = new Map(prev);
@@ -184,7 +205,7 @@ export default function Billing() {
       const r = await post("/promos/check", { code, subtotal: t.subtotal, table: tableBill?.table || "", phone: customer?.phone || "" });
       setPromo({ code: r.code, amount: r.amount, source: "billing" });
       setPromoCode("");
-      toast(`${r.code} applied: −${money(r.amount, cur)}`);
+      toast(`🎉 ${r.code} applied · customer saves ${money(r.amount, cur)}`);
     } catch (err) {
       toast(err.offline ? "Promo codes need internet. You can still type a discount." : err.message);
     } finally {
@@ -276,7 +297,7 @@ export default function Billing() {
     setBusy(kind);
     try {
       const bill = await put(`/bills/${editBill.id}`, {
-        items: lines.map(([, l]) => ({ itemId: l.itemId || "", name: l.name, variant: l.variant || "", category: l.category || "", qty: l.qty, rate: l.rate, ...(l.charge && { charge: true }), ...(l.addons?.length && { addons: l.addons }) })),
+        items: lines.map(([, l]) => ({ itemId: l.itemId || "", name: l.name, variant: l.variant || "", category: l.category || "", qty: l.qty, rate: l.rate, ...(l.charge && { charge: true }), ...(l.addons?.length && { addons: l.addons }), ...(l.free && { free: l.free }) })),
         discount: { type: discount.type, value: Number(discount.value) || 0 },
         gstPercent: Number(gstPercent) || 0,
         paymentMode,
@@ -421,6 +442,7 @@ export default function Billing() {
                 <div className="ln-name">
                   {l.name}
                   {l.variant && <span className="tag" style={{ marginLeft: 6 }}>{l.variant}</span>}
+                  {l.free && <span className="tag good" style={{ marginLeft: 6 }}>🎁 Free</span>}
                 </div>
                 {l.addons?.length > 0 && <div className="small muted">+ {addonText(l.addons)}</div>}
                 <div className="ln-rate">{money(l.rate, cur)}</div>
@@ -449,7 +471,7 @@ export default function Billing() {
               <span className="muted">Promo</span>
               {promo ? (
                 <div className="inline promo-on">
-                  <span className="tag good">🏷 {promo.code} −{money(promo.amount, cur)}</span>
+                  <span key={promo.code} className="tag good promo-pop">🏷 {promo.code} −{money(promo.amount, cur)}</span>
                   <button className="btn btn-sm btn-ghost" onClick={removePromo} aria-label="Remove promo code">✕</button>
                 </div>
               ) : (
@@ -488,6 +510,19 @@ export default function Billing() {
               Udhar on this bill: <b className="due-text">{money(udharThisBill, cur)}</b>
               {customer && <> · Total due after: <b>{money(currentDue + udharThisBill, cur)}</b></>}
             </div>
+          </div>
+        )}
+
+        {loyal?.dish && (
+          <div className={"streak-strip" + (loyal.reward ? " earned" : "")}>
+            {loyal.reward ? (
+              <>
+                <span>🎉 <b>Free {loyal.dish.name}</b> earned{loyal.reward.validTo ? ` (till ${dayText(loyal.reward.validTo)})` : ""}</span>
+                {hasFree ? <span className="tag good">Added</span> : <button className="btn btn-sm btn-primary" onClick={addFree}>Add free</button>}
+              </>
+            ) : (
+              <span>{streakText(loyal.count, loyal.need, loyal.dish)}</span>
+            )}
           </div>
         )}
 

@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useApp, accessState } from "../lib/store.jsx";
 import { del, get, post, put } from "../lib/api.js";
 import { fmtDate, money } from "../lib/format.js";
-import { promoSummary, DAY_NAMES, cleanCode, tablesText, timeText } from "../../shared/promo.js";
+import { promoSummary, DAY_NAMES, cleanCode, tablesText, timeText, offerReminderText, fillName } from "../../shared/promo.js";
+import { SendQueue } from "../components/SendQueue.jsx";
 import { groupPrice, deliveryText, deliveryRule, MAX_GROUPS } from "../../shared/tableGroups.js";
 import { storeOpen, hoursText, DEFAULT_CLOSED_MESSAGE, closureActive, istDay } from "../../shared/hours.js";
 import { HELP_ASKS, QUICK_ASKS, HELP_PRESETS, helpSettings } from "../../shared/tableHelp.js";
@@ -70,6 +71,7 @@ const SECTIONS = [
   { id: "groups", group: "QR ordering", icon: "🗺️", title: "Table groups", desc: "Own prices and delivery for some tables", keywords: ["delivery", "far", "price", "group", "charge"], show: ({ shop }) => (shop.tables || []).length > 0, render: () => <TableGroupsCard /> },
   { id: "online", group: "QR ordering", icon: "💰", title: "Online payments", desc: "Cashfree, pay later rules", keywords: ["cashfree", "gateway", "upi", "online", "pay later", "unpaid", "card"], form: true, hint: ({ shop }) => (shop.gateway?.name ? "Connected" : ""), render: (p) => <OnlinePaymentsCard {...p} /> },
   { id: "help", group: "QR ordering", icon: "🙋", title: "Customer help", desc: "Water, call waiter and other help buttons", keywords: ["help", "water", "waiter", "bell", "call", "napkin"], form: true, render: (p) => <CustomerHelpCard {...p} /> },
+  { id: "loyalty", group: "QR ordering", icon: "🔥", title: "Loyalty streak", desc: "Order N days in a row, get a dish free", keywords: ["loyalty", "streak", "free", "reward", "regular", "7th day", "loyal"], hint: ({ shop }) => (shop.loyalty?.on ? `On · ${shop.loyalty.days} days` : "Off"), render: () => <LoyaltyCard /> },
   { id: "promos", group: "QR ordering", icon: "🏷️", title: "Promo codes", desc: "Coupons and offers", keywords: ["coupon", "offer", "discount", "code", "promo"], render: () => <PromosCard /> },
 
   { id: "menu", group: "Menu & team", icon: "🍽️", title: "Menu & pictures", desc: "Edit dishes, pictures on billing", keywords: ["menu", "dish", "item", "photo", "picture", "price"], render: (p) => <MenuCard {...p} /> },
@@ -1369,13 +1371,82 @@ function promoStatus(p) {
 }
 const WHERE = { both: "Table QR + Billing", qr: "Table QR only", billing: "Billing only" };
 
+// Loyalty streak: order on N days in a row and the next visit's dish is free (used within a few days).
+function LoyaltyCard() {
+  const { shop, menu, saveShop } = useApp();
+  const toast = useToast();
+  const nav = useNavigate();
+  const [l, setL] = useState(() => ({ on: false, days: 6, validDays: 3, dishId: "", variant: "", ...(shop.loyalty || {}) }));
+  const { busy, error, run } = useAction();
+  const set = (k, v) => setL((x) => ({ ...x, [k]: v }));
+  const dishes = menu.filter((m) => m.id && m.active !== false);
+  const dish = dishes.find((m) => m.id === l.dishId);
+  const save = () =>
+    run(async () => {
+      await saveShop({ loyalty: { on: l.on, days: Number(l.days), validDays: Number(l.validDays), dishId: l.dishId, variant: dish?.variants.some((v) => v.label === l.variant) ? l.variant : dish?.variants[0]?.label || "" } });
+      toast(l.on ? "Loyalty streak is on 🔥" : "Loyalty streak saved");
+    });
+  return (
+    <section className="card stack" id="loyalty">
+      <h2>Loyalty streak</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        Customers who order on {l.days} days in a row get a free dish on their next visit. A day counts when their mobile number is on a QR order or a bill (pick the customer at Billing).
+      </p>
+      <label className="check"><input type="checkbox" checked={l.on} onChange={(e) => set("on", e.target.checked)} /> Turn on the loyalty streak</label>
+      <div className="grid2">
+        <Field label="Days in a row" hint="3 to 14 days">
+          <input type="number" min="3" max="14" step="1" inputMode="numeric" value={l.days} onChange={(e) => set("days", Math.min(14, Math.max(3, parseInt(e.target.value, 10) || 3)))} />
+        </Field>
+        <Field label="Use the reward within" hint="Days after it's earned">
+          <select value={l.validDays} onChange={(e) => set("validDays", Number(e.target.value))}>
+            {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n} day{n > 1 ? "s" : ""}</option>)}
+          </select>
+        </Field>
+        <Field label="Free dish">
+          <select value={l.dishId} onChange={(e) => (set("dishId", e.target.value), set("variant", ""))}>
+            <option value="">Choose a dish…</option>
+            {dishes.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </Field>
+        {dish?.variants.length > 1 && (
+          <Field label="Size">
+            <select value={l.variant || dish.variants[0].label} onChange={(e) => set("variant", e.target.value)}>
+              {dish.variants.map((v) => <option key={v.label} value={v.label}>{v.label}</option>)}
+            </select>
+          </Field>
+        )}
+      </div>
+      {dish && (
+        <p className="hint" style={{ margin: 0 }}>
+          🔥 Order {l.days} days in a row → next visit: free {dish.name}{dish.variants.length > 1 ? ` (${l.variant || dish.variants[0].label})` : ""}, within {l.validDays} day{l.validDays > 1 ? "s" : ""}. QR orders get it added by itself; at Billing, staff tap “Add free”.
+        </p>
+      )}
+      {error && <div className="error">{error}</div>}
+      <div className="btn-row">
+        <button className="btn btn-primary" disabled={busy || (l.on && !l.dishId)} onClick={save}>{busy ? "Saving…" : "Save"}</button>
+        {shop.loyalty?.on && <button className="btn btn-wa" onClick={() => nav("/customers?streak=1")}>📲 Tell customers on WhatsApp</button>}
+      </div>
+    </section>
+  );
+}
+
 function PromosCard() {
   const { shop } = useApp();
   const toast = useToast();
   const cur = shop.currency || "₹";
   const [list, setList] = useState(null);
   const [edit, setEdit] = useState(null); // promo being edited, or BLANK_PROMO
+  const [queue, setQueue] = useState(null); // reminding invited customers who haven't used a code
   const { busy, error, run } = useAction();
+  // Invited customers who haven't used the code yet, one by one on WhatsApp.
+  const remind = (p) =>
+    run(async () => {
+      const { pending } = await get(`/promos/${p.id}/pending`);
+      if (!pending.length) return toast(`Everyone invited has used ${p.code}. 🎉`);
+      const link = shop.qrOrdering && shop.orderToken ? `${window.location.origin}/order/${shop.orderToken}?code=${p.code}` : "";
+      setQueue({ list: pending, index: 0, sent: 0, text: offerReminderText(p, shop.name, { link, cur }) });
+    });
+  const canRemind = (p) => p.phones?.length > 0 && p.active && (!p.validTo || p.validTo >= todayIST()) && !(p.maxUses > 0 && p.uses >= p.maxUses);
   const load = () => run(async () => setList((await get("/promos")).promos));
   useEffect(() => {
     load();
@@ -1419,6 +1490,7 @@ function PromosCard() {
                   </div>
                 </div>
                 <div className="btn-row">
+                  {canRemind(p) && <button className="btn btn-sm btn-wa" disabled={busy} onClick={() => remind(p)}>📲 Remind</button>}
                   <button className="btn btn-sm" onClick={() => setEdit(p)}>Edit</button>
                   <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => remove(p)} aria-label={`Delete ${p.code}`}>🗑</button>
                 </div>
@@ -1428,6 +1500,17 @@ function PromosCard() {
         </div>
       )}
       <button className="btn btn-sm" style={{ justifySelf: "start" }} onClick={() => setEdit(BLANK_PROMO)}>+ New code</button>
+      {queue && (
+        <SendQueue
+          queue={queue}
+          title="Reminder"
+          amount={() => ""}
+          textFor={(c) => fillName(queue.text, c.name)}
+          onOpen={() => {}}
+          onChange={setQueue}
+          onDone={(sent) => (setQueue(null), toast(`Reminders sent: ${sent}`))}
+        />
+      )}
       {edit && (
         <PromoModal
           promo={edit}
