@@ -43,6 +43,9 @@ async function ensureIndexes(db) {
     db.collection("helpThreads").createIndex({ shopId: 1, updatedAt: -1 }),
     db.collection("orders").createIndex({ shopId: 1, clientId: 1 }, { unique: true }),
     db.collection("loyaltyRewards").createIndex({ shopId: 1, phone: 1, earnedDay: 1 }, { unique: true }),
+    // Dice game: one throw a day per mobile and per phone.
+    db.collection("diceRolls").createIndex({ shopId: 1, day: 1, phone: 1 }, { unique: true }),
+    db.collection("diceRolls").createIndex({ shopId: 1, day: 1, device: 1 }, { unique: true }),
     db.collection("loyaltyRewards").createIndex({ shopId: 1, ref: 1 }, { partialFilterExpression: { ref: { $type: "string" } } }),
     db.collection("orders").createIndex({ shopId: 1, customerPhone: 1, createdAt: -1 }, { partialFilterExpression: { customerPhone: { $type: "string" } } }),
     db.collection("orders").createIndex({ shopId: 1, status: 1, createdAt: 1 }),

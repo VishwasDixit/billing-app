@@ -19,10 +19,17 @@ import { promoDiscount, reservePromo, releasePromo, menuOffers } from "./promos.
 import { loyaltyRule, useReward, releaseReward, dishOf, freeLine, loyaltyState } from "./loyalty.js";
 import { storeOpen, hoursText } from "../../shared/hours.js";
 import { helpSettings } from "../../shared/tableHelp.js";
+import { diceRule } from "../../shared/dice.js";
 import { pushToShop, MONEY_ROLES } from "../push.js";
 import { groupOf, groupPrice, deliveryLine, deliveryRule, servedAt } from "../../shared/tableGroups.js";
 import { addonGroupsFor, checkAddons, addonsTotal, MAX_LINE_ADDONS } from "../../shared/addons.js";
 import { shopGateway, createOrder as cfCreateOrder, orderResult as cfOrderResult, refund as cfRefund, webhookOk as cfWebhookOk, billMode as cfBillMode, sdkMode } from "../payments/cashfree.js";
+
+// The dice game, if on: what a 7 wins.
+const diceOffer = (shop) => {
+  const d = diceRule(shop);
+  return d ? { percent: d.percent, minOrder: d.minOrder, maxDiscount: d.maxDiscount } : null;
+};
 
 // "unpaid": the table left without paying (closed by staff; not a sale).
 export const STATUSES = ["new", "accepted", "preparing", "ready", "served", "billed", "rejected", "unpaid"];
@@ -321,6 +328,7 @@ export default [
         gst: shop.gstPercent || 0, // so the cart's "To pay" matches what the shop asks for
         upi: !!shop.upiId,
         offers: await menuOffers(db, shop),
+        dice: diceOffer(shop),
         online: !!shop.gateway?.name,
         popular: await popularItems(db, shop, menu),
         help: helpSettings(shop),

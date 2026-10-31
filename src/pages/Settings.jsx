@@ -5,6 +5,7 @@ import { del, get, post, put } from "../lib/api.js";
 import { fmtDate, money } from "../lib/format.js";
 import { promoSummary, DAY_NAMES, cleanCode, tablesText, timeText, offerReminderText, fillName } from "../../shared/promo.js";
 import { SendQueue } from "../components/SendQueue.jsx";
+import { DICE_DEFAULTS, DICE_TARGET, diceOfferText } from "../../shared/dice.js";
 import { groupPrice, deliveryText, deliveryRule, MAX_GROUPS } from "../../shared/tableGroups.js";
 import { storeOpen, hoursText, DEFAULT_CLOSED_MESSAGE, closureActive, istDay } from "../../shared/hours.js";
 import { HELP_ASKS, QUICK_ASKS, HELP_PRESETS, helpSettings } from "../../shared/tableHelp.js";
@@ -71,6 +72,7 @@ const SECTIONS = [
   { id: "groups", group: "QR ordering", icon: "🗺️", title: "Table groups", desc: "Own prices and delivery for some tables", keywords: ["delivery", "far", "price", "group", "charge"], show: ({ shop }) => (shop.tables || []).length > 0, render: () => <TableGroupsCard /> },
   { id: "online", group: "QR ordering", icon: "💰", title: "Online payments", desc: "Cashfree, pay later rules", keywords: ["cashfree", "gateway", "upi", "online", "pay later", "unpaid", "card"], form: true, hint: ({ shop }) => (shop.gateway?.name ? "Connected" : ""), render: (p) => <OnlinePaymentsCard {...p} /> },
   { id: "help", group: "QR ordering", icon: "🙋", title: "Customer help", desc: "Water, call waiter and other help buttons", keywords: ["help", "water", "waiter", "bell", "call", "napkin"], form: true, render: (p) => <CustomerHelpCard {...p} /> },
+  { id: "dice", group: "QR ordering", icon: "🎲", title: "Dice game", desc: "Throw a 7, win a discount", keywords: ["dice", "game", "play", "win", "lucky", "7", "seven", "discount"], hint: ({ shop }) => (shop.dice?.on ? `On · ${shop.dice.percent}% off` : "Off"), render: () => <DiceCard /> },
   { id: "loyalty", group: "QR ordering", icon: "🔥", title: "Loyalty streak", desc: "Order N days in a row, get a dish free", keywords: ["loyalty", "streak", "free", "reward", "regular", "7th day", "loyal"], hint: ({ shop }) => (shop.loyalty?.on ? `On · ${shop.loyalty.days} days` : "Off"), render: () => <LoyaltyCard /> },
   { id: "promos", group: "QR ordering", icon: "🏷️", title: "Promo codes", desc: "Coupons and offers", keywords: ["coupon", "offer", "discount", "code", "promo"], render: () => <PromosCard /> },
 
@@ -1425,6 +1427,51 @@ function LoyaltyCard() {
       <div className="btn-row">
         <button className="btn btn-primary" disabled={busy || (l.on && !l.dishId)} onClick={save}>{busy ? "Saving…" : "Save"}</button>
         {shop.loyalty?.on && <button className="btn btn-wa" onClick={() => nav("/customers?streak=1")}>📲 Tell customers on WhatsApp</button>}
+      </div>
+    </section>
+  );
+}
+
+function DiceCard() {
+  const { shop, saveShop } = useApp();
+  const toast = useToast();
+  const cur = shop.currency || "₹";
+  const [d, setD] = useState(() => ({ ...DICE_DEFAULTS, ...(shop.dice || {}) }));
+  const [today, setToday] = useState(null);
+  const { busy, error, run } = useAction();
+  const set = (k, v) => setD((x) => ({ ...x, [k]: v }));
+  const num = (v) => Math.max(0, Number(v) || 0);
+  useEffect(() => {
+    if (shop.dice?.on) get("/dice/today").then(setToday, () => {});
+  }, [shop.dice?.on]);
+  const save = () =>
+    run(async () => {
+      await saveShop({ dice: { on: d.on, percent: Math.min(100, Math.max(5, parseInt(d.percent, 10) || 50)), minOrder: num(d.minOrder), maxDiscount: num(d.maxDiscount) } });
+      toast(d.on ? "Dice game is on 🎲" : "Dice game saved");
+    });
+  return (
+    <section className="card stack" id="dice">
+      <h2>Dice game</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        Customers on your QR menu throw two dice once a day. If they add up to {DICE_TARGET} (1 chance in 6), they win a code for their mobile only, usable once today. The dice are rolled on the server with a secure random number, so nobody can cheat or predict them.
+      </p>
+      <label className="check"><input type="checkbox" checked={d.on} onChange={(e) => set("on", e.target.checked)} /> Turn on the dice game</label>
+      <div className="grid2">
+        <Field label="Discount for a win (%)">
+          <input type="number" min="5" max="100" step="1" inputMode="numeric" value={d.percent} onChange={(e) => set("percent", e.target.value)} />
+        </Field>
+        <Field label={`Up to (${cur})`} hint="0 = no cap">
+          <input type="number" min="0" step="1" inputMode="numeric" value={d.maxDiscount} onChange={(e) => set("maxDiscount", e.target.value)} />
+        </Field>
+        <Field label={`Order above (${cur})`} hint="0 = any order">
+          <input type="number" min="0" step="1" inputMode="numeric" value={d.minOrder} onChange={(e) => set("minOrder", e.target.value)} />
+        </Field>
+      </div>
+      <p className="hint" style={{ margin: 0 }}>🎲 Throw a {DICE_TARGET} → {diceOfferText({ percent: d.percent, minOrder: num(d.minOrder), maxDiscount: num(d.maxDiscount) }, cur)}, today only.</p>
+      {today && <p className="small" style={{ margin: 0 }}>Today: <b>{today.rolls}</b> throw{today.rolls === 1 ? "" : "s"} · <b>{today.wins}</b> won · <b>{today.used}</b> used</p>}
+      {error && <div className="error">{error}</div>}
+      <div className="btn-row">
+        <button className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button>
       </div>
     </section>
   );

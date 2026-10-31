@@ -22,6 +22,7 @@ import staffRoutes from "./routes/staff.js";
 import promoRoutes from "./routes/promos.js";
 import loyaltyRoutes from "./routes/loyalty.js";
 import shareRoutes from "./routes/share.js";
+import diceRoutes from "./routes/dice.js";
 import tableHelpRoutes from "./routes/tableHelp.js";
 import pushRoutes from "./routes/push.js";
 import { pushReady } from "./push.js";
@@ -46,6 +47,7 @@ const ROUTES = [
   ...promoRoutes,
   ...loyaltyRoutes,
   ...shareRoutes,
+  ...diceRoutes,
   ...tableHelpRoutes,
   ...pushRoutes,
 ].map(([method, path, handler, opts = {}]) => {

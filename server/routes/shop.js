@@ -152,6 +152,13 @@ const ShopSettings = z
       dishId: z.string().regex(/^([a-f0-9]{24})?$/),
       variant: z.string().trim().max(20).default(""),
     }),
+    // Dice game: a 7 wins percent% off (up to maxDiscount) on orders of minOrder or more, today.
+    dice: z.object({
+      on: z.boolean(),
+      percent: z.number().int().min(5).max(100),
+      minOrder: z.number().min(0).max(100000),
+      maxDiscount: z.number().min(0).max(100000),
+    }),
     // When QR customers pay: at the end, they choose (now or at the end), or before it's cooked.
     qrPayment: z.enum(["end", "choose", "first"]),
     defaultDiscount: z.object({ type: z.enum(["percent", "flat"]), value: z.number().min(0).max(100000) }),

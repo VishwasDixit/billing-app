@@ -113,7 +113,7 @@ export function Cart({ token, data, table, lines, cur, total, changeQty, onEdit,
     }
     try {
       const r = await post(`/public/shop/${token}/orders`, { table: table.id, items, name: name.trim(), phone: mobile, ...(promo && { promo: promo.code }) });
-      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, promo: r.promo || null, loyalty: r.loyalty || null, streak: r.streak || null, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
+      onPlaced({ id: r.orderId, key: r.key, orderNo: r.orderNo, total: r.total, status: r.status, pay: r.pay, promo: r.promo || null, loyalty: r.loyalty || null, streak: r.streak || null, tableId: table.id, tableName: table.name, items: lines, createdAt: new Date().toISOString() });
     } catch (err) {
       // The code stopped working (used up, wrong time, used on this mobile): say so and let them order without it.
       if (err.data?.code === "PROMO") {

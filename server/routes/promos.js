@@ -12,7 +12,7 @@ const Phones = z.array(z.string().max(20)).max(5000).transform((l) => [...new Se
 
 const Day = z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/, "use a date like 2026-12-31");
 const Time = z.string().regex(/^(([01]\d|2[0-3]):[0-5]\d)?$/, "use a time like 15:00");
-const PromoIn = z
+export const PromoIn = z
   .object({
     code: z.string().transform(cleanCode).refine((c) => CODE_RE.test(c), "Use 3–20 letters or numbers for the code, like WELCOME10."),
     description: z.string().trim().max(80).default(""),
@@ -115,14 +115,14 @@ const byId = (db, shop, id) => {
 };
 
 export default [
-  ["GET", "/promos", async ({ db, shop }) => ({ promos: (await db.collection("promos").find({ shopId: shop._id, archived: { $ne: true } }).sort({ createdAt: -1 }).toArray()).map(publicPromo) })],
+  ["GET", "/promos", async ({ db, shop }) => ({ promos: (await db.collection("promos").find({ shopId: shop._id, archived: { $ne: true }, source: { $ne: "dice" } }).sort({ createdAt: -1 }).toArray()).map(publicPromo) })],
   [
     "POST",
     "/promos",
     async ({ db, shop, body }) => {
       const p = PromoIn.parse(body);
       checkTables(shop, p);
-      if (await db.collection("promos").countDocuments({ shopId: shop._id, archived: { $ne: true } }) >= 200) throw new HttpError(400, "You can have up to 200 codes. Delete old ones first.");
+      if (await db.collection("promos").countDocuments({ shopId: shop._id, archived: { $ne: true }, source: { $ne: "dice" } }) >= 200) throw new HttpError(400, "You can have up to 200 codes. Delete old ones first.");
       const doc = { shopId: shop._id, ...p, uses: 0, discountGiven: 0, createdAt: new Date(), updatedAt: new Date() };
       try {
         doc._id = (await db.collection("promos").insertOne(doc)).insertedId;

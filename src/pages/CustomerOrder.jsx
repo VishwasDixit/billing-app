@@ -9,6 +9,7 @@ import { Customize, RepeatSheet } from "./customer/Customize.jsx";
 import { MenuTab } from "./customer/MenuTab.jsx";
 import { StatusTab } from "./customer/StatusTab.jsx";
 import { HelpTab } from "./customer/HelpTab.jsx";
+import { DiceGame } from "./customer/DiceGame.jsx";
 import { DEFAULT_HELP } from "../../shared/tableHelp.js";
 import { freeDeliveryGap } from "../../shared/tableGroups.js";
 import { addonsTotal, checkAddons } from "../../shared/addons.js";
@@ -31,6 +32,7 @@ export default function CustomerOrder() {
     !params.get("code") && loadMine(token).some((o) => !["rejected", "billed"].includes(o.status) || (o.bill && o.bill.paymentMode === "upi" && !o.bill.paymentConfirmed)) ? "orders" : "menu"
   );
   const [billAsk, setBillAsk] = useState(false);
+  const [dicing, setDicing] = useState(false); // the dice game sheet
   // A code sent on WhatsApp comes in the link (?code=…) and is put in the cart's coupon box.
   const [offerCode, setOfferCode] = useState(() => (params.get("code") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20));
   const [tableQ, setTableQ] = useState("");
@@ -209,6 +211,16 @@ export default function CustomerOrder() {
     if (shopName) document.title = shopName;
   }, [shopName]);
 
+  // A link with no table (sent on WhatsApp): open at the table this phone last ordered from.
+  useEffect(() => {
+    if (tableId || !data?.tables.length) return;
+    const last = [...mine].reverse().map((o) => data.tables.find((t) => t.id === o.tableId) || data.tables.find((t) => t.name === o.tableName)).find(Boolean);
+    if (!last) return;
+    const next = new URLSearchParams(params);
+    next.set("t", last.id);
+    setParams(next, { replace: true });
+  }, [data, tableId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const table = data?.tables.find((t) => t.id === tableId);
   // Offers for this table only (some codes are for some tables).
   const offers = (data?.offers || []).filter((o) => !o.tables?.length || o.tables.includes(tableId));
@@ -325,7 +337,7 @@ export default function CustomerOrder() {
 
       <main className="co-main">
         {tab === "menu" && (
-          <MenuTab data={data} cur={cur} offers={offers} offerCode={offerCode} setOfferCode={setOfferCode} q={q} setQ={setQ} canOrder={canOrder} quickAdd={quickAdd} less={less} qtyOf={qtyOf} />
+          <MenuTab data={data} cur={cur} offers={offers} offerCode={offerCode} setOfferCode={setOfferCode} q={q} setQ={setQ} canOrder={canOrder} quickAdd={quickAdd} less={less} qtyOf={qtyOf} token={token} onDice={() => setDicing(true)} />
         )}
         {tab === "orders" && (
           <StatusTab
@@ -437,6 +449,15 @@ export default function CustomerOrder() {
         />
       )}
 
+      {dicing && data?.dice && (
+        <DiceGame
+          token={token}
+          rule={data.dice}
+          cur={cur}
+          onClose={() => setDicing(false)}
+          onWin={(code) => setOfferCode(code)}
+        />
+      )}
       {billAsk && (
         <BillAsk
           token={token}

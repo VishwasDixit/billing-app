@@ -192,6 +192,29 @@ export default [
     },
     { manager: true },
   ],
+  // The table each mobile last ordered from by QR, so a WhatsApp link opens straight at it.
+  [
+    "GET",
+    "/customers/last-tables",
+    async ({ db, shop }) => {
+      const exists = new Set((Array.isArray(shop.tables) ? shop.tables : []).map((t) => t.id));
+      const rows = await db
+        .collection("orders")
+        .aggregate([
+          { $match: { shopId: shop._id, customerPhone: { $type: "string", $ne: "" }, createdAt: { $gte: new Date(Date.now() - 180 * 864e5) } } },
+          { $sort: { createdAt: -1 } },
+          { $group: { _id: "$customerPhone", table: { $first: "$table" } } },
+        ])
+        .toArray();
+      const tables = {};
+      for (const r of rows) {
+        const phone = cleanMobile(r._id);
+        if (phone && exists.has(r.table) && !tables[phone]) tables[phone] = r.table;
+      }
+      return { tables };
+    },
+    { manager: true },
+  ],
   [
     "POST",
     "/customers",

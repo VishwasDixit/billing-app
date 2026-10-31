@@ -1358,3 +1358,40 @@ button.more-tile { font: inherit; font-size: 13px; font-weight: 500; cursor: poi
 .co-free-line { background: var(--accent-soft); border-radius: 10px; padding: 8px; }
 .co-free-ico { width: 48px; height: 48px; display: grid; place-items: center; font-size: 28px; flex: none; }
 .co-streak { margin-bottom: 10px; }
+
+/* Dice game (QR menu): a banner, and two 3D dice thrown onto a green table. */
+.dice-banner { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 14px; border-radius: 14px; border: 0; cursor: pointer; color: #fff; background: linear-gradient(135deg, #0f766e, #14a594 60%, #f5b700); box-shadow: 0 6px 18px rgba(15,118,110,.3); font: inherit; }
+.dice-banner b { display: block; font-size: 15px; }
+.dice-banner small { display: block; opacity: .92; font-size: 12px; }
+.dice-banner-ico { font-size: 30px; animation: dice-wobble 2.4s ease-in-out infinite; }
+@keyframes dice-wobble { 0%, 80%, 100% { transform: rotate(0); } 85% { transform: rotate(-14deg); } 90% { transform: rotate(12deg); } 95% { transform: rotate(-6deg); } }
+.dice-table { position: relative; display: flex; justify-content: center; align-items: center; gap: 36px; height: 170px; border-radius: 16px; overflow: hidden; perspective: 700px; background: radial-gradient(ellipse at center, #1f8a4c 0%, #146b38 70%, #0e5129 100%); box-shadow: inset 0 0 0 6px #7a4b22, inset 0 0 0 9px #5b3517, inset 0 8px 24px rgba(0,0,0,.35); }
+.die-wrap { width: 64px; height: 64px; }
+.die-wrap.thrown { animation: dice-toss 1.6s cubic-bezier(.2,.7,.3,1) both; }
+.die-wrap.thrown + .die-wrap.thrown { animation-delay: .08s; }
+@keyframes dice-toss {
+  0% { transform: translate(-140px, 90px) scale(1.25); }
+  45% { transform: translate(10px, -26px) scale(1.05); }
+  65% { transform: translate(0, 6px) scale(1); }
+  80% { transform: translate(0, -8px); }
+  100% { transform: translate(0, 0); }
+}
+.die { position: relative; width: 64px; height: 64px; transform-style: preserve-3d; transform: rotateX(-20deg) rotateY(25deg); transition: transform 1.5s cubic-bezier(.15,.75,.3,1); }
+.dice-table:not(.rolling) .die { transition-duration: .4s; }
+.die-face { position: absolute; inset: 0; display: grid; grid-template: repeat(3, 1fr) / repeat(3, 1fr); padding: 9px; gap: 2px; border-radius: 12px; background: linear-gradient(145deg, #fff, #e9e9e9); box-shadow: inset 0 0 0 1px rgba(0,0,0,.08), inset -3px -3px 6px rgba(0,0,0,.08); backface-visibility: hidden; }
+.die-face i { border-radius: 50%; }
+.die-face i.pip { background: #222; box-shadow: inset 1px 1px 2px rgba(0,0,0,.6); }
+.die-face.f1 i.pip { background: #d62828; transform: scale(1.25); }
+.die-face.f1 { transform: translateZ(32px); }
+.die-face.f6 { transform: rotateY(180deg) translateZ(32px); }
+.die-face.f2 { transform: rotateY(90deg) translateZ(32px); }
+.die-face.f5 { transform: rotateY(-90deg) translateZ(32px); }
+.die-face.f3 { transform: rotateX(90deg) translateZ(32px); }
+.die-face.f4 { transform: rotateX(-90deg) translateZ(32px); }
+.dice-result { display: grid; gap: 8px; text-align: center; padding: 10px; border-radius: 12px; background: var(--bg); }
+.dice-result > b { font-size: 22px; }
+.dice-result.win { background: color-mix(in srgb, var(--good) 15%, var(--panel)); }
+@media (prefers-reduced-motion: reduce) {
+  .die-wrap.thrown, .dice-banner-ico { animation: none; }
+  .die { transition: none; }
+}

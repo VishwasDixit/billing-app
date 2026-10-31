@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { waLink } from "../lib/udhar.js";
+import { get } from "../lib/api.js";
+import { withTable } from "../lib/orderLink.js";
+
+// Customers are matched on the last 10 digits of their mobile.
+const last10 = (phone) => String(phone || "").replace(/\D/g, "").slice(-10);
 
 // Steps through customers one by one (udhar reminders, or an offer): open WhatsApp with the
 // message ready, tap Send, then Next.
@@ -7,8 +12,12 @@ export function SendQueue({ queue, title, amount, textFor, onOpen, onChange, onD
   const { list, index, sent } = queue;
   const c = list[index];
   const [opened, setOpened] = useState(false);
+  const [tables, setTables] = useState({});
   useEffect(() => setOpened(false), [index]);
-  const text = textFor(c);
+  useEffect(() => {
+    get("/customers/last-tables").then((r) => setTables(r.tables || {}), () => {});
+  }, []);
+  const text = withTable(textFor(c), tables[last10(c.phone)]);
   const link = waLink(c.phone, text);
   const next = (didSend) => {
     const s = sent + (didSend ? 1 : 0);

@@ -6,6 +6,8 @@ import { defaultImageFor } from "../../../shared/menuImages.js";
 import { promoSummary } from "../../../shared/promo.js";
 import { deliveryText } from "../../../shared/tableGroups.js";
 import { needsChoice } from "./common.js";
+import { playedToday } from "./DiceGame.jsx";
+import { diceOfferText, DICE_TARGET } from "../../../shared/dice.js";
 
 const imgOf = (m) => m.image || defaultImageFor(m.name, m.category);
 const fallback = (m) => (e) => (e.currentTarget.src = defaultImageFor(m.name, m.category));
@@ -41,7 +43,7 @@ export function PopularCard({ m, cur, ...addProps }) {
   );
 }
 
-export function MenuTab({ data, cur, offers, offerCode, setOfferCode, q, setQ, canOrder, quickAdd, less, qtyOf }) {
+export function MenuTab({ data, cur, offers, offerCode, setOfferCode, q, setQ, canOrder, quickAdd, less, qtyOf, token, onDice }) {
   const menu = data.menu || [];
   const byId = useMemo(() => new Map(menu.map((m) => [m.id, m])), [menu]);
   const popular = (data.popular || []).map((id) => byId.get(id)).filter(Boolean);
@@ -100,6 +102,15 @@ export function MenuTab({ data, cur, offers, offerCode, setOfferCode, q, setQ, c
       {data.delivery && <div className="co-delivery">{deliveryText(data.delivery, cur)}</div>}
       {offerCode && !offers.some((o) => o.code === offerCode) && data.ordering.open && (
         <div className="co-nudge done"><span>🎁 Your code <b>{offerCode}</b> will be applied at checkout</span></div>
+      )}
+      {data.dice && data.ordering.open && (
+        <button className="dice-banner" onClick={onDice}>
+          <span className="dice-banner-ico" aria-hidden="true">🎲</span>
+          <span>
+            <b>{playedToday(token) ? "You threw the dice today" : `Throw a ${DICE_TARGET}, win ${data.dice.percent}% off!`}</b>
+            <small>{playedToday(token) ? "See your throw · come back tomorrow" : `${diceOfferText(data.dice, cur)} · one free throw a day`}</small>
+          </span>
+        </button>
       )}
       {offers.length > 0 && data.ordering.open && (
         <div className="co-offers">
